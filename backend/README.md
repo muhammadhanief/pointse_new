@@ -11,7 +11,8 @@ cd backend
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 Copy-Item .env.example .env          # lalu isi kredensial MySQL
-.venv\Scripts\python.exe -m alembic upgrade head   # buat tabel runs, wilayah, titik_hasil, rekap_subsls
+.venv\Scripts\python.exe -m alembic upgrade head   # buat tabel runs, wilayah, titik_hasil, rekap_desa, rekap_kabupaten
+.venv\Scripts\python.exe -m alembic check          # pastikan skema DB = model ORM
 ```
 
 ## Jalan & tes
@@ -25,7 +26,8 @@ Copy-Item .env.example .env          # lalu isi kredensial MySQL
 
 # Tes (tanpa MySQL: tes memakai SQLite sementara)
 .venv\Scripts\python.exe -m pytest -q
-.venv\Scripts\python.exe -m pytest -q -m "not slow"           # lewati tes data penuh docs/
+.venv\Scripts\python.exe -m pytest -q -m "not slow"           # 15 detik; tanpa tes data penuh docs/
+.venv\Scripts\python.exe -m pytest -q -m "slow"               # ±2,5 menit: baca GPKG 397.443 titik
 ```
 
 ## Endpoint API (T3)
@@ -33,11 +35,14 @@ Copy-Item .env.example .env          # lalu isi kredensial MySQL
 | Method | Alamat | Keterangan |
 |---|---|---|
 | GET | `/health` | Cek aplikasi hidup |
-| POST | `/runs` | Unggah berkas (multipart: `tipe`, `titik`, `peta`, `user`, `layer_titik`, `layer_peta`) → baris `runs` berstatus `menunggu` |
-| GET | `/runs` | Daftar job (saring `tipe`, `status`, `kdkab`; paging `limit`/`offset`) |
-| GET | `/runs/{id}` | Status job + jumlah baris hasil tersimpan + `jumlah_tanpa_wilayah` |
-| GET | `/runs/{id}/hasil` | Baris hasil titik (paging); wilayah dibalas sebagai `wilayah_tugas`, `wilayah_asal`, `wilayah_edit` |
-| GET | `/runs/{id}/rekap?tingkat=&dasar=` | Rekap progres per wilayah: `kabupaten`, `kecamatan`, `desa`, `sls`, `subsls`; `dasar` = `tugas` (bawaan) atau `posisi`; tiap baris memuat `jumlah`, `belum`, `benar_awal`, `ditindak_posisi_benar`, `ditindak_posisi_salah`, `digeser`, `tanpa_wilayah`, `persen_progres` (kosong kalau penyebutnya 0); kategori `wilayah_id` NULL dibalas sebagai kode `null` + nama "(tanpa wilayah)" dan ditaruh paling akhir |
+| POST | `/runs` | Unggah berkas (multipart: `tipe`, `titik`, `peta`, `user`, `layer_titik`, `layer_peta`, `tanggal_data`) → baris `runs` berstatus `menunggu`; `kdprov`/`kdkab`/`tanggal_data` diambil dari peta (tanggal default hari unggah) |
+| GET | `/runs` | Daftar job (saring `tipe`, `status`, `kdprov`, `kdkab`; paging `limit`/`offset`), terbaru lebih dulu |
+| GET | `/ringkasan` | Ringkasan provinsi: satu baris per kabupaten/kota dari run terakhir, dibaca dari `rekap_kabupaten` (saring `tipe`/`kdprov`/`kdkab`, `dasar`); menyertakan `persen_progres` dan `belum_ada_upload_tipe_b` |
+| GET | `/tren` | Tren progres per `tanggal_data` (run sukses terakhir pada tanggal itu); `tingkat` = `kabupaten` (bawaan) atau `provinsi` |
+| GET | `/perubahan` | Perubahan antara dua run (`run_awal`, `run_akhir`): selisih rekap kabupaten/desa + perubahan status per titik (hanya pasangan baseline vs sukses terakhir yang detailnya masih ada) |
+| GET | `/runs/{id}` | Status job + jumlah baris hasil tersimpan + `jumlah_tanpa_wilayah` + `detail_tersedia` |
+| GET | `/runs/{id}/hasil` | Baris hasil titik (paging); **hanya titik yang perlu perhatian** (titik `benar_awal` tidak disimpan, terhitung di rekap) |
+| GET | `/runs/{id}/rekap?tingkat=&dasar=` | Rekap progres per wilayah: `kabupaten`, `kecamatan`, `desa` dari snapshot `rekap_kabupaten`/`rekap_desa`; `sls`/`subsls` dihitung saat diminta dari `titik_hasil` (409 bila detail run itu sudah dipangkas); `dasar` = `tugas` (bawaan) atau `posisi`; tiap baris memuat `jumlah`, `belum`, `benar_awal`, `ditindak_posisi_benar`, `ditindak_posisi_salah`, `digeser`, `tanpa_wilayah`, `persen_progres` (kosong kalau penyebutnya 0); kategori tanpa wilayah dibalas kode `null` + nama "(tanpa wilayah)" dan ditaruh paling akhir |
 
 Belum ada autentikasi (T4). Isi `user` sementara dikirim lewat form.
 
@@ -45,32 +50,38 @@ Belum ada autentikasi (T4). Isi `user` sementara dikirim lewat form.
 
 1. `POST /runs` menyimpan berkas ke `DIR_UNGGAHAN/<uuid>/` dan memeriksa metadata:
    kolom wajib ada, layer yang dipakai, dan `kdkab` di peta harus tunggal
-   (satu job = satu kabupaten/kota).
+   (satu job = satu kabupaten/kota). `kdprov`/`kdkab` dari peta disimpan di `runs`.
 2. Worker mengambil job dengan `SELECT ... FOR UPDATE SKIP LOCKED` (MySQL 8), jadi aman
-   dijalankan beberapa worker sekaligus (`MAX_WORKERS`). Satu job aktif per
-   (kdkab, tipe); job antre lama untuk itu ditandai `digantikan` (yang terbaru dikerjakan).
+   dijalankan beberapa worker sekaligus (`MAX_WORKERS`). Job dikerjakan **sesuai urutan
+   unggah** (id terkecil dulu) dan hanya **satu job aktif** per (`kdprov`, `kdkab`, `tipe`);
+   job antre lain untuk kabupaten/tipe itu dibiarkan `menunggu` sampai gilirannya
+   (tidak ada job yang dibatalkan/ditandai `digantikan`).
 3. Worker meng-upsert dimensi wilayah dari peta ke `wilayah`, menjalankan
    `app.proses_a.proses_a` atau `app.proses_b.proses_b`, lalu menyimpan hasil ke
    `titik_hasil` per batch 10.000 baris (`runs.jumlah_baris` diperbarui tiap batch).
-4. Job sukses: rekap per SubSLS (dasar `tugas` dan `posisi`) dihitung dengan query
-   GROUP BY dan disimpan sebagai snapshot di `rekap_subsls`; hasil titik job lain untuk
-   (kdkab, tipe) yang sama dihapus dan job lama ditandai `digantikan` (**hanya**
-   `titik_hasil` yang dihapus — baris `runs` dan snapshot `rekap_subsls` tetap ada).
-   Job gagal: hasil separuh dibuang, status `gagal` + pesan di `runs.pesan`.
+4. Job sukses (satu transaksi): rekap dihitung lewat query GROUP BY (`app/rekap.py`) dan
+   disimpan sebagai snapshot di `rekap_kabupaten` + `rekap_desa`, `runs` diisi
+   `jumlah_baris`/`jumlah_tanpa_wilayah`/`detail_tersedia`, lalu `titik_hasil` dan berkas
+   mentah run lain untuk (`kdprov`, `kdkab`, `tipe`) yang sama dipangkas — hanya **baseline**
+   (sukses pertama) dan **sukses terakhir** yang menyimpan detail. Baris `runs` dan seluruh
+   snapshot rekap tidak pernah dihapus. Job gagal: hasil separuh dibuang,
+   status `gagal` + pesan di `runs.pesan`.
 
-Status job: `menunggu` → `jalan` → `sukses` / `gagal` (atau `digantikan`).
+Status job: `menunggu` → `jalan` → `sukses` / `gagal`.
 
 ## Skema basis data
 
 | Tabel | Isi |
 |---|---|
-| `runs` | satu baris per job (berkas masukan, status, `jumlah_baris`, `jumlah_tanpa_wilayah` = titik di luar poligon wilkerstat) |
+| `runs` | satu baris per job: `tipe`, `kdprov`/`kdkab`, `tanggal_data` (tanggal data) + `created_at` (waktu unggah), status, `jumlah_baris`, `jumlah_tanpa_wilayah` (titik di luar poligon wilkerstat), `detail_tersedia` (baris `titik_hasil` masih disimpan), berkas masukan |
 | `wilayah` | dimensi wilayah: satu baris per SubSLS (`idsubsls`) dengan kode + nama; diisi dari peta lewat **upsert** dan tidak pernah dihapus |
-| `titik_hasil` | hasil per titik: kunci `(run_id, urut)`, flag (`flag_repair`, `flag_position`, …), `kk/btt/bku/bttk/bbtt`, `usaha`, koordinat, `level_6_full_code`, dan wilayah lewat `wilayah_asal_id`/`wilayah_edit_id` |
-| `rekap_subsls` | snapshot rekap per SubSLS per job: `jumlah`, `belum`, `benar_awal`, `ditindak_posisi_benar`, `ditindak_posisi_salah`, `digeser`, `tanpa_wilayah` untuk dua `dasar` (`tugas` = `level_6_full_code`, `posisi` = hasil join peta) |
+| `titik_hasil` | hasil per titik: kunci `(run_id, urut)`, flag (`flag_repair`, `flag_position`, …), `kk/btt/bku/bttk/bbtt`, `usaha`, koordinat, `level_6_full_code`, dan wilayah lewat `wilayah_asal_id`/`wilayah_edit_id`. **Hanya titik yang perlu perhatian** yang disimpan (`flag_repair` = 1, `flag_edit_atr_repair` = 1, atau tanpa wilayah); titik `benar_awal` hanya terhitung di rekap |
+| `rekap_desa` | snapshot rekap per **desa** (`kdprov`+`kdkab`+`kdkec`+`kddesa`) per job per `dasar`, plus baris "(tanpa wilayah)"; kunci utama `id` + `UNIQUE (run_id, dasar, kdprov, kdkab, kdkec, kddesa)` |
+| `rekap_kabupaten` | rekap yang sama dijumlahkan per **kabupaten/kota** (`kdprov`+`kdkab`) per job per `dasar`; dipakai ringkasan dan tren |
 
 Nama/kode wilayah tidak lagi disimpan di `titik_hasil` (dinormalkan ke `wilayah`), dan
-dashboard membaca `rekap_subsls` sehingga tidak perlu memindai `titik_hasil`.
+dashboard membaca `rekap_kabupaten`/`rekap_desa` sehingga tidak perlu memindai `titik_hasil`.
+Ukuran tiap tabel pada data uji penuh dan catatan pemangkasan ada di [`../README.md`](../README.md).
 
 Arti hitungan (PRD §5) dan baris kategori "(tanpa wilayah)":
 
@@ -82,28 +93,36 @@ Arti hitungan (PRD §5) dan baris kategori "(tanpa wilayah)":
 - `digeser` = titik dengan `flag_position` = 1 dan `tanpa_wilayah` = titik pada baris itu yang
   tidak masuk poligon wilkerstat mana pun (keduanya keterangan tersendiri, bisa tumpang tindih
   dengan kolom lain).
-- Persentase progres dihitung saat dibaca (`app.layanan.rekap_run`), tidak disimpan:
-  (`ditindak_posisi_benar` + `ditindak_posisi_salah`) / (`belum` + `ditindak_posisi_benar` +
-  `ditindak_posisi_salah`); kosong (`null`) kalau penyebutnya 0.
-- `wilayah_id` NULL = kategori terpisah "(tanpa wilayah)": dasar `tugas` untuk
+- Persentase progres dihitung saat dibaca (`app.layanan.rekap_run`, `app.layanan.ringkasan`),
+  tidak disimpan: (`ditindak_posisi_benar` + `ditindak_posisi_salah`) /
+  (`belum` + `ditindak_posisi_benar` + `ditindak_posisi_salah`); kosong (`null`) kalau
+  penyebutnya 0.
+- Baris "(tanpa wilayah)" (kode desa `null`) = kategori terpisah: dasar `tugas` untuk
   `level_6_full_code` kosong / tidak ada di tabel `wilayah`, dasar `posisi` untuk titik di
-  luar semua poligon. Kunci utama `rekap_subsls` memakai `id` (`UNIQUE (run_id, dasar,
-  wilayah_id)`) karena MySQL tidak mengizinkan kolom kunci utama bernilai NULL; jumlah
-  tiap dasar tetap sama dengan `runs.jumlah_baris`.
+  luar semua poligon. Kunci utama `rekap_desa` memakai `id` (dengan `UNIQUE (run_id, dasar,
+  kdprov, kdkab, kdkec, kddesa)`) karena MySQL tidak mengizinkan kolom kunci utama bernilai
+  NULL; jumlah tiap dasar tetap sama dengan `runs.jumlah_baris`.
+- Rekap tingkat desa dikelompokkan per (`kdkec`, `kddesa`) karena peta memakai kode wilayah
+  pendek (`kddesa` bisa berulang antar kecamatan); nama desa ikut dibalas supaya bisa
+  dibedakan di tampilan (catatan untuk UI T7).
 
 ## Isi
 
 - `app/config.py` — setelan dari `.env` (MySQL, CORS, folder unggahan, worker)
 - `app/db.py` — engine + sesi SQLAlchemy (MySQL lewat PyMySQL)
-- `app/models.py` — tabel `runs`, `wilayah`, `titik_hasil`, `rekap_subsls` (PRD §7)
+- `app/models.py` — tabel `runs`, `wilayah`, `titik_hasil`, `rekap_desa`, `rekap_kabupaten` (PRD §7)
 - `app/wilayah.py` — dimensi wilayah (baris dari peta, upsert, pemetaan kode → id; kode di
   luar peta dibiarkan tanpa id, bukan dibuatkan baris seadanya)
 - `app/proses_a.py`, `app/proses_b.py` — hitungan spasial (model QGIS 01 & 02), murni tanpa I/O
-- `app/layanan.py` — pemeriksaan unggahan, pembuatan job, query hasil & rekap
-- `app/worker.py` — worker Proses A/B (klaim job, batch simpan, dimensi wilayah, rekap)
+- `app/rekap.py` — query GROUP BY rekap + `simpan_rekap` + `pangkas_titik_hasil`; tanpa
+  dependensi berat, dipakai worker **dan** migrasi `0005` supaya logikanya tidak bercabang
+- `app/layanan.py` — pemeriksaan unggahan, pembuatan job, query hasil, rekap, ringkasan, tren, perubahan
+- `app/worker.py` — worker Proses A/B (klaim job FIFO, batch simpan, dimensi wilayah, rekap, pemangkasan)
 - `app/api.py` — endpoint FastAPI
 - `migrations/` — migrasi Alembic (`alembic upgrade head`; `0002` normalisasi skema, `0003`
-  baris "(tanpa wilayah)" untuk rekap, `0004` kolom hitungan rekap dipisah)
+  baris "(tanpa wilayah)" untuk rekap, `0004` kolom hitungan rekap dipisah, `0005` rekap
+  desa/kabupaten + `runs.tanggal_data`/`kdprov`/`detail_tersedia` + pemangkasan `titik_hasil`
+  dan berkas mentah, `rekap_subsls` dihapus)
 - `tests/` — tes pytest (SQLite sementara; tes data penuh di `docs/` ditandai `slow`:
   `test_proses_a_qgis.py`, `test_proses_b_qgis.py`, dan `test_proses_b_edit_qgis.py` untuk
   data uji yang sudah diedit)

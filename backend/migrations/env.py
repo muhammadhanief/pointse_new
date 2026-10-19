@@ -14,7 +14,13 @@ from sqlalchemy import engine_from_config, pool
 
 from app.config import get_settings
 from app.db import Base
-from app.models import RekapSubsls, Run, TitikHasil, Wilayah  # noqa: F401 - daftar model
+from app.models import (  # noqa: F401 - daftar model
+    RekapDesa,
+    RekapKabupaten,
+    Run,
+    TitikHasil,
+    Wilayah,
+)
 
 config = context.config
 

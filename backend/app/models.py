@@ -1,18 +1,28 @@
 """Model ORM untuk skema MySQL di PRD §7.
 
-Empat tabel:
+Lima tabel:
 
 - ``runs``         : satu baris per job (unggahan berkas + pemrosesan Proses A/B);
+  kunci kabupaten/kota adalah (**kdprov**, **kdkab**) dan ``tanggal_data`` (tanggal
+  data) dipisah dari ``created_at`` (waktu unggah, UTC);
 - ``wilayah``      : dimensi wilayah, satu baris per SubSLS (kode ``idsubsls``),
   diisi dari peta yang diunggah dengan aturan **upsert** (tidak pernah dihapus);
 - ``titik_hasil``  : hasil per titik (ramping, hanya kolom yang dipakai dashboard);
   nama/kode wilayah tidak disimpan di sini, cukup id-nya (``wilayah_asal_id``,
   ``wilayah_edit_id``), dan ``level_6_full_code`` tetap disimpan sebagai teks
-  karena jadi kunci wilayah **tugas** pada rekap;
-- ``rekap_subsls`` : snapshot rekap progres per SubSLS per job, dua dasar
-  (``DASAR_TUGAS``/``DASAR_POSISI``), dihitung lewat query GROUP BY di DB; hitungan
-  dipisah menjadi ``belum``/``benar_awal``/``ditindak_posisi_benar``/
-  ``ditindak_posisi_salah``/``digeser``/``tanpa_wilayah``.
+  karena jadi kunci wilayah **tugas** pada rekap. Yang disimpan **hanya titik yang
+  perlu perhatian** (``flag_repair`` = 1, ``flag_edit_atr_repair`` = 1, atau tidak
+  masuk poligon mana pun); titik ``benar_awal`` hanya terhitung di rekap
+  (``rekap_desa``/``rekap_kabupaten``);
+- ``rekap_desa``   : snapshot rekap progres per **desa** (``kdprov``+``kdkab``+
+  ``kdkec``+``kddesa``) per job per dasar, plus satu baris "(tanpa wilayah)";
+- ``rekap_kabupaten``: rekap yang sama dijumlahkan per **kabupaten/kota**
+  (``kdprov``+``kdkab``) per job per dasar; dibaca untuk ringkasan dan tren.
+
+Dua tabel rekap memakai kolom hitungan yang sama, dua dasar
+(``DASAR_TUGAS``/``DASAR_POSISI``), dihitung lewat query GROUP BY di DB:
+``jumlah``, ``belum``, ``benar_awal``, ``ditindak_posisi_benar``,
+``ditindak_posisi_salah``, ``digeser``, ``tanpa_wilayah``.
 
 Catatan pilihan tipe:
 
@@ -28,9 +38,10 @@ Catatan pilihan tipe:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
+    Date,
     DateTime,
     Double,
     ForeignKey,
@@ -50,21 +61,30 @@ from app.db import Base
 TIPE_A = "A"
 TIPE_B = "B"
 
-# Nilai kolom ``runs.status`` (``digantikan`` = hasilnya sudah digantikan job
-# yang lebih baru untuk kabupaten/tipe yang sama)
+# Nilai kolom ``runs.status``: ``menunggu`` -> ``jalan`` -> ``sukses``/``gagal``.
 STATUS_MENUNGGU = "menunggu"
 STATUS_JALAN = "jalan"
 STATUS_SUKSES = "sukses"
 STATUS_GAGAL = "gagal"
-STATUS_DIGANTIKAN = "digantikan"
 
-# Nilai kolom ``rekap_subsls.dasar``:
+# Nilai kolom ``rekap_desa.dasar``/``rekap_kabupaten.dasar``:
 # - tugas : wilayah penugasan titik, dari ``titik_hasil.level_6_full_code``
 #   (kode SubSLS pada data titik, dibandingkan model QGIS dengan hasil join);
 # - posisi: wilayah tempat titik berada menurut hasil join peta
 #   (``wilayah_edit_id`` untuk Proses B, kalau kosong ``wilayah_asal_id``).
 DASAR_TUGAS = "tugas"
 DASAR_POSISI = "posisi"
+
+#: Kolom hitungan kedua tabel rekap (selain kunci dan kode wilayah).
+KOLOM_HITUNGAN: tuple[str, ...] = (
+    "jumlah",
+    "belum",
+    "benar_awal",
+    "ditindak_posisi_benar",
+    "ditindak_posisi_salah",
+    "digeser",
+    "tanpa_wilayah",
+)
 
 # TINYINT di MySQL, SMALLINT di SQLite (SQLite hanya punya tipe INTEGER).
 AngkaKecil = SmallInteger().with_variant(TINYINT(), "mysql")
@@ -75,13 +95,31 @@ def sekarang() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+def hari_ini() -> date:
+    """Tanggal unggah (UTC) untuk default ``runs.tanggal_data``."""
+    return datetime.now(UTC).date()
+
+
 class Run(Base):
-    """Satu kali unggah + pemrosesan (Proses A atau Proses B)."""
+    """Satu kali unggah + pemrosesan (Proses A atau Proses B).
+
+    Kunci kabupaten/kota di seluruh API dan query adalah (``kdprov``, ``kdkab``).
+    ``created_at`` = waktu unggah (UTC), ``tanggal_data`` = tanggal data (boleh
+    diisi saat unggah, default tanggal unggah).
+
+    ``detail_tersedia`` = 1 kalau baris ``titik_hasil`` run ini masih disimpan
+    (run **baseline** dan **sukses terakhir** per kabupaten/tipe); run lain hanya
+    menyisakan baris ``runs`` dan rekapnya.
+    """
 
     __tablename__ = "runs"
+    __table_args__ = (
+        Index("ix_runs_kdprov_kdkab_tipe_tanggal", "kdprov", "kdkab", "tipe", "tanggal_data"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tipe: Mapped[str] = mapped_column(String(1), index=True)
+    kdprov: Mapped[str] = mapped_column(String(4))
     kdkab: Mapped[str] = mapped_column(String(4), index=True)
     user: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(16), index=True, default=STATUS_MENUNGGU)
@@ -97,7 +135,9 @@ class Run(Base):
     jumlah_baris: Mapped[int | None] = mapped_column(Integer)
     # Titik yang tidak masuk/menyentuh poligon wilkerstat mana pun (hasil join kosong).
     jumlah_tanpa_wilayah: Mapped[int | None] = mapped_column(Integer)
+    detail_tersedia: Mapped[int] = mapped_column(AngkaKecil, default=0)
     pesan: Mapped[str | None] = mapped_column(Text)
+    tanggal_data: Mapped[date] = mapped_column(Date, default=hari_ini)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -179,12 +219,20 @@ class TitikHasil(Base):
     run: Mapped[Run] = relationship(back_populates="hasil")
 
 
-class RekapSubsls(Base):
-    """Snapshot rekap progres per SubSLS per job, dipisah per ``dasar``.
+class RekapDesa(Base):
+    """Snapshot rekap progres per **desa** per job, dipisah per ``dasar``.
 
     Diisi sekali di akhir job yang sukses lewat query GROUP BY (PRD §7), jadi
-    dashboard tidak perlu memindai ``titik_hasil``. Barisnya bertahan walau
-    ``titik_hasil`` job tersebut sudah digantikan job yang lebih baru.
+    dashboard tidak perlu memindai ``titik_hasil``. Barisnya **tidak pernah
+    dihapus** (riwayat rekap tetap ada walau ``titik_hasil`` run tersebut sudah
+    dipangkas).
+
+    Kode desa = ``kdprov``+``kdkab``+``kdkec``+``kddesa``. Baris dengan kode NULL
+    adalah kategori terpisah "(tanpa wilayah)": titik yang tidak bisa dipetakan ke
+    wilayah pada dasar itu (dasar ``tugas``: ``level_6_full_code`` kosong atau tidak
+    ada di tabel ``wilayah``; dasar ``posisi``: titik di luar semua poligon). Karena
+    kolom kunci utama tidak boleh NULL di MySQL, kunci utama memakai ``id`` dan
+    kombinasi kode dijaga UNIQUE.
 
     Hitungan dipisah (indikator progres PRD §5):
 
@@ -206,34 +254,70 @@ class RekapSubsls(Base):
     Persentase progres = (``ditindak_posisi_benar`` + ``ditindak_posisi_salah``) /
     (``belum`` + ``ditindak_posisi_benar`` + ``ditindak_posisi_salah``); kalau penyebutnya
     0 persentasenya kosong (NULL) -- dihitung di :func:`app.layanan.rekap_run`.
-
-    ``wilayah_id`` NULL = kategori terpisah "(tanpa wilayah)": titik yang tidak bisa
-    dipetakan ke wilayah pada dasar itu (dasar ``tugas``: ``level_6_full_code``
-    kosong atau tidak ada di tabel ``wilayah``; dasar ``posisi``: titik di luar semua
-    poligon). Karena baris kategori ini tidak menunjuk wilayah, kunci utama dipindah
-    ke ``id`` dan ``wilayah_id`` dibuat boleh NULL supaya FK tidak pernah gagal.
     """
 
-    __tablename__ = "rekap_subsls"
+    __tablename__ = "rekap_desa"
     __table_args__ = (
-        # UNIQUE ini menjaga satu baris per wilayah; baris kategori "(tanpa wilayah)"
-        # (wilayah_id NULL) tidak dijaga di MySQL (NULL boleh berulang), dijaga oleh
+        # UNIQUE ini menjaga satu baris per desa; baris kategori "(tanpa wilayah)"
+        # (kode NULL) tidak dijaga di MySQL (NULL boleh berulang), dijaga oleh
         # penulisan snapshot yang selalu dibuang lalu diisi ulang dari GROUP BY.
         UniqueConstraint(
-            "run_id", "dasar", "wilayah_id", name="uq_rekap_subsls_run_dasar_wilayah"
+            "run_id",
+            "dasar",
+            "kdprov",
+            "kdkab",
+            "kdkec",
+            "kddesa",
+            name="uq_rekap_desa_run_dasar_desa",
         ),
-        Index("ix_rekap_subsls_run_dasar", "run_id", "dasar"),
+        Index("ix_rekap_desa_run_dasar", "run_id", "dasar"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
-    wilayah_id: Mapped[int | None] = mapped_column(ForeignKey("wilayah.id"))
     dasar: Mapped[str] = mapped_column(String(8))
+
+    kdprov: Mapped[str | None] = mapped_column(String(4))
+    kdkab: Mapped[str | None] = mapped_column(String(4))
+    kdkec: Mapped[str | None] = mapped_column(String(8))
+    kddesa: Mapped[str | None] = mapped_column(String(16))
 
     jumlah: Mapped[int] = mapped_column(Integer)
     belum: Mapped[int] = mapped_column(Integer)
+    benar_awal: Mapped[int] = mapped_column(Integer)
     ditindak_posisi_benar: Mapped[int] = mapped_column(Integer)
     ditindak_posisi_salah: Mapped[int] = mapped_column(Integer)
+    digeser: Mapped[int] = mapped_column(Integer)
+    tanpa_wilayah: Mapped[int] = mapped_column(Integer)
+
+
+class RekapKabupaten(Base):
+    """Snapshot rekap progres per **kabupaten/kota** per job, dipisah per ``dasar``.
+
+    Satu baris per (run, dasar) dengan kunci ``kdprov``+``kdkab`` milik run; kolomnya
+    sama dengan :class:`RekapDesa` (lihat docstring-nya untuk arti tiap kolom) dan
+    ``tanpa_wilayah`` di sini tetap berupa kolom, bukan baris terpisah.
+
+    Indeks ``(kdprov, kdkab, dasar, run_id)`` dipakai query tren/ringkasan; barisnya
+    tidak pernah dihapus.
+    """
+
+    __tablename__ = "rekap_kabupaten"
+    __table_args__ = (
+        Index("ix_rekap_kabupaten_kab_dasar_run", "kdprov", "kdkab", "dasar", "run_id"),
+    )
+
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    dasar: Mapped[str] = mapped_column(String(8), primary_key=True)
+    kdprov: Mapped[str] = mapped_column(String(4), primary_key=True)
+    kdkab: Mapped[str] = mapped_column(String(4), primary_key=True)
+
+    jumlah: Mapped[int] = mapped_column(Integer)
+    belum: Mapped[int] = mapped_column(Integer)
     benar_awal: Mapped[int] = mapped_column(Integer)
+    ditindak_posisi_benar: Mapped[int] = mapped_column(Integer)
+    ditindak_posisi_salah: Mapped[int] = mapped_column(Integer)
     digeser: Mapped[int] = mapped_column(Integer)
     tanpa_wilayah: Mapped[int] = mapped_column(Integer)

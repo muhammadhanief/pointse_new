@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,27 @@ BARIS_A = (
     data_kecil.baris_titik_a("3", "A1", 0.5, 2.5),
 )
 
-PETA_TIGA_WILAYAH = {"A2": {"kddesa": "330701002", "nmdesa": "MOJOTENGAH"}}
+# Varian BARIS_A yang semuanya sudah benar (level_6 = SubSLS posisinya): semuanya
+# masuk ``benar_awal``, jadi ``titik_hasil`` run-nya kosong.
+BARIS_A_BENAR = (
+    data_kecil.baris_titik_a("1", "A1", 0.2, 0.2),
+    data_kecil.baris_titik_a("2", "A1", 0.3, 0.3),
+    data_kecil.baris_titik_a("3", "A1", 0.5, 0.5),
+)
+
+# Varian BARIS_A yang ketiga titiknya perlu perhatian (level_6 = A2, posisinya di
+# A1) supaya semuanya tersimpan di ``titik_hasil`` (untuk tes paging hasil).
+BARIS_A_PERHATIAN = (
+    data_kecil.baris_titik_a("1", "A2", 0.2, 0.2),
+    data_kecil.baris_titik_a("2", "A2", 0.3, 0.3),
+    data_kecil.baris_titik_a("3", "A1", 0.5, 2.5),
+)
+
+BARIS_B = (
+    data_kecil.baris_titik_b("1", "A1", 0.2, 0.2),
+    data_kecil.baris_titik_b("2", "A1", 0.3, 0.3, latitude=0.9, longitude=2.5),
+    data_kecil.baris_titik_b("3", "A1", 0.4, 0.4, flag_repair_initial=1, flag_repair=0),
+)
 
 
 def unggah(
@@ -45,7 +66,14 @@ def unggah(
 def berkas_uji(tmp_path: Path, baris: tuple[dict[str, Any], ...] = BARIS_A) -> tuple[Path, Path]:
     """Tulis berkas titik dan peta kecil untuk tes."""
     titik = data_kecil.tulis(data_kecil.titik_a(*baris), tmp_path / "masukan" / "titik.geojson")
-    peta = data_kecil.tulis(data_kecil.peta(PETA_TIGA_WILAYAH), tmp_path / "masukan" / "peta.geojson")
+    peta = data_kecil.tulis(data_kecil.peta(), tmp_path / "masukan" / "peta.geojson")
+    return titik, peta
+
+
+def berkas_uji_b(tmp_path: Path, baris: tuple[dict[str, Any], ...] = BARIS_B) -> tuple[Path, Path]:
+    """Tulis berkas titik Proses B dan peta kecil untuk tes."""
+    titik = data_kecil.tulis(data_kecil.titik_b(*baris), tmp_path / "masukan" / "titik_b.geojson")
+    peta = data_kecil.tulis(data_kecil.peta(), tmp_path / "masukan" / "peta.geojson")
     return titik, peta
 
 
@@ -66,12 +94,16 @@ def test_unggah_membuat_job_menunggu(
     data = resp.json()
     assert data["status"] == STATUS_MENUNGGU
     assert data["tipe"] == "A"
+    assert data["kdprov"] == "33"
     assert data["kdkab"] == "3307"
     assert data["user"] == "petugas"
     assert data["nama_file_input"] == "titik.geojson"
     assert data["nama_file_peta"] == "peta.geojson"
     assert data["jumlah_baris"] is None
     assert data["jumlah_tanpa_wilayah"] is None
+    # belum ada detail tersimpan; tanggal data default tanggal unggah
+    assert data["detail_tersedia"] is False
+    assert data["tanggal_data"] == datetime.now(UTC).date().isoformat()
 
     run = sesi.get(Run, data["id"])
     assert run is not None
@@ -79,6 +111,21 @@ def test_unggah_membuat_job_menunggu(
     assert berkas_input.exists() and Path(run.berkas_peta).exists()
     assert dir_unggahan in berkas_input.parents
     assert run.layer_input is not None and run.layer_peta is not None
+
+
+def test_unggah_bisa_mengisi_tanggal_data(
+    klien: TestClient, sesi: Session, tmp_path: Path
+) -> None:
+    """``tanggal_data`` boleh diisi saat unggah; ``created_at`` tetap waktu unggah."""
+    titik, peta = berkas_uji(tmp_path)
+    resp = unggah(klien, titik, peta, tanggal_data="2026-01-15")
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["tanggal_data"] == "2026-01-15"
+    run = sesi.get(Run, resp.json()["id"])
+    assert run is not None
+    assert run.tanggal_data == date(2026, 1, 15)
+    assert run.created_at is not None
 
 
 def test_status_dan_daftar_job(
@@ -92,34 +139,41 @@ def test_status_dan_daftar_job(
     assert status.status_code == 200
     assert status.json()["status"] == STATUS_MENUNGGU
     assert status.json()["jumlah_tersimpan"] == 0
+    assert status.json()["detail_tersedia"] is False
 
-    daftar = klien.get("/runs", params={"tipe": "A", "kdkab": "3307"})
+    daftar = klien.get("/runs", params={"tipe": "A", "kdprov": "33", "kdkab": "3307"})
     assert daftar.status_code == 200
     assert daftar.json()["total"] == 1
     assert daftar.json()["baris"][0]["id"] == run_id
 
-    kosong = klien.get("/runs", params={"tipe": "B"})
-    assert kosong.json()["total"] == 0
+    assert klien.get("/runs", params={"tipe": "B"}).json()["total"] == 0
+    assert klien.get("/runs", params={"kdprov": "34"}).json()["total"] == 0
 
-    # Setelah dijalankan, jumlah hasil dan titik tanpa wilayah muncul di status.
+    # Setelah dijalankan, yang tersimpan hanya titik yang perlu perhatian.
     jalankan(sesi_pabrik)
     status = klien.get(f"/runs/{run_id}").json()
-    assert status["jumlah_tersimpan"] == 3
+    assert status["jumlah_tersimpan"] == 1
     assert status["jumlah_baris"] == 3
     assert status["jumlah_tanpa_wilayah"] == 0
+    assert status["detail_tersedia"] is True
 
 
 def test_hasil_job_dengan_paging(
     klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
-    """Hasil titik dibalas urut seperti keluaran Proses A, dengan paging."""
-    titik, peta = berkas_uji(tmp_path)
+    """Hasil titik dibalas urut seperti keluaran Proses A, dengan paging.
+
+    Ketiga titik perlu perhatian (``level_6`` = A2, posisinya di A1) supaya
+    semuanya tersimpan: titik ``benar_awal`` sudah dipangkas dari ``titik_hasil``.
+    """
+    titik, peta = berkas_uji(tmp_path, BARIS_A_PERHATIAN)
     run_id = unggah(klien, titik, peta).json()["id"]
     jalankan(sesi_pabrik)
 
     resp = klien.get(f"/runs/{run_id}/hasil", params={"limit": 2, "offset": 0})
     assert resp.status_code == 200
     data = resp.json()
+    assert data["detail_tersedia"] is True
     assert data["total"] == 3
     assert [baris["assignment_id"] for baris in data["baris"]] == ["1", "2"]
     assert [baris["urut"] for baris in data["baris"]] == [0, 1]
@@ -128,14 +182,15 @@ def test_hasil_job_dengan_paging(
     assert [baris["assignment_id"] for baris in halaman2["baris"]] == ["3"]
 
     pertama = data["baris"][0]
-    assert pertama["flag_repair"] == 0
+    assert pertama["flag_repair"] == 1
     assert pertama["kk"] == 1 and pertama["btt"] == 1
     assert pertama["usaha"] == 0
-    assert pertama["level_6_full_code"] == "A1"
+    assert pertama["level_6_full_code"] == "A2"
     # wilayah penugasan (dari level_6_full_code) dan wilayah posisi (hasil join)
-    assert pertama["wilayah_tugas"]["idsubsls"] == "A1"
-    assert pertama["wilayah_tugas"]["nmdesa"] == "KALIBEBER"
+    assert pertama["wilayah_tugas"]["idsubsls"] == "A2"
+    assert pertama["wilayah_tugas"]["nmdesa"] == "MOJOTENGAH"
     assert pertama["wilayah_asal"]["idsubsls"] == "A1"
+    assert pertama["wilayah_asal"]["nmdesa"] == "KALIBEBER"
     assert pertama["wilayah_asal"]["kdkab"] == "3307"
     assert pertama["wilayah_asal"]["nmsls"] == "SLS 001"
     # Proses A tidak punya wilayah hasil edit
@@ -152,7 +207,7 @@ def test_hasil_job_dengan_paging(
 def test_rekap_progres_per_tingkat(
     klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
-    """Rekap menjumlahkan snapshot per SubSLS pada tiap tingkat dan dasar."""
+    """Rekap dibaca dari snapshot per desa/kabupaten; drill-down dari ``titik_hasil``."""
     titik, peta = berkas_uji(tmp_path)
     run_id = unggah(klien, titik, peta).json()["id"]
     jalankan(sesi_pabrik)
@@ -200,11 +255,13 @@ def test_rekap_progres_per_tingkat(
     assert [baris["persen_progres"] for baris in desa["baris"]] == [None, 0.0]
     assert desa["persen_progres"] == 0.0
 
-    # Dasar tugas: ketiga titik masuk SubSLS A1 (wilayah penugasannya)
+    # Dasar tugas: ketiga titik masuk SubSLS A1 (wilayah penugasannya). Tingkat
+    # SLS/SubSLS dihitung saat diminta dari ``titik_hasil``, jadi hanya titik yang
+    # perlu perhatian (titik 3) yang ikut dihitung di sini.
     subsls = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "subsls"}).json()
     assert [baris["kode"] for baris in subsls["baris"]] == ["A1"]
-    assert [baris["jumlah"] for baris in subsls["baris"]] == [3]
-    assert [(baris["belum"], baris["benar_awal"]) for baris in subsls["baris"]] == [(1, 2)]
+    assert [(baris["belum"], baris["ditindak"]) for baris in subsls["baris"]] == [(1, 0)]
+    assert (subsls["belum"], subsls["ditindak"], subsls["persen_progres"]) == (1, 0, 0.0)
 
     sls = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "sls"}).json()
     assert [baris["kode"] for baris in sls["baris"]] == ["3307010010003900"]
@@ -212,11 +269,12 @@ def test_rekap_progres_per_tingkat(
     # tingkat SLS tidak punya baris "(tanpa wilayah)" pada data ini
     assert all(baris["kode"] is not None for baris in sls["baris"])
 
+    # dasar posisi: hanya SubSLS A2 yang masih punya titik perlu perhatian
     subsls_posisi = klien.get(
         f"/runs/{run_id}/rekap", params={"tingkat": "subsls", "dasar": "posisi"}
     ).json()
-    assert [baris["kode"] for baris in subsls_posisi["baris"]] == ["A1", "A2"]
-    assert [baris["persen_progres"] for baris in subsls_posisi["baris"]] == [None, 0.0]
+    assert [baris["kode"] for baris in subsls_posisi["baris"]] == ["A2"]
+    assert [(baris["belum"], baris["ditindak"]) for baris in subsls_posisi["baris"]] == [(1, 0)]
 
 
 def test_rekap_persen_progres_kosong_kalau_penyebut_nol(
@@ -241,10 +299,11 @@ def test_rekap_persen_progres_kosong_kalau_penyebut_nol(
 def test_rekap_memuat_kategori_tanpa_wilayah(
     klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
-    """Titik di luar peta / tak punya SubSLS tugas muncul sebagai "(tanpa wilayah)".
+    """Titik di luar peta / tak punya SubSLS tugas muncul sebagai baris "(tanpa wilayah)".
 
-    Baris kategori itu diletakkan paling akhir dan tidak memakai FK (``kode`` None),
-    sementara jumlah tiap dasar tetap utuh.
+    Baris kategori itu (``kode`` None) diletakkan paling akhir, dan jumlah tiap dasar
+    tetap sama dengan jumlah baris run (termasuk titik ``benar_awal`` yang hanya
+    terhitung di rekap).
     """
     baris = (
         *BARIS_A,
@@ -257,23 +316,24 @@ def test_rekap_memuat_kategori_tanpa_wilayah(
     run_id = unggah(klien, titik, peta).json()["id"]
     jalankan(sesi_pabrik)
 
+    # tingkat kabupaten: seluruh titik run (5) tetap terhitung
+    kabupaten = klien.get(f"/runs/{run_id}/rekap").json()
+    assert (kabupaten["total"], kabupaten["belum"], kabupaten["benar_awal"]) == (5, 3, 2)
+    assert (kabupaten["tanpa_wilayah"], kabupaten["baris"][0]["tanpa_wilayah"]) == (1, 1)
+
+    # drill-down tugas: titik 4 punya SubSLS tugas (A1) tapi posisinya di luar poligon,
+    # titik 5 SubSLS tugasnya (A9) tidak ada di peta -> baris "(tanpa wilayah)"
     tugas = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "subsls"}).json()
-    assert tugas["total"] == 5
     assert [baris_["kode"] for baris_ in tugas["baris"]] == ["A1", None]
     assert tugas["baris"][-1]["nama"] == "(tanpa wilayah)"
-    assert (tugas["baris"][-1]["jumlah"], tugas["baris"][-1]["belum"]) == (1, 1)
-    # kolom ``tanpa_wilayah`` dasar tugas: titik 4 ada di A1 (penugasan) tapi
-    # posisinya di luar poligon
-    assert tugas["baris"][0]["tanpa_wilayah"] == 1
+    assert (tugas["belum"], tugas["baris"][-1]["belum"]) == (3, 1)
 
     posisi = klien.get(
         f"/runs/{run_id}/rekap", params={"tingkat": "subsls", "dasar": "posisi"}
     ).json()
-    assert posisi["total"] == 5
     assert [baris_["kode"] for baris_ in posisi["baris"]] == ["A1", "A2", None]
     assert posisi["baris"][-1]["nama"] == "(tanpa wilayah)"
-    assert posisi["baris"][-1]["tanpa_wilayah"] == 1
-    assert (posisi["benar_awal"], posisi["belum"]) == (2, 3)
+    assert (posisi["belum"], [baris_["belum"] for baris_ in posisi["baris"]]) == (3, [1, 1, 1])
 
 
 def test_rekap_job_belum_dijalankan(
@@ -335,9 +395,159 @@ def test_unggah_menolak_layer_yang_tidak_ada(klien: TestClient, tmp_path: Path) 
 
 
 def test_job_tidak_ditemukan(klien: TestClient) -> None:
-    """Id job yang tidak ada menghasilkan 404 pada status, hasil, dan rekap."""
+    """Id job yang tidak ada menghasilkan 404 pada status, hasil, rekap, dan perubahan."""
     for alamat in ("/runs/999", "/runs/999/hasil", "/runs/999/rekap"):
         assert klien.get(alamat).status_code == 404
+    assert klien.get("/perubahan", params={"run_awal": 999, "run_akhir": 998}).status_code == 404
+
+
+def test_rekap_detail_dipangkas_dibalas_409(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Drill-down SLS/SubSLS 409 kalau detail titik run sudah dipangkas.
+
+    Yang disimpan hanya detail run baseline dan run sukses terakhir; run di antaranya
+    masih punya baris ``runs`` dan rekapnya (tingkat kabupaten/kecamatan/desa tetap 200).
+    """
+    titik, peta = berkas_uji(tmp_path)
+    id_pertama = unggah(klien, titik, peta).json()["id"]
+    jalankan(sesi_pabrik)
+    id_tengah = unggah(klien, titik, peta).json()["id"]
+    jalankan(sesi_pabrik)
+    id_terakhir = unggah(klien, titik, peta).json()["id"]
+    jalankan(sesi_pabrik)
+
+    # run tengah: detailnya dipangkas saat run terakhir sukses
+    assert klien.get(f"/runs/{id_tengah}").json()["detail_tersedia"] is False
+    assert klien.get(f"/runs/{id_tengah}/hasil").json()["total"] == 0
+    detail = klien.get(f"/runs/{id_tengah}/rekap", params={"tingkat": "subsls"})
+    assert detail.status_code == 409
+    assert "dipangkas" in detail.json()["detail"]
+    # rekap per tabel tetap tersedia (angka rekap tidak ikut dipangkas)
+    rekap = klien.get(f"/runs/{id_tengah}/rekap").json()
+    assert (rekap["total"], rekap["belum"], rekap["benar_awal"]) == (3, 1, 2)
+
+    # baseline dan run sukses terakhir masih bisa drill-down
+    for run_id in (id_pertama, id_terakhir):
+        assert klien.get(f"/runs/{run_id}").json()["detail_tersedia"] is True
+        assert (
+            klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "subsls"}).status_code == 200
+        )
+
+    # baris runs run tengah tidak dihapus
+    assert klien.get(f"/runs/{id_tengah}").status_code == 200
+
+
+def test_ringkasan_dan_tren(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Ringkasan memakai run sukses terakhir tiap tipe; tren per tanggal data.
+
+    Dua run Proses A (tanggal data berbeda, yang kedua sudah beres semua) dan satu run
+    Proses B; tren memakai run sukses terakhir pada tiap tanggal data.
+    """
+    titik, peta = berkas_uji(tmp_path)
+    id_a1 = unggah(klien, titik, peta, tanggal_data="2026-01-01").json()["id"]
+    jalankan(sesi_pabrik)
+
+    titik, peta = berkas_uji(tmp_path, BARIS_A_BENAR)
+    id_a2 = unggah(klien, titik, peta, tanggal_data="2026-01-02").json()["id"]
+    jalankan(sesi_pabrik)
+
+    titik_b, peta_b = berkas_uji_b(tmp_path)
+    id_b = unggah(klien, titik_b, peta_b, tipe="B", tanggal_data="2026-01-02").json()["id"]
+    jalankan(sesi_pabrik)
+
+    ringkasan = klien.get("/ringkasan").json()
+    assert len(ringkasan["baris"]) == 1
+    kab = ringkasan["baris"][0]
+    assert (kab["kdprov"], kab["kdkab"]) == ("33", "3307")
+    assert (kab["nmprov"], kab["nmkab"]) == ("JAWA TENGAH", "WONOSOBO")
+    assert kab["belum_ada_upload_tipe_b"] is False
+    assert [satu["tipe"] for satu in kab["terakhir"]] == ["A", "B"]
+    a, b = kab["terakhir"]
+    assert (a["run_id"], a["tanggal_data"]) == (id_a2, "2026-01-02")
+    assert (a["belum"], a["ditindak"], a["persen_progres"]) == (0, 0, None)
+    assert b["run_id"] == id_b
+    assert b["belum"] == 1 and b["ditindak"] == 1
+
+    # kabupaten/kota tanpa unggahan Proses B ditandai
+    assert klien.get("/ringkasan", params={"tipe": "A"}).json()["baris"][0][
+        "belum_ada_upload_tipe_b"
+    ] is False
+    assert klien.get("/ringkasan", params={"kdprov": "34"}).json()["baris"] == []
+
+    tren = klien.get("/tren", params={"tipe": "A"}).json()
+    assert (tren["tingkat"], tren["dasar"], tren["tipe"]) == ("kabupaten", "tugas", "A")
+    assert [
+        (satu["tanggal_data"], satu["run_id"], satu["belum"], satu["persen_progres"])
+        for satu in tren["baris"]
+    ] == [("2026-01-01", id_a1, 1, 0.0), ("2026-01-02", id_a2, 0, None)]
+
+    provinsi = klien.get("/tren", params={"tingkat": "provinsi", "tipe": "A"}).json()
+    assert [
+        (satu["tanggal_data"], satu["kdprov"], satu["kdkab"], satu["belum"])
+        for satu in provinsi["baris"]
+    ] == [("2026-01-01", "33", None, 1), ("2026-01-02", "33", None, 0)]
+
+
+def test_perubahan_selisih_rekap_dan_per_titik(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Perubahan: selisih rekap pasangan mana pun, per titik baseline vs terakhir."""
+    titik, peta = berkas_uji(tmp_path)
+    id_awal = unggah(klien, titik, peta, tanggal_data="2026-01-01").json()["id"]
+    jalankan(sesi_pabrik)
+
+    berkas_uji(tmp_path, BARIS_A_BENAR)
+    id_akhir = unggah(klien, titik, peta, tanggal_data="2026-01-02").json()["id"]
+    jalankan(sesi_pabrik)
+
+    titik_b, peta_b = berkas_uji_b(tmp_path)
+    id_b = unggah(klien, titik_b, peta_b, tipe="B").json()["id"]
+    jalankan(sesi_pabrik)
+
+    ubah = klien.get(
+        "/perubahan", params={"run_awal": id_awal, "run_akhir": id_akhir}
+    ).json()
+    assert (ubah["run_awal"], ubah["run_akhir"], ubah["dasar"]) == (id_awal, id_akhir, "tugas")
+    assert ubah["kabupaten"]["jumlah"] == 0
+    assert (ubah["kabupaten"]["belum"], ubah["kabupaten"]["benar_awal"]) == (-1, 1)
+    assert [satu["kddesa"] for satu in ubah["desa"]] == ["330701001"]
+    assert ubah["desa"][0]["selisih"]["belum"] == -1
+    assert ubah["catatan"] is None
+
+    # baseline vs run sukses terakhir: titik 3 yang tadinya belum sekarang benar awal
+    titik_berubah = ubah["titik"]
+    assert titik_berubah["total"] == 1
+    assert titik_berubah["baris"][0]["assignment_id"] == "3"
+    assert titik_berubah["baris"][0]["status_awal"] == "belum"
+    assert titik_berubah["baris"][0]["status_akhir"] == "benar_awal"
+
+    # pasangan beda tipe: selisih rekap tetap dihitung, per titik tidak
+    beda = klien.get("/perubahan", params={"run_awal": id_awal, "run_akhir": id_b}).json()
+    assert beda["titik"] is None
+    assert beda["catatan"] is not None and "kabupaten/kota atau tipe" in beda["catatan"]
+    # dasar posisi: selisihnya dihitung dari rekap dasar posisi juga
+    posisi = klien.get(
+        "/perubahan", params={"run_awal": id_awal, "run_akhir": id_akhir, "dasar": "posisi"}
+    ).json()
+    assert posisi["dasar"] == "posisi"
+    assert posisi["kabupaten"]["belum"] == -1
+
+
+def test_perubahan_menolak_run_belum_sukses(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Run yang belum sukses tidak bisa dibandingkan (409)."""
+    titik, peta = berkas_uji(tmp_path)
+    id_sukses = unggah(klien, titik, peta).json()["id"]
+    jalankan(sesi_pabrik)
+    id_antre = unggah(klien, titik, peta).json()["id"]
+
+    resp = klien.get("/perubahan", params={"run_awal": id_sukses, "run_akhir": id_antre})
+    assert resp.status_code == 409
+    assert "sudah sukses" in resp.json()["detail"]
 
 
 def test_tingkat_rekap_tidak_dikenal(

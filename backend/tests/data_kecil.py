@@ -32,6 +32,13 @@ POLIGON: dict[str, tuple[float, float, float, float]] = {
     "A2": (2.0, 0.0, 3.0, 1.0),
 }
 
+# Desa tiap SubSLS (A1 dan A2 sengaja beda desa supaya rekap per desa bisa diuji;
+# kecamatannya sama, jadi rekap per kecamatan tetap satu baris).
+DESA: dict[str, dict[str, str]] = {
+    "A1": {"kddesa": "330701001", "nmdesa": "KALIBEBER"},
+    "A2": {"kddesa": "330701002", "nmdesa": "MOJOTENGAH"},
+}
+
 
 def peta(
     ubah: dict[str, dict[str, str]] | None = None,
@@ -39,7 +46,7 @@ def peta(
     """Peta dua SubSLS; ``ubah`` bisa menimpa kolom wilayah per SubSLS."""
     baris = []
     for idsubsls, (x1, y1, x2, y2) in POLIGON.items():
-        wilayah = {**WILAYAH, **(ubah or {}).get(idsubsls, {})}
+        wilayah = {**WILAYAH, **DESA[idsubsls], **(ubah or {}).get(idsubsls, {})}
         baris.append({**wilayah, "idsubsls": idsubsls, "geometry": box(x1, y1, x2, y2)})
     return gpd.GeoDataFrame(baris, crs="EPSG:4326")
 

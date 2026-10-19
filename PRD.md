@@ -97,6 +97,12 @@ kategori terpisah "(tanpa wilayah)", jadi jumlah tiap dasar selalu utuh (`jumlah
 `belum` + `benar_awal` + `ditindak_posisi_benar` + `ditindak_posisi_salah`). Semua
 direkap per kabupaten/kota, kecamatan, desa, dan SLS/SubSLS.
 
+Kunci kabupaten/kota di seluruh rekap adalah (`kdprov`, `kdkab`). Rekap tingkat desa
+dikelompokkan per (`kdkec`, `kddesa`) dan nama desa ikut disimpan/dibalas, karena peta
+wilkerstat memakai kode wilayah pendek sehingga kode desa bisa berulang antar kecamatan.
+Tingkat kecamatan dan desa tersedia dari tabel rekap; tingkat SLS/SubSLS dihitung saat
+diminta (hanya untuk run yang detail titiknya masih disimpan).
+
 ## 6. Fitur (urut prioritas)
 1. Login SSO BPS
 2. Upload input dan jalankan Proses A
@@ -106,13 +112,15 @@ direkap per kabupaten/kota, kecamatan, desa, dan SLS/SubSLS.
 6. Peta visualisasi titik (opsional, terakhir)
 
 ## 7. Model data MySQL (skema terpasang)
-Empat tabel (lihat `backend/migrations/`); geometri/peta mentah tidak pernah masuk DB,
+Lima tabel (lihat `backend/migrations/`); geometri/peta mentah tidak pernah masuk DB,
 hanya berkas di disk server.
 
-- `runs`: satu baris per job — id, tipe (A/B), kdkab, user, status (`menunggu`,
-  `jalan`, `sukses`, `gagal`, `digantikan`), nama + path berkas input/peta, layer yang
-  dipakai, `jumlah_baris`, `jumlah_tanpa_wilayah`, pesan galat, created/started/finished_at.
-  Index: `kdkab`, `status`, `tipe`.
+- `runs`: satu baris per job — id, tipe (A/B), `kdprov` + `kdkab`, user, status
+  (`menunggu`, `jalan`, `sukses`, `gagal`), nama + path berkas input/peta, layer yang
+  dipakai, `jumlah_baris`, `jumlah_tanpa_wilayah`, `tanggal_data` (tanggal data, default
+  tanggal unggah, boleh diisi saat unggah), `detail_tersedia` (1 = baris `titik_hasil`
+  run ini masih disimpan), pesan galat, created/started/finished_at.
+  Index: `kdprov`+`kdkab`, `status`, `tipe`.
 - `wilayah`: dimensi wilayah, satu baris per SubSLS — id, `idsubsls` (unik), `idsls`,
   `nmsls`, `kdprov`..`nmdesa`. Diisi dari peta lewat upsert (nama disegarkan, tidak
   pernah dihapus); kode di luar peta **tidak** dibuatkan baris seadanya. Index: `kdkab`.
@@ -122,12 +130,15 @@ hanya berkas di disk server.
   flag (`flag_psls`, `flag_position`, `flag_edit_atr_repair`, `flag_repair_initial`,
   `flag_repair`), `kk`/`btt`/`bku`/`bttk`/`bbtt`, `usaha`, dan koordinat
   origin/edited. Nama & kode wilayah tidak disimpan di sini (lewat `wilayah`).
-- `rekap_subsls`: snapshot rekap per SubSLS per job — kunci utama `id`, unik
-  `(run_id, dasar, wilayah_id)`; kolom `jumlah`, `belum`, `benar_awal`,
+  **Hanya titik yang perlu perhatian** (`flag_repair` = 1, `flag_edit_atr_repair` = 1,
+  atau tidak masuk poligon mana pun) yang disimpan; titik `benar_awal` hanya terhitung di
+  rekap.
+- `rekap_desa`: snapshot rekap per **desa** per job — kunci utama `id`, unik
+  `(run_id, dasar, kdprov, kdkab, kdkec, kddesa)`; kolom `jumlah`, `belum`, `benar_awal`,
   `ditindak_posisi_benar`, `ditindak_posisi_salah`, `digeser`, `tanpa_wilayah`, dan
   `dasar` (`tugas` = `level_6_full_code` titik, `posisi` = hasil join peta:
   `wilayah_edit_id` bila ada, kalau tidak `wilayah_asal_id`). Index: `(run_id, dasar)`.
-  - `wilayah_id` NULL = kategori "(tanpa wilayah)": titik yang tidak bisa dipetakan ke
+  - Baris `kddesa` NULL = kategori "(tanpa wilayah)": titik yang tidak bisa dipetakan ke
     wilayah pada dasar itu (dasar `tugas`: `level_6_full_code` kosong atau tidak ada di
     tabel `wilayah`; dasar `posisi`: titik di luar semua poligon). Karena kolom kunci
     utama di MySQL tidak boleh NULL, kunci utama tabel ini memakai `id`.
@@ -138,9 +149,18 @@ hanya berkas di disk server.
     (`ditindak_posisi_benar` + `ditindak_posisi_salah`) / (`belum` +
     `ditindak_posisi_benar` + `ditindak_posisi_salah`), kosong kalau penyebutnya 0.
   - Jumlah baris tiap dasar = `runs.jumlah_baris` (tidak ada titik yang hilang).
+- `rekap_kabupaten`: rekap yang sama dijumlahkan per **kabupaten/kota** (`kdprov` +
+  `kdkab`) per job per `dasar`; dipakai ringkasan provinsi dan tren. Index: `(run_id,
+  dasar)`.
+
+Penyimpanan dibatasi (agar DB tidak membengkak): baris `runs` dan seluruh snapshot rekap
+**tidak pernah dihapus**; yang dipangkas hanya `titik_hasil` dan berkas mentah — disimpan
+untuk **baseline** (sukses pertama) dan **sukses terakhir** per (`kdprov`, `kdkab`, `tipe`).
+Run di antara itu `detail_tersedia` = 0, dan drill-down SLS/SubSLS-nya dibalas HTTP 409.
 
 Rekap dihitung lewat query GROUP BY di basis data saat job sukses dan disimpan sebagai
-snapshot, bukan dihitung ulang di Python tiap permintaan dashboard.
+snapshot, bukan dihitung ulang di Python tiap permintaan dashboard. Job dikerjakan
+berurutan sesuai urutan unggah, hanya satu job aktif per (`kdprov`, `kdkab`, `tipe`).
 
 ## 8. Non-fungsional
 - Proses berat jalan sebagai background task dengan status yang bisa dipantau.
@@ -167,6 +187,8 @@ Edit titik langsung di web, notifikasi, multi-bahasa, perbaikan logika model
 - T2: Fungsi Proses B + tes lawan output QGIS — selesai (data uji dengan titik digeser
   dan atribut diubah manual: `docs/Titik Bangunan dan SLS/3307/hasil_edit_runmodel2.gpkg`)
 - T3: API FastAPI (upload, jalankan, status, hasil) + skema MySQL + Alembic — selesai
+  (termasuk revisi garis waktu (`tanggal_data`), penyimpanan terbatas (baseline + sukses
+  terakhir), rekap `rekap_desa`/`rekap_kabupaten`, ringkasan/tren/perubahan: migrasi `0005`)
 - T4: Login SSO
 - T5: Kerangka frontend (sidebar, layout) dengan data tiruan
 - T6: Halaman upload dan jalankan proses

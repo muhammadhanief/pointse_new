@@ -4,15 +4,20 @@ Aturan yang dipenuhi modul ini:
 
 - job diambil dengan ``SELECT ... FOR UPDATE SKIP LOCKED`` (MySQL 8) supaya aman
   dijalankan oleh beberapa worker sekaligus;
-- hanya satu job aktif per (kdkab, tipe): job yang (kdkab, tipe)-nya sedang
-  berstatus ``jalan`` dilewati; kalau ada beberapa job antre untuk (kdkab, tipe)
-  yang sama, yang **terbaru** dikerjakan dan sisanya ditandai ``digantikan``;
+- hanya satu job aktif per (kdprov, kdkab, tipe): job yang (kdprov, kdkab, tipe)-nya
+  sedang berstatus ``jalan`` dilewati; kalau ada beberapa job antre untuk
+  (kdprov, kdkab, tipe) yang sama, semuanya tetap dikerjakan **berurutan** (yang
+  paling lama dulu) dan tidak ada job yang ditandai batal/digantikan;
 - dimensi wilayah di-upsert dari peta yang diunggah (``app.wilayah``), lalu
   ``titik_hasil`` menyimpan ``wilayah_asal_id``/``wilayah_edit_id`` saja;
 - hasil disimpan ke ``titik_hasil`` per batch :data:`UKURAN_BATCH` (10.000) baris,
   dan progres (``runs.jumlah_baris``) diperbarui tiap batch;
-- setelah sukses, rekap per SubSLS (dasar ``tugas`` dan ``posisi``) dihitung
-  dengan query GROUP BY dan disimpan sebagai snapshot di ``rekap_subsls``;
+- setelah sukses, satu transaksi: rekap per desa dan kabupaten/kota dihitung dengan
+  query GROUP BY (``app.rekap``), ``titik_hasil`` dirampingkan -- hanya titik yang
+  perlu perhatian dan hanya run baseline + sukses terakhir per kabupaten/tipe --
+  lalu status jadi ``sukses``;
+- berkas mentah run yang ``titik_hasil``-nya dipangkas ikut dihapus dari disk
+  (hanya baseline dan yang terbaru yang disimpan);
 - job gagal: hasil separuh dibuang, status ``gagal``, dan pesan galat dicatat.
 
 Jalankan sebagai proses terpisah::
@@ -21,16 +26,19 @@ Jalankan sebagai proses terpisah::
 
 Jumlah worker bersamaan diatur ``MAX_WORKERS`` (default 1, lihat ``.env``).
 Dengan lebih dari satu worker, dua job berbeda kabupaten/tipe jalan paralel; kalau
-dua job dengan (kdkab, tipe) yang sama sempat terklaim bersamaan (jendela balapan
-sempit pada ``SKIP LOCKED``), hasilnya tetap konsisten karena job yang selesai
-terakhir menggantikan hasil job yang lain.
+dua job dengan (kdprov, kdkab, tipe) yang sama sempat terklaim bersamaan (jendela
+balapan sempit pada ``SKIP LOCKED``), hasilnya tetap konsisten karena keduanya
+dikerjakan berurutan dan yang selesai terakhir menyimpan datanya sebagai "sukses
+terakhir".
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 import signal
 import threading
+from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
@@ -41,31 +49,26 @@ from sqlalchemy import (
     Numeric,
     Select,
     SmallInteger,
-    and_,
-    case,
     delete,
     func,
     insert,
-    literal,
-    or_,
     select,
     update,
 )
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
+from app import rekap as modul_rekap
 from app import wilayah
 from app.config import Settings, get_settings
 from app.db import get_sessionmaker
 from app.models import (
-    DASAR_POSISI,
-    DASAR_TUGAS,
-    STATUS_DIGANTIKAN,
     STATUS_GAGAL,
     STATUS_JALAN,
     STATUS_MENUNGGU,
     STATUS_SUKSES,
     TIPE_A,
-    RekapSubsls,
+    RekapDesa,
+    RekapKabupaten,
     Run,
     TitikHasil,
     Wilayah,
@@ -73,6 +76,7 @@ from app.models import (
 )
 from app.proses_a import pastikan_crs4326, proses_a
 from app.proses_b import proses_b
+
 
 logger = logging.getLogger("pointse.worker")
 
@@ -174,92 +178,6 @@ def simpan_hasil(
     return jumlah
 
 
-def _kasus(syarat: object) -> object:
-    """``CASE WHEN syarat THEN 1 ELSE 0 END`` portabel (MySQL & SQLite)."""
-    return case((syarat, 1), else_=0)
-
-
-def _jumlah_kasus(syarat: object) -> object:
-    """``SUM(CASE WHEN syarat THEN 1 ELSE 0 END)``, 0 kalau tidak ada baris."""
-    return func.coalesce(func.sum(_kasus(syarat)), 0)
-
-
-def _kolom_hitungan() -> tuple[object, ...]:
-    """Kolom hitungan rekap (indikator progres PRD §5), urut seperti ``KOLOM_REKAP``.
-
-    ``flag_edit_atr_repair`` NULL (Proses A tidak punya kolom itu) dianggap 0, jadi
-    titik ``flag_repair`` = 0 pada Proses A masuk ``benar_awal``.
-    """
-    tanpa_tindakan = or_(
-        TitikHasil.flag_edit_atr_repair.is_(None), TitikHasil.flag_edit_atr_repair == 0
-    )
-    ditindak = and_(TitikHasil.flag_repair == 0, TitikHasil.flag_edit_atr_repair == 1)
-    tak_masuk_poligon = and_(
-        TitikHasil.wilayah_asal_id.is_(None), TitikHasil.wilayah_edit_id.is_(None)
-    )
-    return (
-        func.count(),
-        _jumlah_kasus(TitikHasil.flag_repair == 1),
-        _jumlah_kasus(and_(ditindak, TitikHasil.flag_repair_initial == 0)),
-        _jumlah_kasus(and_(ditindak, TitikHasil.flag_repair_initial == 1)),
-        _jumlah_kasus(and_(TitikHasil.flag_repair == 0, tanpa_tindakan)),
-        _jumlah_kasus(TitikHasil.flag_position == 1),
-        _jumlah_kasus(tak_masuk_poligon),
-    )
-
-
-#: Kolom tujuan ``rekap_subsls`` yang diisi dari :func:`_kolom_hitungan`.
-KOLOM_REKAP: list[str] = [
-    "run_id",
-    "wilayah_id",
-    "dasar",
-    "jumlah",
-    "belum",
-    "ditindak_posisi_benar",
-    "ditindak_posisi_salah",
-    "benar_awal",
-    "digeser",
-    "tanpa_wilayah",
-]
-
-
-def simpan_rekap(sesi: Session, run: Run) -> None:
-    """Simpan snapshot rekap per SubSLS untuk dasar ``tugas`` dan ``posisi``.
-
-    Dua-duanya dihitung dengan satu query GROUP BY (PRD §7: rekap dihitung lewat
-    query, bukan di Python). Dasar ``tugas`` memakai ``level_6_full_code`` titik
-    (wilayah penugasan), dasar ``posisi`` memakai wilayah hasil join peta
-    (``wilayah_edit_id`` bila ada, kalau tidak ``wilayah_asal_id``).
-
-    Titik yang tidak bisa dipetakan ke wilayah pada dasar itu dihitung pada baris
-    ``wilayah_id`` NULL -- kategori "(tanpa wilayah)" -- supaya foreign key tidak
-    pernah gagal dan jumlah tiap dasar tetap sama dengan ``runs.jumlah_baris``:
-    dasar ``tugas`` join-nya dibiarkan LEFT (``level_6_full_code`` kosong atau tidak
-    ada di tabel ``wilayah``), dasar ``posisi`` tidak disaring (titik di luar semua
-    poligon).
-    """
-    sesi.execute(delete(RekapSubsls).where(RekapSubsls.run_id == run.id))
-
-    hitungan = _kolom_hitungan()
-    tugas = (
-        select(literal(run.id), Wilayah.id, literal(DASAR_TUGAS), *hitungan)
-        .select_from(TitikHasil)
-        .join(Wilayah, Wilayah.idsubsls == TitikHasil.level_6_full_code, isouter=True)
-        .where(TitikHasil.run_id == run.id)
-        .group_by(Wilayah.id)
-    )
-    sesi.execute(insert(RekapSubsls).from_select(KOLOM_REKAP, tugas))
-
-    posisi = func.coalesce(TitikHasil.wilayah_edit_id, TitikHasil.wilayah_asal_id)
-    dasar_posisi = (
-        select(literal(run.id), posisi, literal(DASAR_POSISI), *hitungan)
-        .where(TitikHasil.run_id == run.id)
-        .group_by(posisi)
-    )
-    sesi.execute(insert(RekapSubsls).from_select(KOLOM_REKAP, dasar_posisi))
-    sesi.commit()
-
-
 def hitung_tanpa_wilayah(sesi: Session, run_id: int) -> int:
     """Jumlah titik hasil yang tidak masuk/jatuh di poligon wilkerstat mana pun."""
     return int(
@@ -276,49 +194,52 @@ def hitung_tanpa_wilayah(sesi: Session, run_id: int) -> int:
     )
 
 
-def gantikan_hasil_lama(sesi: Session, run: Run) -> None:
-    """Buang ``titik_hasil`` job lain untuk (kdkab, tipe) yang sama.
+def pangkas_berkas(sesi: Session, run_ids: list[int], akar: Path) -> list[str]:
+    """Hapus folder berkas mentah run yang ``titik_hasil``-nya sudah dipangkas.
 
-    Aturan "hasil lama digantikan" hanya menyangkut isi ``titik_hasil``: baris
-    ``runs`` job lama **tetap ada** (statusnya jadi ``digantikan``) dan snapshot
-    ``rekap_subsls``-nya sengaja dibiarkan supaya riwayat rekap masih bisa
-    dibandingkan.
+    Hanya folder di dalam ``akar`` (folder unggahan) yang dihapus, dan berkas run
+    dengan status lain (``menunggu``/``jalan``/``gagal``) tidak pernah ikut karena
+    :func:`app.rekap.pangkas_titik_hasil` hanya mengembalikan run sukses. Baris
+    ``runs`` tetap menyimpan nama berkasnya sebagai riwayat.
     """
-    lain = list(
-        sesi.scalars(
-            select(Run.id).where(
-                Run.kdkab == run.kdkab, Run.tipe == run.tipe, Run.id != run.id
-            )
-        )
-    )
-    if not lain:
-        return
-
-    sesi.execute(delete(TitikHasil).where(TitikHasil.run_id.in_(lain)))
-    sesi.execute(
-        update(Run)
-        .where(Run.id.in_(lain), Run.status == STATUS_SUKSES)
-        .values(status=STATUS_DIGANTIKAN)
-    )
-    sesi.commit()
+    if not run_ids:
+        return []
+    akar = akar.resolve()
+    terhapus: list[str] = []
+    for run in sesi.scalars(select(Run).where(Run.id.in_(run_ids))):
+        for jalur in {
+            Path(run.berkas_input).resolve().parent,
+            Path(run.berkas_peta).resolve().parent,
+        }:
+            if jalur != akar and akar in jalur.parents and jalur.exists():
+                shutil.rmtree(jalur, ignore_errors=True)
+                terhapus.append(str(jalur))
+    return terhapus
 
 
 def kueri_klaim() -> Select[tuple[Run]]:
-    """Kueri pengambilan job: ``FOR UPDATE SKIP LOCKED`` (MySQL 8) + satu job per (kdkab, tipe).
+    """Kueri pengambilan job: ``FOR UPDATE SKIP LOCKED`` (MySQL 8) + satu job per kab/tipe.
 
-    Diurutkan dari id terbesar supaya kalau ada beberapa job antre untuk
-    (kdkab, tipe) yang sama, yang **terbaru** yang dikerjakan.
+    Satu job aktif per (kdprov, kdkab, tipe): job yang (kdprov, kdkab, tipe)-nya
+    sedang berstatus ``jalan`` dilewati. Diurutkan dari id terkecil (urutan unggah)
+    supaya job antre lama tetap dikerjakan **berurutan** dan tidak ada yang
+    dibatalkan; run yang sukses terakhir jadi run dengan id terbesar.
     """
     lain = aliased(Run)
     sedang_jalan = (
         select(lain.id)
-        .where(lain.status == STATUS_JALAN, lain.tipe == Run.tipe, lain.kdkab == Run.kdkab)
+        .where(
+            lain.status == STATUS_JALAN,
+            lain.tipe == Run.tipe,
+            lain.kdprov == Run.kdprov,
+            lain.kdkab == Run.kdkab,
+        )
         .exists()
     )
     return (
         select(Run)
         .where(Run.status == STATUS_MENUNGGU, ~sedang_jalan)
-        .order_by(Run.id.desc())
+        .order_by(Run.id)
         .limit(1)
         .with_for_update(skip_locked=True)
     )
@@ -327,8 +248,9 @@ def kueri_klaim() -> Select[tuple[Run]]:
 def klaim_job(sesi: Session) -> Run | None:
     """Ambil satu job ``menunggu`` dengan ``FOR UPDATE SKIP LOCKED`` (MySQL 8).
 
-    Job yang (kdkab, tipe)-nya sedang dikerjakan worker lain dilewati, begitu pula
-    job antre lain untuk (kdkab, tipe) itu (ditandai ``digantikan``).
+    Job yang (kdprov, kdkab, tipe)-nya sedang dikerjakan worker lain dilewati; job
+    antre lain untuk kabupaten/tipe itu dibiarkan ``menunggu`` (dikerjakan
+    berurutan, tidak ada yang ditandai batal).
     """
     run = sesi.execute(kueri_klaim()).scalar_one_or_none()
     if run is None:
@@ -337,31 +259,32 @@ def klaim_job(sesi: Session) -> Run | None:
     run.status = STATUS_JALAN
     run.started_at = sekarang()
     run.pesan = None
-    sesi.execute(
-        update(Run)
-        .where(
-            Run.status == STATUS_MENUNGGU,
-            Run.tipe == run.tipe,
-            Run.kdkab == run.kdkab,
-            Run.id != run.id,
-        )
-        .values(status=STATUS_DIGANTIKAN, pesan="digantikan job yang lebih baru")
-    )
     sesi.commit()
     return run
 
 
-def proses_satu_job(sesi_pabrik: sessionmaker[Session] | None = None) -> bool:
+def bersihkan_hasil(sesi: Session, run_id: int) -> None:
+    """Buang sisa hasil/rekap satu job (job diulang atau gagal di tengah jalan)."""
+    sesi.execute(delete(TitikHasil).where(TitikHasil.run_id == run_id))
+    sesi.execute(delete(RekapDesa).where(RekapDesa.run_id == run_id))
+    sesi.execute(delete(RekapKabupaten).where(RekapKabupaten.run_id == run_id))
+
+
+def proses_satu_job(
+    sesi_pabrik: sessionmaker[Session] | None = None, setelan: Settings | None = None
+) -> bool:
     """Ambil lalu jalankan satu job; ``False`` kalau tidak ada job antre."""
     sesi_pabrik = sesi_pabrik or get_sessionmaker()
+    setelan = setelan or get_settings()
 
     with sesi_pabrik() as sesi:
         run = klaim_job(sesi)
         if run is None:
             return False
-        run_id, tipe, kdkab = run.id, run.tipe, run.kdkab
+        run_id, tipe, kdprov, kdkab = run.id, run.tipe, run.kdprov, run.kdkab
 
-    logger.info("job %s (%s, kdkab %s) mulai dikerjakan", run_id, tipe, kdkab)
+    logger.info("job %s (%s, %s/%s) mulai dikerjakan", run_id, tipe, kdprov, kdkab)
+    buang: list[int] = []
     try:
         with sesi_pabrik() as sesi:
             run = sesi.get(Run, run_id)
@@ -370,8 +293,7 @@ def proses_satu_job(sesi_pabrik: sessionmaker[Session] | None = None) -> bool:
                 return True
 
             # Bersihkan sisa hasil percobaan sebelumnya (bila job diulang).
-            sesi.execute(delete(TitikHasil).where(TitikHasil.run_id == run_id))
-            sesi.execute(delete(RekapSubsls).where(RekapSubsls.run_id == run_id))
+            bersihkan_hasil(sesi, run_id)
             sesi.commit()
 
             titik, peta = baca_masukan(run)
@@ -383,26 +305,38 @@ def proses_satu_job(sesi_pabrik: sessionmaker[Session] | None = None) -> bool:
             id_wilayah = wilayah.peta_id(sesi, kode_hasil(hasil))
             sesi.commit()
 
+            # Semua titik disimpan dulu supaya rekap bisa dihitung lewat query
+            # GROUP BY; sisanya dirampingkan di akhir (satu transaksi).
             jumlah = simpan_hasil(sesi, run, hasil, id_wilayah)
-            simpan_rekap(sesi, run)
+            modul_rekap.simpan_rekap(sesi, run)
 
             run.jumlah_baris = jumlah
             run.jumlah_tanpa_wilayah = hitung_tanpa_wilayah(sesi, run_id)
             run.status = STATUS_SUKSES
             run.finished_at = sekarang()
+            # Satu transaksi: rekap + status sukses + pemangkasan titik_hasil.
+            buang = modul_rekap.pangkas_titik_hasil(sesi, run)
             sesi.commit()
-            gantikan_hasil_lama(sesi, run)
-        logger.info("job %s sukses: %s baris", run_id, jumlah)
+        logger.info(
+            "job %s sukses: %s baris (titik_hasil run lain dipangkas: %s)",
+            run_id,
+            jumlah,
+            buang or "tidak ada",
+        )
+        if buang:
+            with sesi_pabrik() as sesi:
+                terhapus = pangkas_berkas(sesi, buang, Path(setelan.dir_unggahan))
+            logger.info("berkas mentah dihapus: %s", terhapus)
     except Exception as galat:  # noqa: BLE001 - pesan apa pun dicatat di runs.pesan
         logger.exception("job %s gagal", run_id)
         with sesi_pabrik() as sesi:
-            sesi.execute(delete(TitikHasil).where(TitikHasil.run_id == run_id))
-            sesi.execute(delete(RekapSubsls).where(RekapSubsls.run_id == run_id))
+            bersihkan_hasil(sesi, run_id)
             sesi.execute(
                 update(Run)
                 .where(Run.id == run_id)
                 .values(
                     status=STATUS_GAGAL,
+                    detail_tersedia=0,
                     pesan=str(galat)[:2000],
                     finished_at=sekarang(),
                 )
@@ -420,7 +354,7 @@ def jalankan_worker(
     setelan = setelan or get_settings()
     while not penghenti.is_set():
         try:
-            ada_job = proses_satu_job(sesi_pabrik)
+            ada_job = proses_satu_job(sesi_pabrik, setelan)
         except Exception:  # noqa: BLE001 - worker jangan mati karena satu galat
             logger.exception("worker gagal mengambil job")
             ada_job = False
