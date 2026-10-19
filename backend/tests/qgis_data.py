@@ -23,6 +23,11 @@ PETA_GEOJSON = (
 )
 OUTPUT_A_GPKG = DIR_DOCS / "hasil_identifikasi_titik_model1.gpkg"
 OUTPUT_B_GPKG = DIR_DOCS / "hasil_pengecekan_posisi_model2.gpkg"
+#: Keluaran model 2 pada data yang **sudah diedit** (ada titik digeser + atribut
+#: diubah manual) — 6 titik berbeda dari :data:`OUTPUT_B_GPKG`.
+OUTPUT_B_EDIT_GPKG = (
+    DIR_DOCS / "Titik Bangunan dan SLS" / "3307" / "hasil_edit_runmodel2.gpkg"
+)
 
 LAYER_TITIK = "geotag"
 LAYER_OUTPUT_A = "hasil_identifikasi_titik"
@@ -67,6 +72,11 @@ def ada_data_uji_b() -> bool:
     return ada_data_uji() and OUTPUT_B_GPKG.exists()
 
 
+def ada_data_uji_b_edit() -> bool:
+    """True bila data uji Proses B dengan titik digeser/diedit tersedia."""
+    return ada_data_uji() and OUTPUT_B_EDIT_GPKG.exists()
+
+
 def muat_titik() -> gpd.GeoDataFrame:
     """Baca titik bangunan (layer ``geotag``)."""
     return gpd.read_file(TITIK_GPKG, layer=LAYER_TITIK)
@@ -85,6 +95,41 @@ def muat_output_a() -> gpd.GeoDataFrame:
 def muat_output_b() -> gpd.GeoDataFrame:
     """Baca output Proses B dari QGIS sebagai pembanding."""
     return gpd.read_file(OUTPUT_B_GPKG, layer=LAYER_OUTPUT_B)
+
+
+def muat_output_b_edit() -> gpd.GeoDataFrame:
+    """Baca keluaran model 2 pada data yang sudah diedit (pembanding T2)."""
+    return gpd.read_file(OUTPUT_B_EDIT_GPKG, layer=LAYER_OUTPUT_B)
+
+
+def _kolom_angka(data: pd.DataFrame, nama: str) -> pd.Series:
+    """Kolom penanda dari QGIS bisa tersimpan sebagai teks: jadikan angka."""
+    return pd.to_numeric(data[nama], errors="coerce").fillna(0).astype(int)
+
+
+def muat_input_b_edit() -> gpd.GeoDataFrame:
+    """Susun masukan Proses B "sudah diedit" dari data uji yang tersedia.
+
+    Berkas :data:`OUTPUT_B_EDIT_GPKG` hanya memuat **keluaran** model 2, bukan
+    masukannya. Masukannya disusun ulang dari keluaran Proses A (yang jadi masukan
+    model) memakai dua suntingan yang terbaca dari keluarannya:
+
+    - geometri titik dengan ``flag_position`` = 1 diganti posisi barunya;
+    - ``flag_repair`` titik dengan ``flag_edit_atr_repair`` = 1 diubah jadi 0
+      (petugas menandai "sudah diperbaiki" lewat atribut, bukan lewat posisi).
+
+    Dua-duanya menghasilkan keluaran yang sama, jadi masukan ini sah untuk menguji
+    apakah :func:`app.proses_b.proses_b` meniru model QGIS persis.
+    """
+    titik = muat_output_a().set_index("assignment_id")
+    keluaran = muat_output_b_edit().set_index("assignment_id")
+
+    dipindah = _kolom_angka(keluaran, "flag_position") == 1
+    diubah = set(keluaran.index[_kolom_angka(keluaran, "flag_edit_atr_repair") == 1])
+
+    titik.loc[keluaran.index[dipindah], "geometry"] = keluaran.loc[dipindah, "geometry"]
+    titik.loc[sorted(diubah), "flag_repair"] = 0
+    return titik.reset_index()
 
 
 def bandingkan(

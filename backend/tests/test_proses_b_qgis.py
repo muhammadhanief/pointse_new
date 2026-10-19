@@ -15,9 +15,10 @@ Dua catatan penting soal data uji ini:
 2. Masukan titik = keluaran Proses A (``hasil_identifikasi_titik_model1.gpkg``),
    yaitu kasus "tidak ada titik yang digeser dan tidak ada atribut yang diedit":
    di file keluaran QGIS semua ``flag_position`` = 0 dan semua
-   ``flag_edit_atr_repair`` = 0. Jadi tes ini belum menguji kasus titik yang
-   benar-benar digeser/diedit (lihat tes unit di ``test_proses_b.py``); PRD §9
-   untuk Proses B baru bisa dinyatakan lulus penuh setelah ada data edit asli.
+   ``flag_edit_atr_repair`` = 0. Kasus titik yang benar-benar digeser/diedit diuji
+   terpisah di ``test_proses_b_edit_qgis.py`` (berkas
+   ``docs/Titik Bangunan dan SLS/3307/hasil_edit_runmodel2.gpkg``), jadi PRD §9 untuk
+   Proses B terpenuhi oleh gabungan kedua tes ini.
 """
 
 from __future__ import annotations
