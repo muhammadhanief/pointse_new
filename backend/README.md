@@ -1,4 +1,4 @@
-# Backend pointse
+﻿# Backend pointse
 
 FastAPI + geopandas/pyogrio/shapely + MySQL (SQLAlchemy + PyMySQL + Alembic).
 Semua hitungan spasial di Python, tanpa QGIS/PyQGIS. Hanya backend yang mengakses MySQL,
@@ -35,7 +35,9 @@ Copy-Item .env.example .env          # lalu isi kredensial MySQL
 | Method | Alamat | Keterangan |
 |---|---|---|
 | GET | `/health` | Cek aplikasi hidup |
-| POST | `/runs` | Unggah berkas (multipart: `tipe`, `titik`, `peta`, `user`, `layer_titik`, `layer_peta`, `tanggal_data`) → baris `runs` berstatus `menunggu`; `kdprov`/`kdkab`/`tanggal_data` diambil dari peta (tanggal default hari unggah) |
+| POST | `/geotag-master` | Unggah **geotag master** per kabupaten/kota (multipart: `kdprov`, `kdkab` 4 digit, `titik`, `user`, `layer`, `tanggal_data`). Berkas disimpan permanen di `DIR_MASTER`; semua `level_6_full_code` yang terisi harus berawalan `kdprov`+`kdkab` |
+| GET | `/geotag-master` | Daftar versi geotag master (saring `kdprov`/`kdkab`, paging), terbaru lebih dulu |
+| POST | `/runs` | Unggah berkas (multipart: `tipe`, `titik`, `peta`, `user`, `layer_titik`, `layer_peta`, `tanggal_data`) -> baris `runs` berstatus `menunggu`. **Proses A:** kirim `peta` saja; master dicari otomatis (409 kalau belum ada). **Proses B:** kirim `titik` saja (GPKG hasil edit A); peta diambil dari run A sukses terakhir. Mengirim kedua berkas tetap didukung untuk mode manual/uji |
 | GET | `/runs` | Daftar job (saring `tipe`, `status`, `kdprov`, `kdkab`; paging `limit`/`offset`), terbaru lebih dulu |
 | GET | `/ringkasan` | Ringkasan provinsi: satu baris per kabupaten/kota dari run terakhir, dibaca dari `rekap_kabupaten` (saring `tipe`/`kdprov`/`kdkab`, `dasar`); menyertakan `persen_progres` dan `belum_ada_upload_tipe_b` |
 | GET | `/tren` | Tren progres per `tanggal_data` (run sukses terakhir pada tanggal itu); `tingkat` = `kabupaten` (bawaan) atau `provinsi` |
@@ -52,22 +54,36 @@ Semua endpoint ekspor sudah memanggil `layanan.periksa_akses(kdprov, kdkab)` seb
 pemasangan otorisasi per wilayah untuk T4 (sekarang belum menolak apa pun). CSV memakai
 UTF-8 tanpa BOM dan pemisah koma.
 
-Belum ada autentikasi (T4). Isi `user` sementara dikirim lewat form.
+Belum ada autentikasi (T4). Isi `user` sementara dikirim lewat form. Fungsi
+`app/peran.py:peran_dari_org` sudah menyiapkan pemetaan sementara `org` 4 digit
+(`3300` = admin provinsi, `3307` = petugas kabupaten/kota), tetapi **belum
+ditegakkan** di endpoint sampai SSO terpasang.
 
 ## Alur pemrosesan
 
-1. `POST /runs` menyimpan berkas ke `DIR_UNGGAHAN/<uuid>/` dan memeriksa metadata:
-   kolom wajib ada, layer yang dipakai, dan `kdkab` di peta harus tunggal
-   (satu job = satu kabupaten/kota). `kdprov`/`kdkab` dari peta disimpan di `runs`.
-2. Worker mengambil job dengan `SELECT ... FOR UPDATE SKIP LOCKED` (MySQL 8), jadi aman
+1. **Geotag master (admin provinsi).** `POST /geotag-master` menyimpan geotag asli
+   ke `DIR_MASTER/<kdkab>/<uuid>/` (permanen, tidak ikut pemangkasan) dan memeriksa
+   bahwa semua `level_6_full_code` yang terisi berawalan kode kabupaten/kota 4 digit
+   (`kdprov`+`kdkab`, mis. `3307`). Versi lama tidak dihapus.
+2. **Proses A (kabupaten/kota).** `POST /runs` dengan `tipe=A` cukup mengirim `peta`.
+   Peta disimpan ke `DIR_UNGGAHAN/<uuid>/`, `kdprov`/`kdkab` dibaca dari peta, lalu
+   geotag master terbaru untuk kabupaten itu dipakai sebagai berkas titik. Kalau
+   master belum ada, unggahan ditolak `409` dan tidak ada job yang dibuat. Run A
+   mencatat `geotag_master_id`, sehingga master baru hanya memengaruhi run A baru.
+3. **Proses B (kabupaten/kota).** `POST /runs` dengan `tipe=B` cukup mengirim `titik`
+   (GPKG keluaran Proses A yang sudah diedit). Kabupaten/kota ditentukan dari 4 digit
+   pertama `level_6_full_code`; backend memakai run A sukses terakhir, menyalin peta
+   run A ke folder job B, dan mencatat `sumber_run_a_id`. Tidak perlu unggah peta lagi.
+4. `POST /runs` dengan kedua berkas tetap didukung untuk mode manual/uji (dan data lama).
+5. Worker mengambil job dengan `SELECT ... FOR UPDATE SKIP LOCKED` (MySQL 8), jadi aman
    dijalankan beberapa worker sekaligus (`MAX_WORKERS`). Job dikerjakan **sesuai urutan
    unggah** (id terkecil dulu) dan hanya **satu job aktif** per (`kdprov`, `kdkab`, `tipe`);
    job antre lain untuk kabupaten/tipe itu dibiarkan `menunggu` sampai gilirannya
    (tidak ada job yang dibatalkan/ditandai `digantikan`).
-3. Worker meng-upsert dimensi wilayah dari peta ke `wilayah`, menjalankan
+6. Worker meng-upsert dimensi wilayah dari peta ke `wilayah`, menjalankan
    `app.proses_a.proses_a` atau `app.proses_b.proses_b`, lalu menyimpan hasil ke
    `titik_hasil` per batch 10.000 baris (`runs.jumlah_baris` diperbarui tiap batch).
-4. Job sukses (satu transaksi): rekap dihitung lewat query GROUP BY (`app/rekap.py`) dan
+7. Job sukses (satu transaksi): rekap dihitung lewat query GROUP BY (`app/rekap.py`) dan
    disimpan sebagai snapshot di `rekap_kabupaten` + `rekap_desa`, `runs` diisi
    `jumlah_baris`/`jumlah_tanpa_wilayah`/`detail_tersedia`, lalu `titik_hasil` dan berkas
    mentah run lain untuk (`kdprov`, `kdkab`, `tipe`) yang sama dipangkas — hanya **baseline**
@@ -115,7 +131,8 @@ data. Di Linux/macOS memakai `resource.getrusage`; di Windows memakai API
 
 | Tabel | Isi |
 |---|---|
-| `runs` | satu baris per job: `tipe`, `kdprov`/`kdkab`, `tanggal_data` (tanggal data) + `created_at` (waktu unggah), status, `jumlah_baris`, `jumlah_tanpa_wilayah` (titik di luar poligon wilkerstat), `detail_tersedia` (baris `titik_hasil` masih disimpan), berkas masukan |
+| `runs` | satu baris per job: `tipe`, `kdprov`/`kdkab`, `tanggal_data` (tanggal data) + `created_at` (waktu unggah), status, `jumlah_baris`, `jumlah_tanpa_wilayah` (titik di luar poligon wilkerstat), `detail_tersedia` (baris `titik_hasil` masih disimpan), berkas masukan, `geotag_master_id` (versi master untuk run A), `sumber_run_a_id` (run A sumber peta untuk run B) |
+| `geotag_master` | versi geotag asli per kabupaten/kota dari admin provinsi: `kdprov`, `kdkab` 4 digit, `tanggal_data`, nama/berkas/layer, jumlah baris, pengunggah, `created_at`; berkas disimpan permanen di `DIR_MASTER`, tidak pernah ikut pemangkasan |
 | `wilayah` | dimensi wilayah: satu baris per SubSLS (`idsubsls`) dengan kode + nama; diisi dari peta lewat **upsert** dan tidak pernah dihapus |
 | `titik_hasil` | hasil per titik: kunci `(run_id, urut)`, flag (`flag_repair`, `flag_position`, …), `kk/btt/bku/bttk/bbtt`, `usaha`, koordinat, `level_6_full_code`, dan wilayah lewat `wilayah_asal_id`/`wilayah_edit_id`. **Hanya titik yang perlu perhatian** yang disimpan (`flag_repair` = 1, `flag_edit_atr_repair` = 1, atau tanpa wilayah); titik `benar_awal` hanya terhitung di rekap |
 | `rekap_desa` | snapshot rekap per **desa** (`kdprov`+`kdkab`+`kdkec`+`kddesa`) per job per `dasar`, plus baris "(tanpa wilayah)"; kunci utama `id` + `UNIQUE (run_id, dasar, kdprov, kdkab, kdkec, kddesa)` |

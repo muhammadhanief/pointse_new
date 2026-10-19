@@ -17,7 +17,10 @@ Lima tabel:
 - ``rekap_desa``   : snapshot rekap progres per **desa** (``kdprov``+``kdkab``+
   ``kdkec``+``kddesa``) per job per dasar, plus satu baris "(tanpa wilayah)";
 - ``rekap_kabupaten``: rekap yang sama dijumlahkan per **kabupaten/kota**
-  (``kdprov``+``kdkab``) per job per dasar; dibaca untuk ringkasan dan tren.
+  (``kdprov``+``kdkab``) per job per dasar; dibaca untuk ringkasan dan tren;
+- ``geotag_master``: geotag asli per kabupaten/kota yang diunggah admin provinsi.
+  Berkasnya disimpan permanen (tidak ikut pemangkasan) dan dipakai ulang oleh
+  banyak job Proses A. Versi lama tidak dihapus; job A mencatat versi yang dipakai.
 
 Dua tabel rekap memakai kolom hitungan yang sama, dua dasar
 (``DASAR_TUGAS``/``DASAR_POSISI``), dihitung lewat query GROUP BY di DB:
@@ -146,9 +149,45 @@ class Run(Base):
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
 
+    #: Versi geotag master yang dipakai job A (NULL untuk job lama/Proses B).
+    geotag_master_id: Mapped[int | None] = mapped_column(
+        ForeignKey("geotag_master.id", ondelete="SET NULL"), index=True
+    )
+    #: Job A terakhir yang menjadi sumber peta/keluaran untuk job B.
+    sumber_run_a_id: Mapped[int | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), index=True
+    )
+
     hasil: Mapped[list[TitikHasil]] = relationship(
         back_populates="run", cascade="all, delete-orphan", passive_deletes=True
     )
+
+
+class GeotagMaster(Base):
+    """Geotag asli per kabupaten/kota yang diunggah admin provinsi.
+
+    Berkas disimpan di ``DIR_MASTER`` (di luar folder unggahan run) agar tidak
+    terhapus oleh pemangkasan berkas mentah. Setiap unggahan baru menjadi versi
+    terbaru untuk (``kdprov``, ``kdkab``); versi lama tetap disimpan karena masih
+    dirujuk oleh job Proses A yang sudah dibuat.
+    """
+
+    __tablename__ = "geotag_master"
+    __table_args__ = (
+        Index("ix_geotag_master_kdprov_kdkab", "kdprov", "kdkab"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kdprov: Mapped[str] = mapped_column(String(4))
+    #: Kode 4 digit (provinsi + kabupaten/kota), mis. ``3307``.
+    kdkab: Mapped[str] = mapped_column(String(4))
+    tanggal_data: Mapped[date] = mapped_column(Date, default=hari_ini)
+    nama_file: Mapped[str] = mapped_column(String(255))
+    berkas: Mapped[str] = mapped_column(String(512))
+    layer: Mapped[str | None] = mapped_column(String(64))
+    jumlah_baris: Mapped[int | None] = mapped_column(Integer)
+    user: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
 
 
 class Wilayah(Base):

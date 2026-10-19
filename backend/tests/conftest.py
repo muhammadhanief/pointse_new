@@ -68,9 +68,21 @@ def dir_unggahan(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def setelan(dir_unggahan: Path) -> Settings:
+def dir_master(tmp_path: Path) -> Path:
+    """Folder geotag master khusus tes."""
+    tujuan = tmp_path / "master"
+    tujuan.mkdir()
+    return tujuan
+
+
+@pytest.fixture()
+def setelan(dir_unggahan: Path, dir_master: Path) -> Settings:
     """Setelan aplikasi untuk tes (worker mati, unggahan ke folder tes)."""
-    return Settings(worker_enabled=False, dir_unggahan=str(dir_unggahan))
+    return Settings(
+        worker_enabled=False,
+        dir_unggahan=str(dir_unggahan),
+        dir_master=str(dir_master),
+    )
 
 
 @pytest.fixture()

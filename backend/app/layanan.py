@@ -29,6 +29,7 @@ from app.models import (
     STATUS_SUKSES,
     TIPE_A,
     TIPE_B,
+    GeotagMaster,
     RekapDesa,
     RekapKabupaten,
     Run,
@@ -98,6 +99,30 @@ def periksa_akses(kdprov: str | None, kdkab: str | None) -> None:
     return None
 
 
+def kode_kabupaten(kdprov: str, kdkab: str) -> str:
+    """Kode kabupaten/kota 4 digit (``3307``), dari kode peta yang mungkin ``07``."""
+    prov = str(kdprov).strip()
+    kab = str(kdkab).strip()
+    if not prov or not kab:
+        raise KesalahanUnggahan("kdprov dan kdkab tidak boleh kosong")
+    if len(kab) == 2:
+        return f"{prov[:2]}{kab}"
+    return kab
+
+
+def normalisasi_kode_kabupaten(kdprov: str, kdkab: str) -> str:
+    """Validasi kode kabupaten/kota untuk master geotag (harus 4 digit)."""
+    prov = str(kdprov).strip()
+    kode = kode_kabupaten(prov, kdkab)
+    if len(prov) != 2 or not prov.isdigit():
+        raise KesalahanUnggahan("kdprov harus 2 digit, mis. 33")
+    if len(kode) != 4 or not kode.isdigit() or not kode.startswith(prov):
+        raise KesalahanUnggahan(
+            f"kdkab harus 4 digit dan berawalan kdprov ({prov}), mis. {prov}07"
+        )
+    return kode
+
+
 @dataclass(frozen=True)
 class InfoUnggahan:
     """Hasil pemeriksaan berkas unggahan sebelum baris ``runs`` dibuat."""
@@ -106,6 +131,34 @@ class InfoUnggahan:
     kdkab: str
     layer_input: str | None
     layer_peta: str | None
+
+    @property
+    def kode_kabupaten(self) -> str:
+        """Kode 4 digit untuk pencarian master geotag."""
+        return kode_kabupaten(self.kdprov, self.kdkab)
+
+
+@dataclass(frozen=True)
+class InfoMaster:
+    """Hasil pemeriksaan geotag master."""
+
+    layer: str | None
+    jumlah_baris: int
+
+
+@dataclass(frozen=True)
+class InfoTitikB:
+    """Hasil pemeriksaan berkas titik Proses B (tanpa peta)."""
+
+    kdprov: str
+    #: Kode 4 digit (provinsi + kabupaten/kota), mis. ``3307``.
+    kdkab: str
+    layer: str | None
+
+    @property
+    def kode_kabupaten(self) -> str:
+        """Kode 4 digit untuk pencarian run A terakhir."""
+        return self.kdkab
 
 
 def simpan_berkas(sumber: BinaryIO, tujuan: Path) -> int:
@@ -198,6 +251,75 @@ def periksa_unggahan(
     )
 
 
+def _kode_level_6(berkas: Path, layer: str | None) -> tuple[str, ...]:
+    """Baca ``level_6_full_code`` unik yang terisi dari berkas titik."""
+    data = pyogrio.read_dataframe(
+        berkas, layer=layer, columns=["level_6_full_code"], read_geometry=False
+    )
+    seri = data["level_6_full_code"].dropna().astype("string").str.strip()
+    seri = seri.str.replace(r"\.0$", "", regex=True)
+    return tuple(nilai for nilai in seri.unique() if nilai)
+
+
+def periksa_master_geotag(
+    berkas: Path, layer: str | None, kode_kab: str
+) -> InfoMaster:
+    """Periksa geotag master: layer cocok dan semua titik milik kabupaten itu.
+
+    ``level_6_full_code`` yang kosong diabaikan; kalau tidak ada satu pun kode,
+    berkas ditolak karena kabupatennya tidak bisa diverifikasi. Semua kode yang
+    terisi harus berawalan kode kabupaten/kota 4 digit (``kode_kab``).
+    """
+    nama_layer = pilih_layer(berkas, KOLOM_WAJIB[TIPE_A]["titik"], layer, "geotag")
+    kode = _kode_level_6(berkas, nama_layer)
+    if not kode:
+        raise KesalahanUnggahan(
+            "geotag tidak punya level_6_full_code; kabupaten/kota tidak bisa diverifikasi"
+        )
+
+    salah = [nilai for nilai in kode if not nilai.startswith(kode_kab)]
+    if salah:
+        contoh = ", ".join(salah[:5])
+        raise KesalahanUnggahan(
+            f"geotag berisi titik di luar kabupaten/kota {kode_kab} "
+            f"(contoh level_6_full_code: {contoh})"
+        )
+
+    info = pyogrio.read_info(berkas, layer=nama_layer)
+    return InfoMaster(layer=nama_layer, jumlah_baris=int(info["features"]))
+
+
+def periksa_titik_b(berkas: Path, layer: str | None) -> InfoTitikB:
+    """Periksa berkas titik Proses B dan tentukan kabupaten/kotanya.
+
+    Berkas B adalah keluaran Proses A yang sudah diedit, jadi tidak membawa peta.
+    Kabupaten/kota diturunkan dari 4 digit pertama ``level_6_full_code``.
+    """
+    nama_layer = pilih_layer(berkas, KOLOM_WAJIB[TIPE_B]["titik"], layer, "titik")
+    kode = _kode_level_6(berkas, nama_layer)
+    if not kode:
+        raise KesalahanUnggahan(
+            "titik Proses B tidak punya level_6_full_code; kabupaten/kota tidak bisa ditentukan"
+        )
+
+    awalan = {nilai[:4] for nilai in kode if len(nilai) >= 4 and nilai[:4].isdigit()}
+    if not awalan:
+        raise KesalahanUnggahan(
+            "level_6_full_code titik Proses B tidak berisi kode kabupaten/kota 4 digit"
+        )
+    if len(awalan) > 1:
+        contoh = ", ".join(sorted(awalan)[:5])
+        raise KesalahanUnggahan(
+            f"titik Proses B memuat lebih dari satu kabupaten/kota ({contoh}); "
+            "satu job hanya untuk satu kabupaten/kota"
+        )
+
+    kode_kab = awalan.pop()
+    return InfoTitikB(
+        kdprov=kode_kab[:2], kdkab=kode_kab, layer=nama_layer
+    )
+
+
 def buat_run(
     sesi: Session,
     *,
@@ -209,6 +331,8 @@ def buat_run(
     berkas_input: Path,
     berkas_peta: Path,
     tanggal_data: date | None = None,
+    geotag_master_id: int | None = None,
+    sumber_run_a_id: int | None = None,
 ) -> Run:
     """Buat baris ``runs`` berstatus ``menunggu`` (siap diambil worker)."""
     run = Run(
@@ -224,11 +348,110 @@ def buat_run(
         layer_input=info.layer_input,
         layer_peta=info.layer_peta,
         tanggal_data=hari_ini() if tanggal_data is None else tanggal_data,
+        geotag_master_id=geotag_master_id,
+        sumber_run_a_id=sumber_run_a_id,
     )
     sesi.add(run)
     sesi.commit()
     sesi.refresh(run)
     return run
+
+
+def buat_master(
+    sesi: Session,
+    *,
+    kdprov: str,
+    kdkab: str,
+    tanggal_data: date | None,
+    nama_file: str,
+    berkas: Path,
+    layer: str | None,
+    jumlah_baris: int | None,
+    user: str | None,
+) -> GeotagMaster:
+    """Simpan satu versi geotag master (versi lama tidak dihapus)."""
+    master = GeotagMaster(
+        kdprov=kdprov,
+        kdkab=kdkab,
+        tanggal_data=hari_ini() if tanggal_data is None else tanggal_data,
+        nama_file=nama_file,
+        berkas=str(berkas),
+        layer=layer,
+        jumlah_baris=jumlah_baris,
+        user=user,
+    )
+    sesi.add(master)
+    sesi.commit()
+    sesi.refresh(master)
+    return master
+
+
+def master_terbaru(sesi: Session, kode_kab: str) -> GeotagMaster | None:
+    """Versi geotag master terbaru untuk kabupaten/kota 4 digit."""
+    kode = str(kode_kab).strip()
+    return sesi.scalars(
+        select(GeotagMaster)
+        .where(GeotagMaster.kdkab == kode)
+        .order_by(GeotagMaster.id.desc())
+        .limit(1)
+    ).first()
+
+
+def daftar_master(
+    sesi: Session,
+    *,
+    kdprov: str | None = None,
+    kdkab: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[int, list[GeotagMaster]]:
+    """Daftar versi geotag master, terbaru lebih dulu."""
+    saring = []
+    if kdprov is not None:
+        saring.append(GeotagMaster.kdprov == kdprov)
+    if kdkab is not None:
+        kode = kdkab
+        if kdprov is not None and len(str(kdkab)) == 2:
+            kode = kode_kabupaten(kdprov, kdkab)
+        saring.append(GeotagMaster.kdkab == kode)
+
+    total = int(
+        sesi.scalar(
+            select(func.count()).select_from(GeotagMaster).where(*saring)
+        )
+        or 0
+    )
+    baris = list(
+        sesi.scalars(
+            select(GeotagMaster)
+            .where(*saring)
+            .order_by(GeotagMaster.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    )
+    return total, baris
+
+
+def run_a_terakhir(
+    sesi: Session, kdprov: str, kode_kab: str
+) -> Run | None:
+    """Run Proses A sukses terakhir untuk kabupaten/kota (peta untuk B)."""
+    kode = str(kode_kab).strip()
+    kandidat = {kode}
+    if len(kode) == 4:
+        kandidat.add(kode[2:])
+    return sesi.scalars(
+        select(Run)
+        .where(
+            Run.tipe == TIPE_A,
+            Run.status == STATUS_SUKSES,
+            Run.kdprov == kdprov,
+            Run.kdkab.in_(sorted(kandidat)),
+        )
+        .order_by(Run.id.desc())
+        .limit(1)
+    ).first()
 
 
 def ambil_run(sesi: Session, run_id: int) -> Run | None:

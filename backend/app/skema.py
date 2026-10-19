@@ -40,6 +40,31 @@ class RunOut(BaseModel):
     started_at: datetime | None = None
     heartbeat_at: datetime | None = None
     finished_at: datetime | None = None
+    geotag_master_id: int | None = None
+    sumber_run_a_id: int | None = None
+
+
+class MasterGeotagOut(BaseModel):
+    """Satu versi geotag master (tanpa path berkas di disk)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    kdprov: str
+    kdkab: str
+    tanggal_data: date
+    nama_file: str
+    layer: str | None = None
+    jumlah_baris: int | None = None
+    user: str | None = None
+    created_at: datetime
+
+
+class DaftarMasterOut(BaseModel):
+    """Balasan daftar geotag master (terbaru lebih dulu)."""
+
+    total: int
+    baris: list[MasterGeotagOut]
 
 
 class RunDetailOut(RunOut):

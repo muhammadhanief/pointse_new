@@ -33,8 +33,10 @@ from app.layanan import (
 )
 from app.models import DASAR_TUGAS, TIPE_A, TIPE_B, Run
 from app.skema import (
+    DaftarMasterOut,
     DaftarRunOut,
     HasilOut,
+    MasterGeotagOut,
     PerubahanOut,
     RekapDetailOut,
     RekapOut,
@@ -72,8 +74,20 @@ def _ambil_run(sesi: Session, run_id: int) -> Run:
 @router.post("/runs", response_model=RunOut, status_code=201)
 def unggah_run(
     tipe: str = Form(..., description=f"'{TIPE_A}' (identifikasi titik) atau '{TIPE_B}'"),
-    titik: UploadFile = File(..., description="Berkas titik (GPKG/GeoJSON)"),
-    peta: UploadFile = File(..., description="Berkas peta batas wilkerstat (GPKG/GeoJSON)"),
+    titik: UploadFile | None = File(
+        None,
+        description=(
+            "Proses A: kosongkan (geotag master dipakai otomatis). "
+            "Proses B: berkas GPKG hasil edit Proses A."
+        ),
+    ),
+    peta: UploadFile | None = File(
+        None,
+        description=(
+            "Proses A: peta batas wilkerstat. "
+            "Proses B: kosongkan (peta diambil dari run A terakhir)."
+        ),
+    ),
     user: str | None = Form(None, description="Nama pengguna (sementara dari form, belum SSO)"),
     tanggal_data: date | None = Form(None, description="Tanggal data (default: tanggal unggah)"),
     layer_titik: str | None = Form(None, description="Nama layer berkas titik (wajib untuk GPKG banyak layer)"),
@@ -83,6 +97,16 @@ def unggah_run(
 ) -> Run:
     """Unggah berkas masukan dan antrekan job (status ``menunggu``).
 
+    Dua alur yang didukung:
+
+    - **A baru**: unggah ``peta`` saja; backend mencari geotag master terbaru
+      untuk kabupaten/kota itu (ditolak 409 kalau belum ada), lalu membuat job A
+      memakai master tersebut. Peta disimpan di folder job seperti biasa.
+    - **B baru**: unggah ``titik`` saja (GPKG hasil edit A); backend memakai run A
+      sukses terakhir untuk kabupaten/kota itu, menyalin petanya ke folder job B,
+      lalu membuat job B.
+
+    Mengirim kedua berkas tetap didukung untuk kompatibilitas (mode manual/uji).
     Job lama untuk kabupaten/kota+tipe yang sama **tidak** dihapus/ditandai: semua
     job antre dikerjakan berurutan oleh worker.
     """
@@ -91,33 +115,206 @@ def unggah_run(
         raise HTTPException(
             status_code=422, detail=f"tipe harus '{TIPE_A}' atau '{TIPE_B}', bukan '{tipe}'"
         )
+    if tipe_bersih == TIPE_A and peta is None:
+        raise HTTPException(
+            status_code=422, detail="Proses A butuh berkas peta batas wilkerstat"
+        )
+    if tipe_bersih == TIPE_B and titik is None:
+        raise HTTPException(
+            status_code=422, detail="Proses B butuh berkas titik hasil edit Proses A"
+        )
 
     dir_run = Path(setelan.dir_unggahan) / uuid.uuid4().hex
     try:
-        berkas_input = _simpan_unggahan(titik, dir_run, "titik")
-        berkas_peta = _simpan_unggahan(peta, dir_run, "peta")
-        info = layanan.periksa_unggahan(
-            tipe_bersih, berkas_input, berkas_peta, layer_titik, layer_peta
-        )
-        run = layanan.buat_run(
-            sesi,
-            tipe=tipe_bersih,
-            info=info,
-            user=user,
-            nama_input=Path(titik.filename or berkas_input.name).name,
-            nama_peta=Path(peta.filename or berkas_peta.name).name,
-            berkas_input=berkas_input,
-            berkas_peta=berkas_peta,
-            tanggal_data=tanggal_data,
-        )
+        if tipe_bersih == TIPE_A:
+            berkas_peta = _simpan_unggahan(peta, dir_run, "peta")
+            if titik is not None:
+                # Mode manual/uji: kedua berkas diunggah langsung.
+                berkas_input = _simpan_unggahan(titik, dir_run, "titik")
+                info = layanan.periksa_unggahan(
+                    tipe_bersih, berkas_input, berkas_peta, layer_titik, layer_peta
+                )
+                run = layanan.buat_run(
+                    sesi,
+                    tipe=tipe_bersih,
+                    info=info,
+                    user=user,
+                    nama_input=Path(titik.filename or berkas_input.name).name,
+                    nama_peta=Path(peta.filename or berkas_peta.name).name,
+                    berkas_input=berkas_input,
+                    berkas_peta=berkas_peta,
+                    tanggal_data=tanggal_data,
+                )
+            else:
+                # Alur baru: peta dari kabkot + geotag master dari provinsi.
+                nama_peta, kdprov, kdkab = layanan.periksa_peta(berkas_peta, layer_peta)
+                kode = layanan.kode_kabupaten(kdprov, kdkab)
+                master = layanan.master_terbaru(sesi, kode)
+                if master is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"geotag master untuk kabupaten/kota {kode} belum tersedia; "
+                            "minta admin provinsi mengunggahnya lebih dulu"
+                        ),
+                    )
+                info = layanan.InfoUnggahan(
+                    kdprov=kdprov,
+                    kdkab=kdkab,
+                    layer_input=master.layer,
+                    layer_peta=nama_peta,
+                )
+                run = layanan.buat_run(
+                    sesi,
+                    tipe=tipe_bersih,
+                    info=info,
+                    user=user,
+                    nama_input=master.nama_file,
+                    nama_peta=Path(peta.filename or berkas_peta.name).name,
+                    berkas_input=Path(master.berkas),
+                    berkas_peta=berkas_peta,
+                    tanggal_data=tanggal_data or master.tanggal_data,
+                    geotag_master_id=master.id,
+                )
+        else:
+            berkas_input = _simpan_unggahan(titik, dir_run, "titik")
+            if peta is not None:
+                # Mode manual/uji: peta ikut diunggah.
+                berkas_peta = _simpan_unggahan(peta, dir_run, "peta")
+                info = layanan.periksa_unggahan(
+                    tipe_bersih, berkas_input, berkas_peta, layer_titik, layer_peta
+                )
+                run = layanan.buat_run(
+                    sesi,
+                    tipe=tipe_bersih,
+                    info=info,
+                    user=user,
+                    nama_input=Path(titik.filename or berkas_input.name).name,
+                    nama_peta=Path(peta.filename or berkas_peta.name).name,
+                    berkas_input=berkas_input,
+                    berkas_peta=berkas_peta,
+                    tanggal_data=tanggal_data,
+                )
+            else:
+                # Alur baru: peta diambil dari run A terakhir, bukan diunggah ulang.
+                info_b = layanan.periksa_titik_b(berkas_input, layer_titik)
+                sumber_a = layanan.run_a_terakhir(
+                    sesi, info_b.kdprov, info_b.kode_kabupaten
+                )
+                if sumber_a is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"belum ada Proses A yang sukses untuk kabupaten/kota "
+                            f"{info_b.kode_kabupaten}; jalankan Proses A lebih dulu"
+                        ),
+                    )
+                sumber_peta = Path(sumber_a.berkas_peta)
+                if not sumber_peta.exists():
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"berkas peta run A {sumber_a.id} sudah tidak tersedia; "
+                            "unggah ulang peta atau jalankan Proses A lagi"
+                        ),
+                    )
+                tujuan_peta = dir_run / f"peta_{sumber_peta.name}"
+                shutil.copy2(sumber_peta, tujuan_peta)
+                info = layanan.InfoUnggahan(
+                    kdprov=sumber_a.kdprov,
+                    kdkab=sumber_a.kdkab,
+                    layer_input=info_b.layer,
+                    layer_peta=sumber_a.layer_peta,
+                )
+                run = layanan.buat_run(
+                    sesi,
+                    tipe=tipe_bersih,
+                    info=info,
+                    user=user,
+                    nama_input=Path(titik.filename or berkas_input.name).name,
+                    nama_peta=sumber_a.nama_file_peta,
+                    berkas_input=berkas_input,
+                    berkas_peta=tujuan_peta,
+                    tanggal_data=tanggal_data,
+                    sumber_run_a_id=sumber_a.id,
+                )
     except KesalahanUnggahan as galat:
         shutil.rmtree(dir_run, ignore_errors=True)
         raise HTTPException(status_code=422, detail=str(galat)) from galat
+    except HTTPException:
+        shutil.rmtree(dir_run, ignore_errors=True)
+        raise
     except Exception:
         shutil.rmtree(dir_run, ignore_errors=True)
         raise
 
     return run
+
+
+@router.post("/geotag-master", response_model=MasterGeotagOut, status_code=201)
+def unggah_master_geotag(
+    kdprov: str = Form(..., description="Kode provinsi 2 digit, mis. 33"),
+    kdkab: str = Form(..., description="Kode kabupaten/kota 4 digit, mis. 3307"),
+    titik: UploadFile = File(..., description="Berkas geotag asli kabupaten/kota (GPKG/GeoJSON)"),
+    tanggal_data: date | None = Form(None, description="Tanggal data geotag (default: hari ini)"),
+    layer: str | None = Form(None, description="Nama layer berkas geotag"),
+    user: str | None = Form(None, description="Nama pengguna (sementara dari form, belum SSO)"),
+    sesi: Session = Depends(get_session),
+    setelan: Settings = Depends(get_settings),
+) -> MasterGeotagOut:
+    """Unggah geotag master per kabupaten/kota (admin provinsi).
+
+    Berkas disimpan permanen di ``DIR_MASTER`` (tidak ikut pemangkasan run).
+    Setiap unggahan menjadi versi terbaru untuk kabupaten/kota tersebut; run A
+    yang sudah dibuat tetap memakai versi yang tercatat di run-nya.
+    """
+    try:
+        kode = layanan.normalisasi_kode_kabupaten(kdprov, kdkab)
+    except KesalahanUnggahan as galat:
+        raise HTTPException(status_code=422, detail=str(galat)) from galat
+
+    layanan.periksa_akses(kode[:2], kode)
+    dir_master = Path(setelan.dir_master) / kode / uuid.uuid4().hex
+    try:
+        berkas = _simpan_unggahan(titik, dir_master, "geotag")
+        info = layanan.periksa_master_geotag(berkas, layer, kode)
+        master = layanan.buat_master(
+            sesi,
+            kdprov=kode[:2],
+            kdkab=kode,
+            tanggal_data=tanggal_data,
+            nama_file=Path(titik.filename or berkas.name).name,
+            berkas=berkas,
+            layer=info.layer,
+            jumlah_baris=info.jumlah_baris,
+            user=user,
+        )
+    except KesalahanUnggahan as galat:
+        shutil.rmtree(dir_master, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=str(galat)) from galat
+    except Exception:
+        shutil.rmtree(dir_master, ignore_errors=True)
+        raise
+
+    return MasterGeotagOut.model_validate(master)
+
+
+@router.get("/geotag-master", response_model=DaftarMasterOut)
+def daftar_master_geotag(
+    kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
+    kdkab: str | None = Query(None, description="Kode kabupaten/kota 4 digit, mis. 3307"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    sesi: Session = Depends(get_session),
+) -> DaftarMasterOut:
+    """Daftar versi geotag master (terbaru lebih dulu)."""
+    layanan.periksa_akses(kdprov, kdkab)
+    total, baris = layanan.daftar_master(
+        sesi, kdprov=kdprov, kdkab=kdkab, limit=limit, offset=offset
+    )
+    return DaftarMasterOut(
+        total=total, baris=[MasterGeotagOut.model_validate(satu) for satu in baris]
+    )
 
 
 @router.get("/runs", response_model=DaftarRunOut)

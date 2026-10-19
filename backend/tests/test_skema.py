@@ -19,6 +19,7 @@ from app.models import (
     DASAR_POSISI,
     DASAR_TUGAS,
     KOLOM_HITUNGAN,
+    GeotagMaster,
     RekapDesa,
     RekapKabupaten,
     Run,
@@ -145,10 +146,11 @@ def test_flag_pakai_tinyint_di_mysql() -> None:
 
 
 def test_setelan_default() -> None:
-    """Default env: satu worker, worker menyala, folder unggahan data/unggahan."""
+    """Default env: satu worker, worker menyala, folder unggahan/master terpisah."""
     assert Settings.model_fields["max_workers"].default == 1
     assert Settings.model_fields["worker_enabled"].default is True
     assert Settings.model_fields["dir_unggahan"].default == "data/unggahan"
+    assert Settings.model_fields["dir_master"].default == "data/master"
 
 
 def test_assignment_id_unik_per_job(sesi: Session) -> None:
@@ -235,6 +237,16 @@ def test_sql_migrasi_untuk_mysql(capsys: pytest.CaptureFixture[str]) -> None:
     # migrasi 0006: heartbeat job + urut BIGINT untuk kunci sementara mode potongan
     assert "ALTER TABLE runs ADD COLUMN heartbeat_at DATETIME" in sql
     assert "ALTER TABLE titik_hasil MODIFY urut BIGINT NOT NULL" in sql
+    # migrasi 0007: geotag master permanen + sumber run A untuk Proses B
+    assert "CREATE TABLE geotag_master" in sql
+    assert "ALTER TABLE runs ADD COLUMN geotag_master_id INTEGER" in sql
+    assert "ALTER TABLE runs ADD COLUMN sumber_run_a_id INTEGER" in sql
+    assert (
+        "CREATE INDEX ix_geotag_master_kdprov_kdkab ON geotag_master (kdprov, kdkab)"
+        in sql
+    )
+    assert "FOREIGN KEY(geotag_master_id) REFERENCES geotag_master (id)" in sql
+    assert "FOREIGN KEY(sumber_run_a_id) REFERENCES runs (id)" in sql
 
 
 def test_migrasi_0005_mengisi_rekap_dari_data_lama(tmp_path: Path) -> None:
@@ -388,9 +400,14 @@ def test_migrasi_alembic_sesuai_model(tmp_path: Path) -> None:
     mesin = buat_engine(url)
     try:
         pemeriksa = inspect(mesin)
-        assert {"runs", "wilayah", "titik_hasil", "rekap_desa", "rekap_kabupaten"} <= set(
-            pemeriksa.get_table_names()
-        )
+        assert {
+            "runs",
+            "wilayah",
+            "titik_hasil",
+            "rekap_desa",
+            "rekap_kabupaten",
+            "geotag_master",
+        } <= set(pemeriksa.get_table_names())
         assert "rekap_subsls" not in set(pemeriksa.get_table_names())
 
         for tabel, model in (
@@ -399,6 +416,7 @@ def test_migrasi_alembic_sesuai_model(tmp_path: Path) -> None:
             ("wilayah", Wilayah),
             ("rekap_desa", RekapDesa),
             ("rekap_kabupaten", RekapKabupaten),
+            ("geotag_master", GeotagMaster),
         ):
             assert {kolom["name"] for kolom in pemeriksa.get_columns(tabel)} == set(
                 model.__table__.columns.keys()

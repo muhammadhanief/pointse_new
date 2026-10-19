@@ -30,6 +30,8 @@ class Settings(BaseSettings):
 
     # Unggahan berkas mentah (GPKG/GeoJSON) disimpan di disk server, bukan di DB
     dir_unggahan: str = "data/unggahan"
+    #: Geotag master per kabupaten (permanen, tidak ikut pemangkasan run).
+    dir_master: str = "data/master"
 
     # Worker pemroses job Proses A/B
     worker_enabled: bool = True

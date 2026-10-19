@@ -350,10 +350,12 @@ def pangkas_berkas(sesi: Session, run_ids: list[int], akar: Path) -> list[str]:
     akar = akar.resolve()
     terhapus: list[str] = []
     for run in sesi.scalars(select(Run).where(Run.id.in_(run_ids))):
-        for jalur in {
-            Path(run.berkas_input).resolve().parent,
-            Path(run.berkas_peta).resolve().parent,
-        }:
+        # Berkas input run A bisa menunjuk geotag master (permanen); jangan
+        # menghapus foldernya. Folder peta tetap dipangkas.
+        jalur_hapus = {Path(run.berkas_peta).resolve().parent}
+        if run.geotag_master_id is None:
+            jalur_hapus.add(Path(run.berkas_input).resolve().parent)
+        for jalur in jalur_hapus:
             if jalur != akar and akar in jalur.parents and jalur.exists():
                 shutil.rmtree(jalur, ignore_errors=True)
                 terhapus.append(str(jalur))
