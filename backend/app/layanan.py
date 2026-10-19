@@ -6,24 +6,28 @@ menjalankannya di threadpool, jadi event loop tidak terblokir.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal
 
 import pyogrio
-from sqlalchemy import case, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, aliased
 
 from app.models import (
+    DASAR_TUGAS,
     STATUS_MENUNGGU,
     TIPE_A,
     TIPE_B,
+    RekapSubsls,
     Run,
     TitikHasil,
+    Wilayah,
 )
 from app.proses_a import KOLOM_PETA, KOLOM_TITIK
 from app.proses_b import KOLOM_TITIK_B
+from app.wilayah import KOLOM_DIMENSI as KOLOM_WILAYAH
 
 # Kolom wajib tiap berkas masukan, per tipe proses.
 KOLOM_WAJIB: dict[str, dict[str, Sequence[str]]] = {
@@ -31,15 +35,23 @@ KOLOM_WAJIB: dict[str, dict[str, Sequence[str]]] = {
     TIPE_B: {"titik": KOLOM_TITIK_B, "peta": KOLOM_PETA},
 }
 
-# Tingkat rekap progres (PRD §5): kolom kode + kolom nama.
+# Tingkat rekap progres (PRD §5): kolom kode + kolom nama pada tabel ``wilayah``.
+# ``sls`` = tingkat SLS (idsls), ``subsls`` = tingkat SubSLS (idsubsls, level_6).
 TINGKAT: dict[str, tuple[str, str]] = {
     "kabupaten": ("kdkab", "nmkab"),
     "kecamatan": ("kdkec", "nmkec"),
     "desa": ("kddesa", "nmdesa"),
-    "sls": ("idsubsls_origin", "nmsls"),
+    "sls": ("idsls", "nmsls"),
+    "subsls": ("idsubsls", "nmsls"),
 }
 
-Tingkat = Literal["kabupaten", "kecamatan", "desa", "sls"]
+Tingkat = Literal["kabupaten", "kecamatan", "desa", "sls", "subsls"]
+Dasar = Literal["tugas", "posisi"]
+
+# Nama kolom ``titik_hasil`` yang dibalas API.
+KOLOM_TITIK_HASIL: tuple[str, ...] = tuple(
+    kolom.name for kolom in TitikHasil.__table__.columns
+)
 
 UKURAN_POTONGAN = 1024 * 1024  # 1 MB per potong saat menyimpan unggahan
 
@@ -211,11 +223,33 @@ def daftar_run(
     return total, baris
 
 
+def _wilayah_dict(baris: Mapping[str, Any], awalan: str) -> dict[str, Any] | None:
+    """Susun dict wilayah dari kolom berawalan (``tugas_``/``asal_``/``edit_``)."""
+    if baris.get(f"{awalan}_idsubsls") is None:
+        return None
+    return {kolom: baris.get(f"{awalan}_{kolom}") for kolom in KOLOM_WILAYAH}
+
+
 def hasil_run(
     sesi: Session, run_id: int, *, limit: int = 100, offset: int = 0
 ) -> tuple[int, list[dict[str, object]]]:
-    """Sebagian baris hasil (paging), urut seperti keluaran Proses A/B."""
-    kolom = [kol for kol in TitikHasil.__table__.columns if kol.name != "id"]
+    """Sebagian baris hasil (paging), urut seperti keluaran Proses A/B.
+
+    Nama/kode wilayah diambil dari tabel ``wilayah`` lewat join: ``wilayah_tugas``
+    (dari ``level_6_full_code``), ``wilayah_asal`` (hasil join peta), dan
+    ``wilayah_edit`` (hasil join peta untuk Proses B).
+    """
+    tugas = aliased(Wilayah, name="wilayah_tugas")
+    asal = aliased(Wilayah, name="wilayah_asal")
+    edit = aliased(Wilayah, name="wilayah_edit")
+
+    kolom: list[Any] = [TitikHasil.__table__.columns[nama] for nama in KOLOM_TITIK_HASIL]
+    kolom += [
+        getattr(peta, nama).label(f"{awalan}_{nama}")
+        for awalan, peta in (("tugas", tugas), ("asal", asal), ("edit", edit))
+        for nama in KOLOM_WILAYAH
+    ]
+
     total = int(
         sesi.scalar(
             select(func.count()).select_from(TitikHasil).where(TitikHasil.run_id == run_id)
@@ -224,17 +258,25 @@ def hasil_run(
     )
     baris = sesi.execute(
         select(*kolom)
+        .join(tugas, tugas.idsubsls == TitikHasil.level_6_full_code, isouter=True)
+        .join(asal, asal.id == TitikHasil.wilayah_asal_id, isouter=True)
+        .join(edit, edit.id == TitikHasil.wilayah_edit_id, isouter=True)
         .where(TitikHasil.run_id == run_id)
-        .order_by(TitikHasil.id)
+        .order_by(TitikHasil.urut)
         .limit(limit)
         .offset(offset)
     ).mappings()
-    return total, [dict(b) for b in baris]
 
-
-def _kasus(syarat: object) -> object:
-    """``CASE WHEN syarat THEN 1 ELSE 0 END`` portabel (MySQL & SQLite)."""
-    return case((syarat, 1), else_=0)
+    keluaran: list[dict[str, object]] = [
+        {
+            **{nama: satu[nama] for nama in KOLOM_TITIK_HASIL},
+            "wilayah_tugas": _wilayah_dict(satu, "tugas"),
+            "wilayah_asal": _wilayah_dict(satu, "asal"),
+            "wilayah_edit": _wilayah_dict(satu, "edit"),
+        }
+        for satu in baris
+    ]
+    return total, keluaran
 
 
 def _persen(belum: object, jumlah: object) -> object:
@@ -242,16 +284,19 @@ def _persen(belum: object, jumlah: object) -> object:
     return func.round(100.0 * belum / func.nullif(jumlah, 0), 2)
 
 
-def rekap_run(sesi: Session, run_id: int, tingkat: Tingkat) -> dict[str, object]:
-    """Rekap progres per wilayah: hitungan dan persentase ``flag_repair``.
+def rekap_run(
+    sesi: Session, run_id: int, tingkat: Tingkat, dasar: str = DASAR_TUGAS
+) -> dict[str, object]:
+    """Rekap progres per wilayah untuk satu dasar (``tugas``/``posisi``).
 
-    Dihitung lewat query (GROUP BY) di basis data, bukan di Python (PRD §7).
+    Angka diambil dari snapshot ``rekap_subsls`` (bukan memindai ``titik_hasil``)
+    lalu dijumlahkan per tingkat wilayah dengan GROUP BY di basis data (PRD §7).
     """
-    kolom_kode, kolom_nama = (getattr(TitikHasil, nama) for nama in TINGKAT[tingkat])
+    kolom_kode, kolom_nama = (getattr(Wilayah, nama) for nama in TINGKAT[tingkat])
 
-    belum = func.coalesce(func.sum(_kasus(TitikHasil.flag_repair == 1)), 0)
-    sudah = func.coalesce(func.sum(_kasus(TitikHasil.flag_repair == 0)), 0)
-    jumlah = func.count()
+    belum = func.coalesce(func.sum(RekapSubsls.belum), 0)
+    sudah = func.coalesce(func.sum(RekapSubsls.sudah), 0)
+    jumlah = func.coalesce(func.sum(RekapSubsls.jumlah), 0)
 
     per_kelompok = sesi.execute(
         select(
@@ -262,7 +307,8 @@ def rekap_run(sesi: Session, run_id: int, tingkat: Tingkat) -> dict[str, object]
             belum.label("belum"),
             _persen(belum, jumlah).label("persen_belum"),
         )
-        .where(TitikHasil.run_id == run_id)
+        .join(Wilayah, Wilayah.id == RekapSubsls.wilayah_id)
+        .where(RekapSubsls.run_id == run_id, RekapSubsls.dasar == dasar)
         .group_by(kolom_kode, kolom_nama)
         .order_by(kolom_kode)
     ).mappings()
@@ -278,9 +324,6 @@ def rekap_run(sesi: Session, run_id: int, tingkat: Tingkat) -> dict[str, object]
         }
         for hasil in per_kelompok
     ]
-    for satu in baris:
-        if satu["nama"] is None:
-            satu["nama"] = "(titik tidak masuk wilayah)"
 
     total = sum(satu["jumlah"] for satu in baris)
     sudah_total = sum(satu["sudah"] for satu in baris)
@@ -288,6 +331,7 @@ def rekap_run(sesi: Session, run_id: int, tingkat: Tingkat) -> dict[str, object]
     return {
         "run_id": run_id,
         "tingkat": tingkat,
+        "dasar": dasar,
         "total": total,
         "sudah": sudah_total,
         "belum": belum_total,

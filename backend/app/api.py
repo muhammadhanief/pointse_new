@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 from app import layanan
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.layanan import KesalahanUnggahan, Tingkat
-from app.models import TIPE_A, TIPE_B, Run
+from app.layanan import Dasar, KesalahanUnggahan, Tingkat
+from app.models import DASAR_TUGAS, TIPE_A, TIPE_B, Run
 from app.skema import DaftarRunOut, HasilOut, RekapOut, RunDetailOut, RunOut
 
 router = APIRouter()
@@ -133,10 +133,14 @@ def hasil_run(
 @router.get("/runs/{run_id}/rekap", response_model=RekapOut)
 def rekap_run(
     run_id: int,
-    tingkat: Tingkat = Query("kabupaten", description="kabupaten/kecamatan/desa/sls"),
+    tingkat: Tingkat = Query("kabupaten", description="kabupaten/kecamatan/desa/sls/subsls"),
+    dasar: Dasar = Query(DASAR_TUGAS, description="'tugas' (wilayah penugasan) atau 'posisi'"),
     sesi: Session = Depends(get_session),
 ) -> RekapOut:
-    """Rekap progres per wilayah: jumlah dan persentase titik belum diperbaiki."""
+    """Rekap progres per wilayah: jumlah dan persentase titik belum diperbaiki.
+
+    Diambil dari snapshot ``rekap_subsls`` hasil job (default dasar ``tugas``).
+    """
     if layanan.ambil_run(sesi, run_id) is None:
         raise HTTPException(status_code=404, detail=f"job {run_id} tidak ditemukan")
-    return RekapOut.model_validate(layanan.rekap_run(sesi, run_id, tingkat))
+    return RekapOut.model_validate(layanan.rekap_run(sesi, run_id, tingkat, dasar))

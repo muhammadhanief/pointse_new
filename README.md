@@ -64,10 +64,40 @@ T3 juga sudah diuji **end-to-end lawan MariaDB asli** (`pointse_new`; kredensial
 - `alembic upgrade head` jalan dan `alembic check` bersih (skema DB = model ORM).
 - Data uji penuh kdkab 3307 (397.443 titik) diunggah lewat `POST /runs` dan diproses worker:
   397.364 baris tersimpan (79 duplikat `assignment_id` dibuang — sama dengan output QGIS),
-  rekap kabupaten/kecamatan/desa/sls sesuai (265 desa, 7.799 SubSLS, 48.364 titik belum diperbaiki).
+  `jumlah_tanpa_wilayah` = 82 (titik di luar semua poligon), rekap kabupaten/kecamatan/desa/sls
+  sesuai (264 desa, 7.567 SubSLS pada dasar `tugas`, 7.798 pada dasar `posisi`,
+  48.364 titik belum diperbaiki).
 - Satu job aktif per (kdkab, tipe) terbukti: unggahan baru membuat job lama berstatus
   `digantikan` dan `titik_hasil`-nya dihapus.
-- Performa: penyimpanan ±1.000 baris/detik saat backend jauh dari server DB (latensi jaringan
-  per batch 10.000 baris). Untuk produksi, jalankan worker di server yang sama dengan MySQL.
+- Performa: 397.364 baris tersimpan dalam ±45 detik (±9.000 baris/detik) pada pengukuran ini,
+  termasuk waktu tulis ke MariaDB yang jauh dari mesin uji. Untuk produksi, jalankan worker di
+  server yang sama dengan MySQL.
 - Peta SLS memakai kode wilayah pendek (`kdkab` `07`, `kddesa` `005`), jadi nilai `runs.kdkab`
   dan kolom wilayah mengikuti kode di berkas sumber.
+
+## Catatan normalisasi skema (T3 lanjutan, migrasi `0002`)
+
+Agar DB tidak membengkak saat dipakai semua kabupaten/kota, skema awal dirapikan:
+
+- `wilayah` — dimensi wilayah (satu baris per SubSLS `idsubsls`, 11 kolom kode + nama). Diisi
+  dari peta yang diunggah dengan aturan **upsert** (tidak pernah dihapus).
+- `titik_hasil` — hanya kolom yang dipakai dashboard: flag, `kk/btt/bku/bttk/bbtt`, `usaha`,
+  4 kolom koordinat, `level_6_full_code`, dan wilayah sebagai **id** (`wilayah_asal_id`,
+  `wilayah_edit_id`). Kolom atribut bangunan dan nama/kode wilayah dibuang (berkas mentah di
+  disk tetap sumber lengkapnya).
+- `rekap_subsls` — snapshot rekap per SubSLS per job untuk dua dasar: `tugas`
+  (`level_6_full_code`, wilayah penugasan titik) dan `posisi` (hasil join peta). Dashboard
+  membaca tabel ini, jadi tidak pernah memindai `titik_hasil`.
+- `runs.jumlah_tanpa_wilayah` — jumlah titik yang tidak masuk poligon wilkerstat mana pun.
+
+Hasil ukur pada data uji penuh satu kabupaten (397.364 baris, MariaDB):
+
+| Tabel | Sebelum | Sesudah |
+|---|---|---|
+| `titik_hasil` (data + indeks) | 223,48 MB | 106,73 MB |
+| `wilayah` | — | 2,11 MB (7.966 baris) |
+| `rekap_subsls` | — | 4,57 MB (15.365 baris) |
+
+Perkiraan per kabupaten/run: ±113 MB (sebelumnya ±223 MB); untuk 35 kabupaten ±4,0 GB
+(sebelumnya ±7,8 GB). Snapshot `rekap_subsls` dan baris `runs` **tidak** ikut dihapus saat hasil
+lama digantikan job baru — yang dihapus hanya isi `titik_hasil`.

@@ -11,7 +11,7 @@ cd backend
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 Copy-Item .env.example .env          # lalu isi kredensial MySQL
-.venv\Scripts\python.exe -m alembic upgrade head   # buat tabel runs + titik_hasil
+.venv\Scripts\python.exe -m alembic upgrade head   # buat tabel runs, wilayah, titik_hasil, rekap_subsls
 ```
 
 ## Jalan & tes
@@ -35,9 +35,9 @@ Copy-Item .env.example .env          # lalu isi kredensial MySQL
 | GET | `/health` | Cek aplikasi hidup |
 | POST | `/runs` | Unggah berkas (multipart: `tipe`, `titik`, `peta`, `user`, `layer_titik`, `layer_peta`) → baris `runs` berstatus `menunggu` |
 | GET | `/runs` | Daftar job (saring `tipe`, `status`, `kdkab`; paging `limit`/`offset`) |
-| GET | `/runs/{id}` | Status job + jumlah baris hasil tersimpan |
-| GET | `/runs/{id}/hasil` | Baris hasil titik (paging) |
-| GET | `/runs/{id}/rekap?tingkat=` | Rekap progres per wilayah: `kabupaten`, `kecamatan`, `desa`, `sls` |
+| GET | `/runs/{id}` | Status job + jumlah baris hasil tersimpan + `jumlah_tanpa_wilayah` |
+| GET | `/runs/{id}/hasil` | Baris hasil titik (paging); wilayah dibalas sebagai `wilayah_tugas`, `wilayah_asal`, `wilayah_edit` |
+| GET | `/runs/{id}/rekap?tingkat=&dasar=` | Rekap progres per wilayah: `kabupaten`, `kecamatan`, `desa`, `sls`, `subsls`; `dasar` = `tugas` (bawaan) atau `posisi` |
 
 Belum ada autentikasi (T4). Isi `user` sementara dikirim lewat form.
 
@@ -49,21 +49,38 @@ Belum ada autentikasi (T4). Isi `user` sementara dikirim lewat form.
 2. Worker mengambil job dengan `SELECT ... FOR UPDATE SKIP LOCKED` (MySQL 8), jadi aman
    dijalankan beberapa worker sekaligus (`MAX_WORKERS`). Satu job aktif per
    (kdkab, tipe); job antre lama untuk itu ditandai `digantikan` (yang terbaru dikerjakan).
-3. Worker menjalankan `app.proses_a.proses_a` atau `app.proses_b.proses_b`, lalu menyimpan
-   hasil ke `titik_hasil` per batch 10.000 baris (`runs.jumlah_baris` diperbarui tiap batch).
-4. Job sukses: hasil job lain untuk (kdkab, tipe) yang sama dihapus dan job lama ditandai
-   `digantikan`. Job gagal: hasil separuh dibuang, status `gagal` + pesan di `runs.pesan`.
+3. Worker meng-upsert dimensi wilayah dari peta ke `wilayah`, menjalankan
+   `app.proses_a.proses_a` atau `app.proses_b.proses_b`, lalu menyimpan hasil ke
+   `titik_hasil` per batch 10.000 baris (`runs.jumlah_baris` diperbarui tiap batch).
+4. Job sukses: rekap per SubSLS (dasar `tugas` dan `posisi`) dihitung dengan query
+   GROUP BY dan disimpan sebagai snapshot di `rekap_subsls`; hasil titik job lain untuk
+   (kdkab, tipe) yang sama dihapus dan job lama ditandai `digantikan` (**hanya**
+   `titik_hasil` yang dihapus — baris `runs` dan snapshot `rekap_subsls` tetap ada).
+   Job gagal: hasil separuh dibuang, status `gagal` + pesan di `runs.pesan`.
 
 Status job: `menunggu` → `jalan` → `sukses` / `gagal` (atau `digantikan`).
+
+## Skema basis data
+
+| Tabel | Isi |
+|---|---|
+| `runs` | satu baris per job (berkas masukan, status, `jumlah_baris`, `jumlah_tanpa_wilayah` = titik di luar poligon wilkerstat) |
+| `wilayah` | dimensi wilayah: satu baris per SubSLS (`idsubsls`) dengan kode + nama; diisi dari peta lewat **upsert** dan tidak pernah dihapus |
+| `titik_hasil` | hasil per titik: kunci `(run_id, urut)`, flag (`flag_repair`, `flag_position`, …), `kk/btt/bku/bttk/bbtt`, `usaha`, koordinat, `level_6_full_code`, dan wilayah lewat `wilayah_asal_id`/`wilayah_edit_id` |
+| `rekap_subsls` | snapshot rekap per SubSLS per job: `jumlah`/`sudah`/`belum` untuk dua `dasar` (`tugas` = `level_6_full_code`, `posisi` = hasil join peta) |
+
+Nama/kode wilayah tidak lagi disimpan di `titik_hasil` (dinormalkan ke `wilayah`), dan
+dashboard membaca `rekap_subsls` sehingga tidak perlu memindai `titik_hasil`.
 
 ## Isi
 
 - `app/config.py` — setelan dari `.env` (MySQL, CORS, folder unggahan, worker)
 - `app/db.py` — engine + sesi SQLAlchemy (MySQL lewat PyMySQL)
-- `app/models.py` — tabel `runs` dan `titik_hasil` (PRD §7)
-- `app/proses_a.py`, `app/proses_b.py` — hitungan spasial (model QGIS 01 & 02)
+- `app/models.py` — tabel `runs`, `wilayah`, `titik_hasil`, `rekap_subsls` (PRD §7)
+- `app/wilayah.py` — dimensi wilayah (baris dari peta, upsert, pemetaan kode → id)
+- `app/proses_a.py`, `app/proses_b.py` — hitungan spasial (model QGIS 01 & 02), murni tanpa I/O
 - `app/layanan.py` — pemeriksaan unggahan, pembuatan job, query hasil & rekap
-- `app/worker.py` — worker Proses A/B (klaim job, batch simpan, ganti hasil lama)
+- `app/worker.py` — worker Proses A/B (klaim job, batch simpan, dimensi wilayah, rekap)
 - `app/api.py` — endpoint FastAPI
 - `migrations/` — migrasi Alembic (`alembic upgrade head`)
 - `tests/` — tes pytest (SQLite sementara; tes di `docs/` ditandai `slow`)

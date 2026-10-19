@@ -14,7 +14,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.config import get_settings
 from app.db import Base
-from app.models import Run, TitikHasil  # noqa: F401 - daftarkan model ke metadata
+from app.models import RekapSubsls, Run, TitikHasil, Wilayah  # noqa: F401 - daftar model
 
 config = context.config
 

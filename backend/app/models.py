@@ -1,17 +1,27 @@
-"""Model ORM untuk skema MySQL di PRD §7 (``runs`` dan ``titik_hasil``).
+"""Model ORM untuk skema MySQL di PRD §7.
+
+Empat tabel:
+
+- ``runs``         : satu baris per job (unggahan berkas + pemrosesan Proses A/B);
+- ``wilayah``      : dimensi wilayah, satu baris per SubSLS (kode ``idsubsls``),
+  diisi dari peta yang diunggah dengan aturan **upsert** (tidak pernah dihapus);
+- ``titik_hasil``  : hasil per titik (ramping, hanya kolom yang dipakai dashboard);
+  nama/kode wilayah tidak disimpan di sini, cukup id-nya (``wilayah_asal_id``,
+  ``wilayah_edit_id``), dan ``level_6_full_code`` tetap disimpan sebagai teks
+  karena jadi kunci wilayah **tugas** pada rekap;
+- ``rekap_subsls`` : snapshot rekap progres per SubSLS per job, dua dasar
+  (``DASAR_TUGAS``/``DASAR_POSISI``), dihitung lewat query GROUP BY di DB.
 
 Catatan pilihan tipe:
 
-- Kolom atribut yang di berkas sumber tersimpan sebagai teks (``no_bang``,
-  ``kode_bang_value``, ``jumlah_usaha_ditemukan``, ...) tetap disimpan
-  ``VARCHAR`` supaya nilainya sama persis (mis. angka nol di depan pada
-  ``no_bang``). Kolom flag hasil hitungan (``flag_*``, ``kk``, ``btt``, ...)
-  disimpan ``SMALLINT`` karena dihitung sendiri oleh Proses A/B.
-- Koordinat disimpan ``DOUBLE`` (bukan ``FLOAT``) supaya presisi 7-8 angka di
-  belakang koma tidak hilang.
-- ``titik_hasil`` memuat gabungan kolom keluaran Proses A dan Proses B; kolom
-  khusus Proses B (``flag_position``, ``idsubsls_edited``, ...) bernilai NULL
-  untuk hasil Proses A.
+- Kolom flag dan indikator kategori disimpan angka kecil (``TINYINT`` di MySQL,
+  ``SMALLINT`` di SQLite karena SQLite tidak punya TINYINT): ``flag_*`` dan
+  ``kk``/``btt``/``bku``/``bttk``/``bbtt`` bernilai 0/1, ``usaha`` jumlah usaha.
+- Koordinat disimpan ``DOUBLE`` supaya presisi 7-8 angka di belakang koma tidak
+  hilang (dipakai peta titik dan ekspor).
+- ``titik_hasil`` memuat kolom Proses A dan Proses B; kolom khusus Proses B
+  (``flag_position``, ``flag_edit_atr_repair``, ``wilayah_edit_id``,
+  ``latitude_edited``, ``longitude_edited``) bernilai NULL untuk hasil Proses A.
 """
 
 from __future__ import annotations
@@ -19,7 +29,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import (
-    BigInteger,
     DateTime,
     Double,
     ForeignKey,
@@ -30,6 +39,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.mysql import TINYINT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -45,6 +55,17 @@ STATUS_JALAN = "jalan"
 STATUS_SUKSES = "sukses"
 STATUS_GAGAL = "gagal"
 STATUS_DIGANTIKAN = "digantikan"
+
+# Nilai kolom ``rekap_subsls.dasar``:
+# - tugas : wilayah penugasan titik, dari ``titik_hasil.level_6_full_code``
+#   (kode SubSLS pada data titik, dibandingkan model QGIS dengan hasil join);
+# - posisi: wilayah tempat titik berada menurut hasil join peta
+#   (``wilayah_edit_id`` untuk Proses B, kalau kosong ``wilayah_asal_id``).
+DASAR_TUGAS = "tugas"
+DASAR_POSISI = "posisi"
+
+# TINYINT di MySQL, SMALLINT di SQLite (SQLite hanya punya tipe INTEGER).
+AngkaKecil = SmallInteger().with_variant(TINYINT(), "mysql")
 
 
 def sekarang() -> datetime:
@@ -72,6 +93,8 @@ class Run(Base):
     layer_peta: Mapped[str | None] = mapped_column(String(64))
 
     jumlah_baris: Mapped[int | None] = mapped_column(Integer)
+    # Titik yang tidak masuk/menyentuh poligon wilkerstat mana pun (hasil join kosong).
+    jumlah_tanpa_wilayah: Mapped[int | None] = mapped_column(Integer)
     pesan: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -82,52 +105,25 @@ class Run(Base):
     )
 
 
-class TitikHasil(Base):
-    """Hasil Proses A/B per titik (satu baris = satu ``assignment_id``)."""
+class Wilayah(Base):
+    """Dimensi wilayah: satu baris per SubSLS peta (kunci ``idsubsls``).
 
-    __tablename__ = "titik_hasil"
+    Baris diisi dari peta yang diunggah (nama pendek seperti ``kdkab`` = ``07``
+    mengikuti berkas sumber) dan tidak pernah dihapus; peta berikutnya hanya
+    memperbarui nama/kode yang sudah ada.
+    """
+
+    __tablename__ = "wilayah"
     __table_args__ = (
-        UniqueConstraint("run_id", "assignment_id", name="uq_titik_hasil_run_assignment"),
-        Index("ix_titik_hasil_assignment_id", "assignment_id"),
-        Index("ix_titik_hasil_idsubsls_origin", "idsubsls_origin"),
-        Index("ix_titik_hasil_kdkab", "kdkab"),
-        Index("ix_titik_hasil_run_flag_repair", "run_id", "flag_repair"),
+        UniqueConstraint("idsubsls", name="uq_wilayah_idsubsls"),
+        Index("ix_wilayah_kdkab", "kdkab"),
     )
 
-    # BIGINT di MySQL, INTEGER di SQLite (SQLite hanya auto-increment untuk INTEGER)
-    id: Mapped[int] = mapped_column(
-        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
-    )
-    run_id: Mapped[int] = mapped_column(
-        ForeignKey("runs.id", ondelete="CASCADE"), index=True
-    )
-
-    assignment_id: Mapped[str] = mapped_column(String(64))
-    unique_bang: Mapped[str | None] = mapped_column(String(64))
-    flag_psls: Mapped[int | None] = mapped_column(SmallInteger)
-    flag_position: Mapped[int | None] = mapped_column(SmallInteger)
-    flag_edit_atr_repair: Mapped[int | None] = mapped_column(SmallInteger)
-    flag_repair_initial: Mapped[int | None] = mapped_column(SmallInteger)
-    flag_repair: Mapped[int | None] = mapped_column(SmallInteger)
-    level_6_full_code: Mapped[str | None] = mapped_column(String(32))
-    idsubsls_origin: Mapped[str | None] = mapped_column(String(32))
-    idsubsls_edited: Mapped[str | None] = mapped_column(String(32))
-    latitude_origin: Mapped[float | None] = mapped_column(Double)
-    longitude_origin: Mapped[float | None] = mapped_column(Double)
-    latitude_edited: Mapped[float | None] = mapped_column(Double)
-    longitude_edited: Mapped[float | None] = mapped_column(Double)
-    no_bang: Mapped[str | None] = mapped_column(String(32))
-    kode_bang_value: Mapped[str | None] = mapped_column(String(8))
-    ada_keluarga_value: Mapped[str | None] = mapped_column(String(4))
-    ada_bang_usaha_value: Mapped[str | None] = mapped_column(String(4))
-    jumlah_usaha_ditemukan: Mapped[str | None] = mapped_column(String(8))
-    kk: Mapped[int | None] = mapped_column(SmallInteger)
-    btt: Mapped[int | None] = mapped_column(SmallInteger)
-    bku: Mapped[int | None] = mapped_column(SmallInteger)
-    bttk: Mapped[int | None] = mapped_column(SmallInteger)
-    bbtt: Mapped[int | None] = mapped_column(SmallInteger)
-    usaha: Mapped[str | None] = mapped_column(String(8))
-    kdprov: Mapped[str | None] = mapped_column(String(2))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idsubsls: Mapped[str] = mapped_column(String(16))
+    idsls: Mapped[str | None] = mapped_column(String(16))
+    nmsls: Mapped[str | None] = mapped_column(String(128))
+    kdprov: Mapped[str | None] = mapped_column(String(4))
     nmprov: Mapped[str | None] = mapped_column(String(64))
     kdkab: Mapped[str | None] = mapped_column(String(4))
     nmkab: Mapped[str | None] = mapped_column(String(64))
@@ -135,7 +131,69 @@ class TitikHasil(Base):
     nmkec: Mapped[str | None] = mapped_column(String(64))
     kddesa: Mapped[str | None] = mapped_column(String(16))
     nmdesa: Mapped[str | None] = mapped_column(String(64))
-    nmsls: Mapped[str | None] = mapped_column(String(128))
-    nama_usaha_bang: Mapped[str | None] = mapped_column(String(255))
+
+
+class TitikHasil(Base):
+    """Hasil Proses A/B per titik (satu baris = satu ``assignment_id`` per job)."""
+
+    __tablename__ = "titik_hasil"
+    __table_args__ = (
+        UniqueConstraint("run_id", "assignment_id", name="uq_titik_hasil_run_assignment"),
+        Index("ix_titik_hasil_wilayah_asal", "wilayah_asal_id"),
+        Index("ix_titik_hasil_wilayah_edit", "wilayah_edit_id"),
+        Index("ix_titik_hasil_run_flag_repair", "run_id", "flag_repair"),
+    )
+
+    # Kunci utama gabungan: urut = urutan keluaran proses (dipakai untuk paging).
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    urut: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    assignment_id: Mapped[str] = mapped_column(String(64))
+    level_6_full_code: Mapped[str | None] = mapped_column(String(16))
+
+    # Wilayah penugasan/posisi; NULL untuk titik di luar poligon wilkerstat.
+    wilayah_asal_id: Mapped[int | None] = mapped_column(ForeignKey("wilayah.id"))
+    wilayah_edit_id: Mapped[int | None] = mapped_column(ForeignKey("wilayah.id"))
+
+    flag_psls: Mapped[int | None] = mapped_column(AngkaKecil)
+    flag_position: Mapped[int | None] = mapped_column(AngkaKecil)
+    flag_edit_atr_repair: Mapped[int | None] = mapped_column(AngkaKecil)
+    flag_repair_initial: Mapped[int | None] = mapped_column(AngkaKecil)
+    flag_repair: Mapped[int | None] = mapped_column(AngkaKecil)
+    kk: Mapped[int | None] = mapped_column(AngkaKecil)
+    btt: Mapped[int | None] = mapped_column(AngkaKecil)
+    bku: Mapped[int | None] = mapped_column(AngkaKecil)
+    bttk: Mapped[int | None] = mapped_column(AngkaKecil)
+    bbtt: Mapped[int | None] = mapped_column(AngkaKecil)
+    usaha: Mapped[int | None] = mapped_column(SmallInteger)
+
+    latitude_origin: Mapped[float | None] = mapped_column(Double)
+    longitude_origin: Mapped[float | None] = mapped_column(Double)
+    latitude_edited: Mapped[float | None] = mapped_column(Double)
+    longitude_edited: Mapped[float | None] = mapped_column(Double)
 
     run: Mapped[Run] = relationship(back_populates="hasil")
+
+
+class RekapSubsls(Base):
+    """Snapshot rekap progres per SubSLS per job, dipisah per ``dasar``.
+
+    Diisi sekali di akhir job yang sukses lewat query GROUP BY (PRD §7), jadi
+    dashboard tidak perlu memindai ``titik_hasil``. Barisnya bertahan walau
+    ``titik_hasil`` job tersebut sudah digantikan job yang lebih baru.
+    """
+
+    __tablename__ = "rekap_subsls"
+    __table_args__ = (Index("ix_rekap_subsls_run_dasar", "run_id", "dasar"),)
+
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    wilayah_id: Mapped[int] = mapped_column(ForeignKey("wilayah.id"), primary_key=True)
+    dasar: Mapped[str] = mapped_column(String(8), primary_key=True)
+
+    jumlah: Mapped[int] = mapped_column(Integer)
+    sudah: Mapped[int] = mapped_column(Integer)
+    belum: Mapped[int] = mapped_column(Integer)

@@ -7,8 +7,12 @@ Aturan yang dipenuhi modul ini:
 - hanya satu job aktif per (kdkab, tipe): job yang (kdkab, tipe)-nya sedang
   berstatus ``jalan`` dilewati; kalau ada beberapa job antre untuk (kdkab, tipe)
   yang sama, yang **terbaru** dikerjakan dan sisanya ditandai ``digantikan``;
+- dimensi wilayah di-upsert dari peta yang diunggah (``app.wilayah``), lalu
+  ``titik_hasil`` menyimpan ``wilayah_asal_id``/``wilayah_edit_id`` saja;
 - hasil disimpan ke ``titik_hasil`` per batch :data:`UKURAN_BATCH` (10.000) baris,
   dan progres (``runs.jumlah_baris``) diperbarui tiap batch;
+- setelah sukses, rekap per SubSLS (dasar ``tugas`` dan ``posisi``) dihitung
+  dengan query GROUP BY dan disimpan sebagai snapshot di ``rekap_subsls``;
 - job gagal: hasil separuh dibuang, status ``gagal``, dan pesan galat dicatat.
 
 Jalankan sebagai proses terpisah::
@@ -32,30 +36,37 @@ from typing import Any
 import geopandas as gpd
 import pandas as pd
 from sqlalchemy import (
-    BigInteger,
     Float,
     Integer,
     Numeric,
     Select,
     SmallInteger,
+    case,
     delete,
+    func,
     insert,
+    literal,
     select,
     update,
 )
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
+from app import wilayah
 from app.config import Settings, get_settings
 from app.db import get_sessionmaker
 from app.models import (
+    DASAR_POSISI,
+    DASAR_TUGAS,
     STATUS_DIGANTIKAN,
     STATUS_GAGAL,
     STATUS_JALAN,
     STATUS_MENUNGGU,
     STATUS_SUKSES,
     TIPE_A,
+    RekapSubsls,
     Run,
     TitikHasil,
+    Wilayah,
     sekarang,
 )
 from app.proses_a import pastikan_crs4326, proses_a
@@ -85,19 +96,51 @@ def jalankan_proses(
     return proses_b(pastikan_crs4326(titik, "titik"), pastikan_crs4326(peta, "peta"))
 
 
-def siapkan_baris(potongan: pd.DataFrame, run_id: int) -> list[dict[str, Any]]:
+def kode_hasil(hasil: gpd.GeoDataFrame) -> set[str]:
+    """Kode SubSLS yang dipakai hasil (agar bisa dimuat dari tabel ``wilayah``)."""
+    kode: set[str] = set()
+    for kolom in ("level_6_full_code", "idsubsls_origin", "idsubsls_edited"):
+        if kolom in hasil.columns:
+            seri = hasil[kolom].dropna().astype("string").str.strip()
+            kode.update(nilai for nilai in seri.unique() if nilai)
+    return kode
+
+
+def tambah_kolom_wilayah(
+    hasil: gpd.GeoDataFrame, id_wilayah: dict[str, int]
+) -> gpd.GeoDataFrame:
+    """Tambahkan ``wilayah_asal_id``/``wilayah_edit_id`` dari kode hasil proses."""
+    keluaran = hasil.copy()
+    for kolom_db, kolom_proses in (
+        ("wilayah_asal_id", "idsubsls_origin"),
+        ("wilayah_edit_id", "idsubsls_edited"),
+    ):
+        if kolom_proses in hasil.columns:
+            seri = hasil[kolom_proses].map(lambda kode: id_wilayah.get(wilayah.bersih(kode)))
+        else:  # Proses A tidak punya idsubsls_edited
+            seri = pd.Series([None] * len(hasil), index=hasil.index)
+        keluaran[kolom_db] = seri.astype("Int64")
+    return keluaran
+
+
+def siapkan_baris(
+    potongan: pd.DataFrame, run_id: int, urut_awal: int = 0
+) -> list[dict[str, Any]]:
     """Ubah potongan hasil jadi baris siap-insert, tipe mengikuti model ORM."""
-    data: dict[str, list[Any]] = {"run_id": [run_id] * len(potongan)}
+    data: dict[str, list[Any]] = {
+        "run_id": [run_id] * len(potongan),
+        "urut": list(range(urut_awal, urut_awal + len(potongan))),
+    }
 
     for kolom in TitikHasil.__table__.columns:
-        if kolom.name in ("id", "run_id"):
+        if kolom.name in ("run_id", "urut"):
             continue
         if kolom.name in potongan.columns:
             seri = potongan[kolom.name]
         else:
-            seri = pd.Series([None] * len(potongan))
+            seri = pd.Series([None] * len(potongan), index=potongan.index)
 
-        if isinstance(kolom.type, (SmallInteger, Integer, BigInteger)):
+        if isinstance(kolom.type, (SmallInteger, Integer)):
             seri = pd.to_numeric(seri, errors="coerce").astype("Int64")
         elif isinstance(kolom.type, (Float, Numeric)):
             seri = pd.to_numeric(seri, errors="coerce")
@@ -110,24 +153,94 @@ def siapkan_baris(potongan: pd.DataFrame, run_id: int) -> list[dict[str, Any]]:
     return [dict(zip(data, nilai)) for nilai in zip(*data.values())]
 
 
-def simpan_hasil(sesi: Session, run: Run, hasil: gpd.GeoDataFrame) -> int:
+def simpan_hasil(
+    sesi: Session, run: Run, hasil: gpd.GeoDataFrame, id_wilayah: dict[str, int]
+) -> int:
     """Simpan hasil ke ``titik_hasil`` per batch; kembalikan jumlah baris."""
+    siap = tambah_kolom_wilayah(hasil, id_wilayah)
     jumlah = 0
-    for mulai in range(0, len(hasil), UKURAN_BATCH):
-        potongan = hasil.iloc[mulai : mulai + UKURAN_BATCH]
-        sesi.execute(insert(TitikHasil), siapkan_baris(potongan, run.id))
+    for mulai in range(0, len(siap), UKURAN_BATCH):
+        potongan = siap.iloc[mulai : mulai + UKURAN_BATCH]
+        sesi.execute(insert(TitikHasil), siapkan_baris(potongan, run.id, urut_awal=mulai))
         jumlah += len(potongan)
         # Progres bisa dipantau dari runs.jumlah_baris selama job jalan.
         run.jumlah_baris = jumlah
         sesi.commit()
 
-    if len(hasil) == 0:
+    if len(siap) == 0:
         run.jumlah_baris = 0
     return jumlah
 
 
+def _kasus(syarat: object) -> object:
+    """``CASE WHEN syarat THEN 1 ELSE 0 END`` portabel (MySQL & SQLite)."""
+    return case((syarat, 1), else_=0)
+
+
+def simpan_rekap(sesi: Session, run: Run) -> None:
+    """Simpan snapshot rekap per SubSLS untuk dasar ``tugas`` dan ``posisi``.
+
+    Dua-duanya dihitung dengan satu query GROUP BY (PRD §7: rekap dihitung lewat
+    query, bukan di Python). Dasar ``tugas`` memakai ``level_6_full_code`` titik
+    (wilayah penugasan), dasar ``posisi`` memakai wilayah hasil join peta
+    (``wilayah_edit_id`` bila ada, kalau tidak ``wilayah_asal_id``).
+    """
+    sesi.execute(delete(RekapSubsls).where(RekapSubsls.run_id == run.id))
+
+    sudah = func.coalesce(func.sum(_kasus(TitikHasil.flag_repair == 0)), 0)
+    belum = func.coalesce(func.sum(_kasus(TitikHasil.flag_repair == 1)), 0)
+
+    tugas = (
+        select(literal(run.id), Wilayah.id, literal(DASAR_TUGAS), func.count(), sudah, belum)
+        .select_from(TitikHasil)
+        .join(Wilayah, Wilayah.idsubsls == TitikHasil.level_6_full_code)
+        .where(TitikHasil.run_id == run.id)
+        .group_by(Wilayah.id)
+    )
+    sesi.execute(
+        insert(RekapSubsls).from_select(
+            ["run_id", "wilayah_id", "dasar", "jumlah", "sudah", "belum"], tugas
+        )
+    )
+
+    posisi = func.coalesce(TitikHasil.wilayah_edit_id, TitikHasil.wilayah_asal_id)
+    dasar_posisi = (
+        select(literal(run.id), posisi, literal(DASAR_POSISI), func.count(), sudah, belum)
+        .where(TitikHasil.run_id == run.id, posisi.is_not(None))
+        .group_by(posisi)
+    )
+    sesi.execute(
+        insert(RekapSubsls).from_select(
+            ["run_id", "wilayah_id", "dasar", "jumlah", "sudah", "belum"], dasar_posisi
+        )
+    )
+    sesi.commit()
+
+
+def hitung_tanpa_wilayah(sesi: Session, run_id: int) -> int:
+    """Jumlah titik hasil yang tidak masuk/jatuh di poligon wilkerstat mana pun."""
+    return int(
+        sesi.scalar(
+            select(func.count())
+            .select_from(TitikHasil)
+            .where(
+                TitikHasil.run_id == run_id,
+                TitikHasil.wilayah_asal_id.is_(None),
+                TitikHasil.wilayah_edit_id.is_(None),
+            )
+        )
+        or 0
+    )
+
+
 def gantikan_hasil_lama(sesi: Session, run: Run) -> None:
-    """Buang hasil job lain untuk (kdkab, tipe) yang sama (aturan: hasil lama digantikan)."""
+    """Buang ``titik_hasil`` job lain untuk (kdkab, tipe) yang sama.
+
+    Aturan "hasil lama digantikan" hanya menyangkut isi ``titik_hasil``: baris
+    ``runs`` job lama **tetap ada** (statusnya jadi ``digantikan``) dan snapshot
+    ``rekap_subsls``-nya sengaja dibiarkan supaya riwayat rekap masih bisa
+    dibandingkan.
+    """
     lain = list(
         sesi.scalars(
             select(Run.id).where(
@@ -215,13 +328,23 @@ def proses_satu_job(sesi_pabrik: sessionmaker[Session] | None = None) -> bool:
 
             # Bersihkan sisa hasil percobaan sebelumnya (bila job diulang).
             sesi.execute(delete(TitikHasil).where(TitikHasil.run_id == run_id))
+            sesi.execute(delete(RekapSubsls).where(RekapSubsls.run_id == run_id))
             sesi.commit()
 
             titik, peta = baca_masukan(run)
+            # Dimensi wilayah di-upsert dari peta (nama wilayah hanya di sini).
+            wilayah.upsert(sesi, wilayah.baris_dari_peta(peta))
+            sesi.commit()
+
             hasil = jalankan_proses(run, titik, peta)
-            jumlah = simpan_hasil(sesi, run, hasil)
+            id_wilayah = wilayah.peta_id(sesi, kode_hasil(hasil))
+            sesi.commit()
+
+            jumlah = simpan_hasil(sesi, run, hasil, id_wilayah)
+            simpan_rekap(sesi, run)
 
             run.jumlah_baris = jumlah
+            run.jumlah_tanpa_wilayah = hitung_tanpa_wilayah(sesi, run_id)
             run.status = STATUS_SUKSES
             run.finished_at = sekarang()
             sesi.commit()
@@ -231,6 +354,7 @@ def proses_satu_job(sesi_pabrik: sessionmaker[Session] | None = None) -> bool:
         logger.exception("job %s gagal", run_id)
         with sesi_pabrik() as sesi:
             sesi.execute(delete(TitikHasil).where(TitikHasil.run_id == run_id))
+            sesi.execute(delete(RekapSubsls).where(RekapSubsls.run_id == run_id))
             sesi.execute(
                 update(Run)
                 .where(Run.id == run_id)

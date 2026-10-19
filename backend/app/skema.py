@@ -27,6 +27,7 @@ class RunOut(BaseModel):
     layer_input: str | None = None
     layer_peta: str | None = None
     jumlah_baris: int | None = None
+    jumlah_tanpa_wilayah: int | None = None
     pesan: str | None = None
     created_at: datetime
     started_at: datetime | None = None
@@ -72,6 +73,7 @@ class RekapOut(BaseModel):
 
     run_id: int
     tingkat: str
+    dasar: str
     total: int
     sudah: int
     belum: int

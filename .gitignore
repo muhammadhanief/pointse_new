@@ -9,6 +9,11 @@ docs/**/*.pdf
 docs/**/*.xlsx
 docs/**/*.csv
 
+# Berkas pendamping SQLite/GPKG yang dibuat otomatis saat dibaca
+*.gpkg-shm
+*.gpkg-wal
+*.gpkg-journal
+
 # Frontend (Next.js)
 node_modules/
 .next/

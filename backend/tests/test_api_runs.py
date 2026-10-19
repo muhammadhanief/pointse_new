@@ -71,6 +71,7 @@ def test_unggah_membuat_job_menunggu(
     assert data["nama_file_input"] == "titik.geojson"
     assert data["nama_file_peta"] == "peta.geojson"
     assert data["jumlah_baris"] is None
+    assert data["jumlah_tanpa_wilayah"] is None
 
     run = sesi.get(Run, data["id"])
     assert run is not None
@@ -100,9 +101,12 @@ def test_status_dan_daftar_job(
     kosong = klien.get("/runs", params={"tipe": "B"})
     assert kosong.json()["total"] == 0
 
-    # Setelah dijalankan, jumlah hasil muncul di status.
+    # Setelah dijalankan, jumlah hasil dan titik tanpa wilayah muncul di status.
     jalankan(sesi_pabrik)
-    assert klien.get(f"/runs/{run_id}").json()["jumlah_tersimpan"] == 3
+    status = klien.get(f"/runs/{run_id}").json()
+    assert status["jumlah_tersimpan"] == 3
+    assert status["jumlah_baris"] == 3
+    assert status["jumlah_tanpa_wilayah"] == 0
 
 
 def test_hasil_job_dengan_paging(
@@ -118,31 +122,45 @@ def test_hasil_job_dengan_paging(
     data = resp.json()
     assert data["total"] == 3
     assert [baris["assignment_id"] for baris in data["baris"]] == ["1", "2"]
+    assert [baris["urut"] for baris in data["baris"]] == [0, 1]
 
     halaman2 = klien.get(f"/runs/{run_id}/hasil", params={"limit": 2, "offset": 2}).json()
     assert [baris["assignment_id"] for baris in halaman2["baris"]] == ["3"]
 
     pertama = data["baris"][0]
     assert pertama["flag_repair"] == 0
-    assert pertama["idsubsls_origin"] == "A1"
-    assert pertama["kdkab"] == "3307"
-    # titik nomor 3 ada di SubSLS A2, jadi wilayahnya A2 dan flag_repair = 1
+    assert pertama["kk"] == 1 and pertama["btt"] == 1
+    assert pertama["usaha"] == 0
+    assert pertama["level_6_full_code"] == "A1"
+    # wilayah penugasan (dari level_6_full_code) dan wilayah posisi (hasil join)
+    assert pertama["wilayah_tugas"]["idsubsls"] == "A1"
+    assert pertama["wilayah_tugas"]["nmdesa"] == "KALIBEBER"
+    assert pertama["wilayah_asal"]["idsubsls"] == "A1"
+    assert pertama["wilayah_asal"]["kdkab"] == "3307"
+    assert pertama["wilayah_asal"]["nmsls"] == "SLS 001"
+    # Proses A tidak punya wilayah hasil edit
+    assert pertama["wilayah_edit"] is None
+
+    # titik nomor 3 ada di SubSLS A2, jadi wilayah posisinya A2 dan flag_repair = 1
     ketiga = halaman2["baris"][0]
-    assert ketiga["idsubsls_origin"] == "A2"
+    assert ketiga["wilayah_asal"]["idsubsls"] == "A2"
+    assert ketiga["wilayah_asal"]["nmdesa"] == "MOJOTENGAH"
+    assert ketiga["wilayah_tugas"]["idsubsls"] == "A1"
     assert ketiga["flag_repair"] == 1
-    assert ketiga["nmdesa"] == "MOJOTENGAH"
 
 
 def test_rekap_progres_per_tingkat(
     klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
-    """Rekap menjumlahkan flag_repair per wilayah pada tiap tingkat."""
+    """Rekap menjumlahkan snapshot per SubSLS pada tiap tingkat dan dasar."""
     titik, peta = berkas_uji(tmp_path)
     run_id = unggah(klien, titik, peta).json()["id"]
     jalankan(sesi_pabrik)
 
+    # Dasar bawaan dashboard = "tugas" (wilayah penugasan titik / level_6_full_code)
     kabupaten = klien.get(f"/runs/{run_id}/rekap").json()
     assert kabupaten["tingkat"] == "kabupaten"
+    assert kabupaten["dasar"] == "tugas"
     assert (kabupaten["total"], kabupaten["sudah"], kabupaten["belum"]) == (3, 2, 1)
     assert kabupaten["persen_belum"] == 33.33
     assert kabupaten["baris"] == [
@@ -156,18 +174,34 @@ def test_rekap_progres_per_tingkat(
         }
     ]
 
-    desa = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "desa"}).json()
+    kecamatan = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "kecamatan"}).json()
+    assert kecamatan["baris"][0]["kode"] == "330701"
+
+    # Dasar posisi: titik terbagi menurut hasil join peta (dua di A1, satu di A2)
+    desa = klien.get(
+        f"/runs/{run_id}/rekap", params={"tingkat": "desa", "dasar": "posisi"}
+    ).json()
+    assert desa["dasar"] == "posisi"
     assert [baris["kode"] for baris in desa["baris"]] == ["330701001", "330701002"]
     assert [baris["jumlah"] for baris in desa["baris"]] == [2, 1]
     assert [baris["belum"] for baris in desa["baris"]] == [0, 1]
     assert desa["persen_belum"] == 33.33
 
-    sls = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "sls"}).json()
-    assert [baris["kode"] for baris in sls["baris"]] == ["A1", "A2"]
-    assert [baris["persen_belum"] for baris in sls["baris"]] == [0.0, 100.0]
+    # Dasar tugas: ketiga titik masuk SubSLS A1 (wilayah penugasannya)
+    subsls = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "subsls"}).json()
+    assert [baris["kode"] for baris in subsls["baris"]] == ["A1"]
+    assert [baris["jumlah"] for baris in subsls["baris"]] == [3]
+    assert [(baris["sudah"], baris["belum"]) for baris in subsls["baris"]] == [(2, 1)]
 
-    kecamatan = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "kecamatan"}).json()
-    assert kecamatan["baris"][0]["kode"] == "330701"
+    sls = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "sls"}).json()
+    assert [baris["kode"] for baris in sls["baris"]] == ["3307010010003900"]
+    assert [baris["nama"] for baris in sls["baris"]] == ["SLS 001"]
+
+    subsls_posisi = klien.get(
+        f"/runs/{run_id}/rekap", params={"tingkat": "subsls", "dasar": "posisi"}
+    ).json()
+    assert [baris["kode"] for baris in subsls_posisi["baris"]] == ["A1", "A2"]
+    assert [baris["persen_belum"] for baris in subsls_posisi["baris"]] == [0.0, 100.0]
 
 
 def test_rekap_job_belum_dijalankan(
@@ -179,6 +213,7 @@ def test_rekap_job_belum_dijalankan(
 
     rekap = klien.get(f"/runs/{run_id}/rekap").json()
     assert rekap["total"] == 0 and rekap["baris"] == [] and rekap["persen_belum"] == 0.0
+    assert rekap["dasar"] == "tugas"
 
 
 def test_unggah_menolak_tipe_tidak_dikenal(klien: TestClient, tmp_path: Path) -> None:
@@ -234,10 +269,11 @@ def test_job_tidak_ditemukan(klien: TestClient) -> None:
 def test_tingkat_rekap_tidak_dikenal(
     klien: TestClient, tmp_path: Path
 ) -> None:
-    """Tingkat rekap di luar pilihan ditolak FastAPI (422)."""
+    """Tingkat atau dasar rekap di luar pilihan ditolak FastAPI (422)."""
     titik, peta = berkas_uji(tmp_path)
     run_id = unggah(klien, titik, peta).json()["id"]
     assert klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "kelurahan"}).status_code == 422
+    assert klien.get(f"/runs/{run_id}/rekap", params={"dasar": "asal"}).status_code == 422
 
 
 def test_hasil_menambah_kolom_proses_b_kosong(
@@ -249,6 +285,7 @@ def test_hasil_menambah_kolom_proses_b_kosong(
     jalankan(sesi_pabrik)
 
     baris = klien.get(f"/runs/{run_id}/hasil").json()["baris"][0]
-    for nama in ("flag_position", "flag_edit_atr_repair", "idsubsls_edited", "latitude_edited"):
+    for nama in ("flag_position", "flag_edit_atr_repair", "latitude_edited", "longitude_edited"):
         assert nama in baris
         assert baris[nama] is None
+    assert baris["wilayah_edit"] is None

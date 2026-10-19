@@ -8,39 +8,108 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import inspect
+from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.db import buat_engine
-from app.models import Run, TitikHasil
+from app.models import RekapSubsls, Run, TitikHasil, Wilayah
 from app.proses_a import KOLOM_HASIL
 from app.proses_b import KOLOM_HASIL_B
 
 AKAR_BACKEND = Path(__file__).resolve().parents[1]
 
-# Kolom yang hanya muncul di keluaran Proses B.
-KOLOM_KHUSUS_B = {
+# Kolom ``titik_hasil`` yang disimpan (dipakai dashboard + peta/ekspor).
+KOLOM_TITIK_HASIL: tuple[str, ...] = (
+    "run_id",
+    "urut",
+    "assignment_id",
+    "level_6_full_code",
+    "wilayah_asal_id",
+    "wilayah_edit_id",
+    "flag_psls",
     "flag_position",
     "flag_edit_atr_repair",
-    "idsubsls_edited",
+    "flag_repair_initial",
+    "flag_repair",
+    "kk",
+    "btt",
+    "bku",
+    "bttk",
+    "bbtt",
+    "usaha",
+    "latitude_origin",
+    "longitude_origin",
     "latitude_edited",
     "longitude_edited",
-}
+)
+
+# Kolom keluaran Proses A/B yang sengaja tidak disimpan (atribut bangunan dan
+# nama/kode wilayah yang sudah dinormalkan ke tabel ``wilayah``).
+KOLOM_DIBUANG = (
+    "unique_bang",
+    "idsubsls_origin",
+    "idsubsls_edited",
+    "no_bang",
+    "kode_bang_value",
+    "ada_keluarga_value",
+    "ada_bang_usaha_value",
+    "jumlah_usaha_ditemukan",
+    "kdprov",
+    "nmprov",
+    "kdkab",
+    "nmkab",
+    "kdkec",
+    "nmkec",
+    "kddesa",
+    "nmdesa",
+    "nmsls",
+    "nama_usaha_bang",
+)
 
 
-def test_kolom_titik_hasil_sesuai_keluaran_proses() -> None:
-    """Kolom ``titik_hasil`` = gabungan kolom keluaran Proses A dan Proses B."""
-    kolom_db = set(TitikHasil.__table__.columns.keys()) - {"id", "run_id"}
-    assert kolom_db == set(KOLOM_HASIL_B)
-    assert set(KOLOM_HASIL) <= kolom_db
-    assert set(KOLOM_HASIL_B) - set(KOLOM_HASIL) == KOLOM_KHUSUS_B
+def test_kolom_titik_hasil_ramping() -> None:
+    """``titik_hasil`` hanya memuat kolom yang disepakati (urutan sama)."""
+    assert tuple(TitikHasil.__table__.columns.keys()) == KOLOM_TITIK_HASIL
+    for nama in KOLOM_DIBUANG:
+        assert nama not in TitikHasil.__table__.columns
+
+
+def test_semua_kolom_keluaran_proses_diputuskan() -> None:
+    """Tiap kolom keluaran Proses A/B disimpan atau masuk daftar dibuang."""
+    keluaran = set(KOLOM_HASIL) | set(KOLOM_HASIL_B)
+    tersimpan = set(TitikHasil.__table__.columns.keys())
+    assert keluaran - tersimpan == set(KOLOM_DIBUANG)
+    assert tersimpan <= keluaran | {"run_id", "urut", "wilayah_asal_id", "wilayah_edit_id"}
+
+
+def test_kunci_tabel_titik_hasil_dan_wilayah() -> None:
+    """Kunci utama titik_hasil = (run_id, urut); idsubsls wilayah unik."""
+    assert [kolom.name for kolom in TitikHasil.__table__.primary_key] == ["run_id", "urut"]
+    assert {kolom.name for kolom in RekapSubsls.__table__.primary_key} == {
+        "run_id",
+        "wilayah_id",
+        "dasar",
+    }
+    assert {
+        tuple(kolom.name for kolom in batasan.columns)
+        for batasan in Wilayah.__table__.constraints
+        if batasan.name == "uq_wilayah_idsubsls"
+    } == {("idsubsls",)}
 
 
 def test_kolom_koordinat_pakai_double() -> None:
     """Koordinat disimpan DOUBLE supaya presisi 7-8 angka tidak hilang."""
     for nama in ("latitude_origin", "longitude_origin", "latitude_edited", "longitude_edited"):
         assert TitikHasil.__table__.columns[nama].type.__class__.__name__ == "Double"
+
+
+def test_flag_pakai_tinyint_di_mysql() -> None:
+    """Kolom flag/indikator disimpan TINYINT di MySQL (angka kecil)."""
+    for nama in ("flag_repair", "flag_psls", "flag_position", "kk", "bttk"):
+        tipe = str(TitikHasil.__table__.columns[nama].type.compile(dialect=mysql.dialect()))
+        assert tipe == "TINYINT", f"{nama} dikompilasi jadi {tipe}"
 
 
 def test_setelan_default() -> None:
@@ -66,8 +135,8 @@ def test_assignment_id_unik_per_job(sesi: Session) -> None:
 
     sesi.add_all(
         [
-            TitikHasil(run_id=run.id, assignment_id="1"),
-            TitikHasil(run_id=run.id, assignment_id="1"),
+            TitikHasil(run_id=run.id, urut=0, assignment_id="1"),
+            TitikHasil(run_id=run.id, urut=1, assignment_id="1"),
         ]
     )
     with pytest.raises(IntegrityError):
@@ -86,15 +155,21 @@ def test_sql_migrasi_untuk_mysql(capsys: pytest.CaptureFixture[str]) -> None:
     command.upgrade(konfigurasi, "head", sql=True)
     sql = " ".join(capsys.readouterr().out.split())
 
-    assert "CREATE TABLE runs" in sql
+    assert "CREATE TABLE wilayah" in sql
+    assert "CREATE TABLE rekap_subsls" in sql
     assert "CREATE TABLE titik_hasil" in sql
-    assert "id BIGINT NOT NULL AUTO_INCREMENT" in sql
-    assert "flag_repair SMALLINT" in sql
-    assert "latitude_origin DOUBLE" in sql
+    assert "ALTER TABLE runs ADD COLUMN jumlah_tanpa_wilayah INTEGER" in sql
     assert "assignment_id VARCHAR(64) NOT NULL" in sql
+    assert "level_6_full_code VARCHAR(16)" in sql
+    assert "flag_repair TINYINT" in sql
+    assert "usaha SMALLINT" in sql
+    assert "latitude_origin DOUBLE" in sql
+    assert "CONSTRAINT uq_wilayah_idsubsls UNIQUE (idsubsls)" in sql
     assert "CONSTRAINT uq_titik_hasil_run_assignment UNIQUE (run_id, assignment_id)" in sql
+    assert "PRIMARY KEY (run_id, urut)" in sql
+    assert "FOREIGN KEY(wilayah_asal_id) REFERENCES wilayah (id)" in sql
     assert "FOREIGN KEY(run_id) REFERENCES runs (id) ON DELETE CASCADE" in sql
-    assert "CREATE INDEX ix_titik_hasil_kdkab ON titik_hasil (kdkab)" in sql
+    assert "CREATE INDEX ix_titik_hasil_run_flag_repair ON titik_hasil (run_id, flag_repair)" in sql
 
 
 def test_migrasi_alembic_sesuai_model(tmp_path: Path) -> None:
@@ -111,25 +186,34 @@ def test_migrasi_alembic_sesuai_model(tmp_path: Path) -> None:
     mesin = buat_engine(url)
     try:
         pemeriksa = inspect(mesin)
-        assert {"runs", "titik_hasil"} <= set(pemeriksa.get_table_names())
+        assert {"runs", "wilayah", "titik_hasil", "rekap_subsls"} <= set(
+            pemeriksa.get_table_names()
+        )
 
-        assert {kolom["name"] for kolom in pemeriksa.get_columns("titik_hasil")} == set(
-            TitikHasil.__table__.columns.keys()
-        )
-        assert {kolom["name"] for kolom in pemeriksa.get_columns("runs")} == set(
-            Run.__table__.columns.keys()
-        )
+        for tabel, model in (
+            ("titik_hasil", TitikHasil),
+            ("runs", Run),
+            ("wilayah", Wilayah),
+            ("rekap_subsls", RekapSubsls),
+        ):
+            assert {kolom["name"] for kolom in pemeriksa.get_columns(tabel)} == set(
+                model.__table__.columns.keys()
+            )
+            assert pemeriksa.get_pk_constraint(tabel)["constrained_columns"] == [
+                kolom.name for kolom in model.__table__.primary_key
+            ]
 
         indeks = {indeks["name"] for indeks in pemeriksa.get_indexes("titik_hasil")}
         assert {
-            "ix_titik_hasil_assignment_id",
-            "ix_titik_hasil_idsubsls_origin",
-            "ix_titik_hasil_kdkab",
+            "ix_titik_hasil_wilayah_asal",
+            "ix_titik_hasil_wilayah_edit",
             "ix_titik_hasil_run_flag_repair",
-            "ix_titik_hasil_run_id",
         } <= indeks
         assert "uq_titik_hasil_run_assignment" in {
             unik["name"] for unik in pemeriksa.get_unique_constraints("titik_hasil")
+        }
+        assert "uq_wilayah_idsubsls" in {
+            unik["name"] for unik in pemeriksa.get_unique_constraints("wilayah")
         }
     finally:
         mesin.dispose()
@@ -138,6 +222,8 @@ def test_migrasi_alembic_sesuai_model(tmp_path: Path) -> None:
     command.downgrade(konfigurasi, "base")
     mesin = buat_engine(url)
     try:
-        assert "titik_hasil" not in inspect(mesin).get_table_names()
+        sisa = set(inspect(mesin).get_table_names())
+        assert "titik_hasil" not in sisa and "wilayah" not in sisa
+        assert "rekap_subsls" not in sisa
     finally:
         mesin.dispose()
