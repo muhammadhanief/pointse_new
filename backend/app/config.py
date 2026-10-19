@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     # CORS: hanya domain frontend yang boleh memanggil API
     cors_origins: list[str] = []
 
+    # Unggahan berkas mentah (GPKG/GeoJSON) disimpan di disk server, bukan di DB
+    dir_unggahan: str = "data/unggahan"
+
+    # Worker pemroses job Proses A/B
+    worker_enabled: bool = True
+    max_workers: int = 1
+    interval_polling: float = 1.0
+
     @property
     def database_url(self) -> str:
         """URL koneksi SQLAlchemy untuk MySQL (driver PyMySQL)."""

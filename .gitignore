@@ -46,3 +46,7 @@ Thumbs.db
 # Sementara
 *.log
 tmp/
+
+# Berkas unggahan & data server (jangan di-commit)
+backend/data/
+data/

@@ -34,8 +34,10 @@ npm run dev
 
 - [x] T0 Kerangka repo
 - [x] T1 Fungsi Proses A + tes lawan output QGIS
-- [x] T2 Fungsi Proses B + tes lawan output QGIS
-- [ ] T3 API FastAPI + skema MySQL + Alembic
+- [ ] T2 Fungsi Proses B + tes lawan output QGIS — **belum dianggap selesai**: data uji yang
+      ada hanya mewakili kasus "tidak ada titik digeser/diedit". Menunggu berkas peta/titik
+      hasil penggeseran dari petugas untuk menguji kasus titik yang benar-benar digeser.
+- [x] T3 API FastAPI + skema MySQL + Alembic
 - [ ] T4 Login SSO BPS
 - [ ] T5 Kerangka frontend (sidebar, layout)
 - [ ] T6 Halaman upload dan jalankan proses
@@ -44,9 +46,14 @@ npm run dev
 
 ## Catatan Proses B (T2)
 
-Keluaran Proses B (`backend/app/proses_b.py`) sudah identik dengan keluaran QGIS
-pada data uji 3307 (semua kolom, 397.364 baris), tetapi data uji itu hanya
-mewakili kasus **tanpa titik digeser dan tanpa atribut diedit** (semua
-`flag_position` dan `flag_edit_atr_repair` bernilai 0). Kasus titik yang benar-benar
-digeser/diedit baru diuji lewat tes unit; PRD §9 untuk Proses B dinyatakan lulus
+`backend/app/proses_b.py` sudah identik dengan keluaran QGIS pada data uji 3307 (semua kolom,
+397.364 baris), tetapi data uji itu hanya mewakili kasus **tanpa titik digeser dan tanpa
+atribut diedit** (semua `flag_position` dan `flag_edit_atr_repair` bernilai 0). Kasus titik yang
+benar-benar digeser/diedit baru diuji lewat tes unit; PRD §9 untuk Proses B dinyatakan lulus
 penuh setelah ada data edit asli dari petugas.
+
+## Catatan T3
+
+Tes backend tidak memerlukan server MySQL: tabel dibuat dari model ORM di SQLite sementara,
+dan kueri yang khusus MySQL (`FOR UPDATE SKIP LOCKED`, DDL migrasi) diuji lewat kompilasi ke
+dialek MySQL. Jalankan migrasi sungguhan dengan `alembic upgrade head` setelah `.env` diisi.
