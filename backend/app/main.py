@@ -1,7 +1,8 @@
 """Aplikasi FastAPI pointse.
 
 Endpoint: ``/health``, ``/runs`` (unggah/antre + daftar), ``/runs/{id}`` (status),
-``/runs/{id}/hasil``, dan ``/runs/{id}/rekap``.
+``/runs/{id}/hasil``, ``/runs/{id}/rekap``, ``/runs/{id}/ekspor/*`` (CSV/GPKG),
+``/ekspor/rekap.csv``, ``/ringkasan``, ``/tren``, dan ``/perubahan``.
 
 Worker Proses A/B dinyalakan di lifespan kalau ``WORKER_ENABLED=true`` (default).
 Untuk produksi, worker bisa juga dijalankan sebagai proses terpisah::
@@ -45,7 +46,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 satu.join(timeout=10)
 
 
-app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.4.0", lifespan=lifespan)
 
 # CORS dibatasi ke domain frontend saja (lihat CORS_ORIGINS di .env).
 app.add_middleware(

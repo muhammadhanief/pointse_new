@@ -27,7 +27,8 @@ Petugas dan pengawas BPS. Login memakai SSO BPS.
    no_bang, kode_bang_value, ada_keluarga_value, ada_bang_usaha_value, count_usaha,
    nama_usaha_bang.
 3. Untuk Proses B: **titik hasil pengolahan** (output Proses A yang sudah diedit/digeser)
-   dan **peta wilkerstat lama lapangan**.
+   dan **peta wilkerstat lama lapangan**. Alur kerjanya: unduh GPKG keluaran Proses A dari
+   aplikasi, edit titik di QGIS, lalu unggah hasil edit itu sebagai masukan Proses B.
 
 ## 5. Proses
 Prinsip: **replikasi persis dulu** perilaku model QGIS, perbaikan belakangan.
@@ -179,7 +180,6 @@ Edit titik langsung di web, notifikasi, multi-bahasa, perbaikan logika model
 - Protokol SSO BPS (OIDC/Keycloak?), siapa yang mengurus client id dan redirect URI?
 - Peta mana yang dipakai di A dan B (di B namanya "peta wilkerstat lama lapangan")?
 - Input diupload manual atau diambil dari folder/server?
-- Siapa yang mengedit titik (di QGIS atau nanti di web) dan bagaimana hasil editnya masuk?
 
 ## 12. Rencana task (kerjakan satu per satu, commit tiap selesai)
 - T0: Kerangka repo (`backend/`, `frontend/`, `docs/`), AGENTS.md, .gitignore — selesai
@@ -189,6 +189,9 @@ Edit titik langsung di web, notifikasi, multi-bahasa, perbaikan logika model
 - T3: API FastAPI (upload, jalankan, status, hasil) + skema MySQL + Alembic — selesai
   (termasuk revisi garis waktu (`tanggal_data`), penyimpanan terbatas (baseline + sukses
   terakhir), rekap `rekap_desa`/`rekap_kabupaten`, ringkasan/tren/perubahan: migrasi `0005`)
+- T3 lanjutan: ekspor CSV/GPKG (fitur 5) — selesai: GPKG keluaran Proses A untuk bahan edit
+  QGIS, titik perlu tindakan (CSV/GPKG), rekap kabupaten/desa (CSV) dengan saringan
+  `tanggal_data`; endpoint sudah punya titik pemasangan otorisasi per `kdprov`+`kdkab` (T4)
 - T4: Login SSO
 - T5: Kerangka frontend (sidebar, layout) dengan data tiruan
 - T6: Halaman upload dan jalankan proses

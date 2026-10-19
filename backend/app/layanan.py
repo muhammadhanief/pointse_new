@@ -87,6 +87,17 @@ class KesalahanPerubahan(ValueError):
     """Perubahan antar dua run tidak bisa dihitung (mis. ada run yang belum sukses)."""
 
 
+def periksa_akses(kdprov: str | None, kdkab: str | None) -> None:
+    """Titik pemasangan otorisasi per wilayah (menyusul di T4).
+
+    Belum ada autentikasi, jadi fungsi ini belum menolak apa pun. Saat T4 dipasang,
+    di sini dicek apakah pengguna berhak atas (``kdprov``, ``kdkab``); endpoint
+    ekspor sudah memanggilnya sehingga tidak perlu diubah lagi. ``None`` berarti
+    pengguna meminta seluruh wilayah.
+    """
+    return None
+
+
 @dataclass(frozen=True)
 class InfoUnggahan:
     """Hasil pemeriksaan berkas unggahan sebelum baris ``runs`` dibuat."""

@@ -43,6 +43,14 @@ Copy-Item .env.example .env          # lalu isi kredensial MySQL
 | GET | `/runs/{id}` | Status job + jumlah baris hasil tersimpan + `jumlah_tanpa_wilayah` + `detail_tersedia` |
 | GET | `/runs/{id}/hasil` | Baris hasil titik (paging); **hanya titik yang perlu perhatian** (titik `benar_awal` tidak disimpan, terhitung di rekap) |
 | GET | `/runs/{id}/rekap?tingkat=&dasar=` | Rekap progres per wilayah: `kabupaten`, `kecamatan`, `desa` dari snapshot `rekap_kabupaten`/`rekap_desa`; `sls`/`subsls` dihitung saat diminta dari `titik_hasil` (409 bila detail run itu sudah dipangkas); `dasar` = `tugas` (bawaan) atau `posisi`; tiap baris memuat `jumlah`, `belum`, `benar_awal`, `ditindak_posisi_benar`, `ditindak_posisi_salah`, `digeser`, `tanpa_wilayah`, `persen_progres` (kosong kalau penyebutnya 0); kategori tanpa wilayah dibalas kode `null` + nama "(tanpa wilayah)" dan ditaruh paling akhir |
+| GET | `/runs/{id}/ekspor/hasil-a.gpkg` | Unduh **keluaran Proses A** sebagai GPKG untuk diedit di QGIS (layer `hasil_identifikasi_titik`, kolom + urutan sama dengan model QGIS, EPSG:4326). Dihitung ulang dari berkas mentah run lalu di-cache (2 berkas terbaru); 409 kalau run bukan tipe A, belum sukses, atau berkas mentahnya sudah dipangkas |
+| GET | `/runs/{id}/ekspor/titik.csv` | Unduh **titik perlu tindakan** run ini sebagai CSV (dari `titik_hasil`); 409 kalau detail run itu sudah dipangkas |
+| GET | `/runs/{id}/ekspor/titik.gpkg` | Unduh titik perlu tindakan sebagai GPKG (titik EPSG:4326; pakai koordinat edited kalau ada, kalau tidak origin) |
+| GET | `/ekspor/rekap.csv?tingkat=&tipe=&kdprov=&kdkab=&dasar=&tanggal_awal=&tanggal_akhir=` | Unduh rekap **kabupaten** atau **desa** sebagai CSV; satu baris per run per wilayah, rentang `tanggal_data` inklusif |
+
+Semua endpoint ekspor sudah memanggil `layanan.periksa_akses(kdprov, kdkab)` sebagai titik
+pemasangan otorisasi per wilayah untuk T4 (sekarang belum menolak apa pun). CSV memakai
+UTF-8 tanpa BOM dan pemisah koma.
 
 Belum ada autentikasi (T4). Isi `user` sementara dikirim lewat form.
 
@@ -106,6 +114,24 @@ Arti hitungan (PRD §5) dan baris kategori "(tanpa wilayah)":
   pendek (`kddesa` bisa berulang antar kecamatan); nama desa ikut dibalas supaya bisa
   dibedakan di tampilan (catatan untuk UI T7).
 
+## Ekspor (fitur 5)
+
+Alur kerja yang didukung: **unduh GPKG keluaran Proses A → edit di QGIS → unggah hasil edit
+sebagai masukan Proses B**.
+
+- `GPKG` keluaran A dihitung ulang dari berkas mentah run (bukan dari `titik_hasil` yang
+  sudah dirampingkan), jadi isinya sama dengan model QGIS: layer `hasil_identifikasi_titik`,
+  30 kolom + `geom`, EPSG:4326, urutan baris hasil Proses A. Hasil disimpan di
+  `DIR_UNGGAHAN/_ekspor/` dengan batas `MAKS_CACHE_HASIL_A` (2) berkas terbaru; unduhan
+  pertama pada data uji 397.364 baris ±25 detik dan ±124 MB, unduhan berikutnya ±0,1 detik.
+- `titik.csv`/`titik.gpkg` berisi titik yang disimpan di `titik_hasil` (hanya yang perlu
+  perhatian), termasuk kode wilayah tugas/asal/edit dan koordinat origin/edited.
+- `rekap.csv` berisi snapshot `rekap_kabupaten`/`rekap_desa` per run, dengan nama wilayah
+  dari tabel `wilayah`; baris "(tanpa wilayah)" diberi nama `(tanpa wilayah)` dan kode kosong.
+- Tes `tests/test_ekspor.py` memuat tes pulang-pergi: GPKG hasil ekspor A diunggah sebagai
+  masukan B tanpa edit, lalu rekap B harus sama dengan rekap A (tidak ada titik tergeser,
+  `flag_edit_atr_repair` = 0).
+
 ## Isi
 
 - `app/config.py` — setelan dari `.env` (MySQL, CORS, folder unggahan, worker)
@@ -117,6 +143,8 @@ Arti hitungan (PRD §5) dan baris kategori "(tanpa wilayah)":
 - `app/rekap.py` — query GROUP BY rekap + `simpan_rekap` + `pangkas_titik_hasil`; tanpa
   dependensi berat, dipakai worker **dan** migrasi `0005` supaya logikanya tidak bercabang
 - `app/layanan.py` — pemeriksaan unggahan, pembuatan job, query hasil, rekap, ringkasan, tren, perubahan
+- `app/ekspor.py` — ekspor GPKG keluaran Proses A (dengan cache LRU), titik perlu tindakan
+  (CSV/GPKG), dan rekap kabupaten/desa (CSV)
 - `app/worker.py` — worker Proses A/B (klaim job FIFO, batch simpan, dimensi wilayah, rekap, pemangkasan)
 - `app/api.py` — endpoint FastAPI
 - `migrations/` — migrasi Alembic (`alembic upgrade head`; `0002` normalisasi skema, `0003`

@@ -89,6 +89,27 @@ T3 juga sudah diuji **end-to-end lawan MariaDB asli** (`pointse_new`; kredensial
   (`kdkec`, `kddesa`) dan kolom `kode` yang dibalas berisi `kddesa` saja (nama desanya ikut
   dibalas supaya bisa dibedakan di tampilan).
 
+### Ekspor (fitur 5)
+
+Alur kerja: unduh **GPKG keluaran Proses A** → edit titik di QGIS → unggah hasil edit sebagai
+masukan Proses B.
+
+- `GET /runs/{id}/ekspor/hasil-a.gpkg` — dihitung ulang dari berkas mentah run dengan
+  `proses_a` (bukan dari `titik_hasil` yang sudah dirampingkan), jadi layer, kolom, urutan,
+  dan nilainya sama dengan model QGIS. Pada data uji 3307: **397.364 baris, ±124 MB, ±25 detik**
+  untuk unduhan pertama; hasilnya di-cache di `DIR_UNGGAHAN/_ekspor/` (2 berkas terbaru) sehingga
+  unduhan berikutnya **±0,1 detik**. Hanya untuk run tipe A yang sukses dan berkas mentahnya
+  masih ada (baseline/sukses terakhir); selain itu HTTP 409.
+- `GET /runs/{id}/ekspor/titik.csv` dan `.gpkg` — titik perlu tindakan (data uji: 48.364 baris)
+  lengkap dengan kode wilayah tugas/asal/edit serta koordinat origin/edited; geometri GPKG
+  memakai koordinat edited kalau ada, kalau tidak origin.
+- `GET /ekspor/rekap.csv?tingkat=kabupaten|desa&...` — snapshot rekap per run per wilayah dengan
+  saringan tipe, provinsi, kabupaten, dasar, dan rentang `tanggal_data`.
+- Tes pulang-pergi ada di `backend/tests/test_ekspor.py`: GPKG hasil ekspor A diunggah sebagai
+  masukan B tanpa edit, lalu rekap B harus sama dengan rekap A.
+- Semua endpoint ekspor sudah memanggil `layanan.periksa_akses(kdprov, kdkab)` sebagai titik
+  pemasangan otorisasi per wilayah untuk T4 (sekarang belum menolak apa pun).
+
 ## Catatan skema (T3 lanjutan, migrasi `0002`–`0005`)
 
 Agar DB tidak membengkak saat dipakai semua kabupaten/kota, skema dirapikan bertahap:

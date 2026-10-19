@@ -14,11 +14,14 @@ import shutil
 import uuid
 from datetime import date
 from pathlib import Path
+from typing import BinaryIO
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
-from app import layanan
+from app import ekspor, layanan
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.layanan import (
@@ -276,3 +279,120 @@ def perubahan(
     except KesalahanPerubahan as galat:
         raise HTTPException(status_code=409, detail=str(galat)) from galat
     return PerubahanOut.model_validate(hasil)
+
+
+# --------------------------------------------------------------------- ekspor
+
+
+def _unduhan_csv(spool: BinaryIO, nama: str) -> StreamingResponse:
+    """Balas spool CSV sebagai unduhan."""
+    return StreamingResponse(
+        ekspor.alirkan(spool),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{nama}"'},
+    )
+
+
+def _unduhan_gpkg(berkas: Path, nama: str, hapus: bool = False) -> FileResponse:
+    """Balas berkas GPKG sebagai unduhan (``hapus`` untuk berkas sementara)."""
+    return FileResponse(
+        berkas,
+        media_type="application/geopackage+sqlite3",
+        filename=nama,
+        background=BackgroundTask(berkas.unlink, missing_ok=True) if hapus else None,
+    )
+
+
+@router.get("/runs/{run_id}/ekspor/hasil-a.gpkg", response_class=FileResponse)
+def ekspor_hasil_a(
+    run_id: int,
+    sesi: Session = Depends(get_session),
+    setelan: Settings = Depends(get_settings),
+) -> FileResponse:
+    """Unduh keluaran Proses A sebagai GPKG (bahan edit di QGIS).
+
+    Kolom dan urutannya sama dengan keluaran model QGIS. Hasil dihitung ulang dari
+    berkas mentah run lalu di-cache (hanya beberapa berkas terbaru). Hanya tersedia
+    untuk run Proses A yang sukses dan berkas mentahnya masih ada
+    (baseline/sukses terakhir); selain itu HTTP 409.
+    """
+    run = _ambil_run(sesi, run_id)
+    layanan.periksa_akses(run.kdprov, run.kdkab)
+    try:
+        berkas = ekspor.berkas_hasil_a(run, setelan)
+    except ekspor.EksporTidakTersedia as galat:
+        raise HTTPException(status_code=409, detail=str(galat)) from galat
+    return _unduhan_gpkg(berkas, f"hasil_identifikasi_titik_run{run.id}.gpkg")
+
+
+@router.get("/runs/{run_id}/ekspor/titik.csv", response_class=StreamingResponse)
+def ekspor_titik_csv(
+    run_id: int,
+    sesi: Session = Depends(get_session),
+    setelan: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """Unduh titik perlu tindakan run ini sebagai CSV (dibaca dari ``titik_hasil``)."""
+    run = _ambil_run(sesi, run_id)
+    layanan.periksa_akses(run.kdprov, run.kdkab)
+    try:
+        spool = ekspor.spool_titik_csv(sesi, run, setelan)
+    except ekspor.EksporTidakTersedia as galat:
+        raise HTTPException(status_code=409, detail=str(galat)) from galat
+    return _unduhan_csv(spool, f"titik_perlu_tindakan_run{run.id}.csv")
+
+
+@router.get("/runs/{run_id}/ekspor/titik.gpkg", response_class=FileResponse)
+def ekspor_titik_gpkg(
+    run_id: int,
+    sesi: Session = Depends(get_session),
+    setelan: Settings = Depends(get_settings),
+) -> FileResponse:
+    """Unduh titik perlu tindakan run ini sebagai GPKG (titik EPSG:4326)."""
+    run = _ambil_run(sesi, run_id)
+    layanan.periksa_akses(run.kdprov, run.kdkab)
+    try:
+        berkas = ekspor.berkas_titik_gpkg(sesi, run, setelan)
+    except ekspor.EksporTidakTersedia as galat:
+        raise HTTPException(status_code=409, detail=str(galat)) from galat
+    return _unduhan_gpkg(berkas, f"titik_perlu_tindakan_run{run.id}.gpkg", hapus=True)
+
+
+@router.get("/ekspor/rekap.csv", response_class=StreamingResponse)
+def ekspor_rekap(
+    tingkat: str = Query("kabupaten", description="'kabupaten' atau 'desa'"),
+    tipe: str | None = Query(None, description=f"'{TIPE_A}' atau '{TIPE_B}'"),
+    kdprov: str | None = Query(None, description="Saring satu provinsi, mis. 33"),
+    kdkab: str | None = Query(None, description="Saring satu kabupaten/kota, mis. 07"),
+    dasar: Dasar = Query(DASAR_TUGAS, description="'tugas' (wilayah penugasan) atau 'posisi'"),
+    tanggal_awal: date | None = Query(None, description="Awal rentang tanggal data (termasuk)"),
+    tanggal_akhir: date | None = Query(None, description="Akhir rentang tanggal data (termasuk)"),
+    sesi: Session = Depends(get_session),
+    setelan: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """Unduh rekap kabupaten/desa sebagai CSV.
+
+    Satu baris per run per wilayah (semua run dalam rentang ``tanggal_data``),
+    dengan kolom hitungan yang sama seperti endpoint rekap. Kategori tanpa wilayah
+    dibalas kode kosong dan nama "(tanpa wilayah)".
+    """
+    tipe_bersih = tipe.strip().upper() if tipe else None
+    if tipe_bersih is not None and tipe_bersih not in (TIPE_A, TIPE_B):
+        raise HTTPException(
+            status_code=422, detail=f"tipe harus '{TIPE_A}' atau '{TIPE_B}', bukan '{tipe}'"
+        )
+    layanan.periksa_akses(kdprov, kdkab)
+    try:
+        spool = ekspor.spool_rekap_csv(
+            sesi,
+            setelan,
+            tingkat=tingkat,
+            tipe=tipe_bersih,
+            kdprov=kdprov,
+            kdkab=kdkab,
+            dasar=dasar,
+            tanggal_awal=tanggal_awal,
+            tanggal_akhir=tanggal_akhir,
+        )
+    except ekspor.KesalahanSaringan as galat:
+        raise HTTPException(status_code=422, detail=str(galat)) from galat
+    return _unduhan_csv(spool, f"rekap_{tingkat}_{dasar}.csv")
