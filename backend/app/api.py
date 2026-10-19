@@ -137,9 +137,12 @@ def rekap_run(
     dasar: Dasar = Query(DASAR_TUGAS, description="'tugas' (wilayah penugasan) atau 'posisi'"),
     sesi: Session = Depends(get_session),
 ) -> RekapOut:
-    """Rekap progres per wilayah: jumlah dan persentase titik belum diperbaiki.
+    """Rekap progres per wilayah dari snapshot ``rekap_subsls`` (default dasar ``tugas``).
 
-    Diambil dari snapshot ``rekap_subsls`` hasil job (default dasar ``tugas``).
+    Tiap baris memuat ``belum``, ``ditindak_posisi_benar``, ``ditindak_posisi_salah``,
+    ``benar_awal``, ``digeser``, ``tanpa_wilayah``, dan ``persen_progres`` (kosong bila
+    belum ada titik yang belum/ditindak). Baris ``wilayah_id`` NULL dibalas sebagai
+    kategori "(tanpa wilayah)" di urutan terakhir.
     """
     if layanan.ambil_run(sesi, run_id) is None:
         raise HTTPException(status_code=404, detail=f"job {run_id} tidak ditemukan")

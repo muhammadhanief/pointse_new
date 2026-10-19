@@ -162,21 +162,25 @@ def test_rekap_progres_per_tingkat(
     assert kabupaten["tingkat"] == "kabupaten"
     assert kabupaten["dasar"] == "tugas"
     assert (kabupaten["total"], kabupaten["belum"]) == (3, 1)
-    # Proses A: ``flag_edit_atr_repair`` kosong, jadi yang sudah diperbaiki
-    # dihitung ``sudah_posisi`` (NULL dianggap 0) dan ``sudah_manual`` = 0.
-    assert (kabupaten["sudah_posisi"], kabupaten["sudah_manual"]) == (2, 0)
+    # Proses A: ``flag_edit_atr_repair`` dan ``flag_position`` kosong, jadi titik
+    # ``flag_repair`` = 0 masuk ``benar_awal`` dan ``digeser`` = 0.
+    assert (kabupaten["benar_awal"], kabupaten["digeser"]) == (2, 0)
+    assert (kabupaten["ditindak_posisi_benar"], kabupaten["ditindak_posisi_salah"]) == (0, 0)
     assert kabupaten["tanpa_wilayah"] == 0
-    assert kabupaten["persen_belum"] == 33.33
+    # belum ada yang ditindak: 0 / (belum 1 + ditindak 0) = 0%
+    assert kabupaten["persen_progres"] == 0.0
     assert kabupaten["baris"] == [
         {
             "kode": "3307",
             "nama": "WONOSOBO",
             "jumlah": 3,
             "belum": 1,
-            "sudah_posisi": 2,
-            "sudah_manual": 0,
+            "ditindak_posisi_benar": 0,
+            "ditindak_posisi_salah": 0,
+            "benar_awal": 2,
+            "digeser": 0,
             "tanpa_wilayah": 0,
-            "persen_belum": 33.33,
+            "persen_progres": 0.0,
         }
     ]
 
@@ -191,14 +195,16 @@ def test_rekap_progres_per_tingkat(
     assert [baris["kode"] for baris in desa["baris"]] == ["330701001", "330701002"]
     assert [baris["jumlah"] for baris in desa["baris"]] == [2, 1]
     assert [baris["belum"] for baris in desa["baris"]] == [0, 1]
-    assert [baris["sudah_posisi"] for baris in desa["baris"]] == [2, 0]
-    assert desa["persen_belum"] == 33.33
+    assert [baris["benar_awal"] for baris in desa["baris"]] == [2, 0]
+    # desa pertama: belum 0 + ditindak 0 = penyebut 0 -> persentasenya kosong
+    assert [baris["persen_progres"] for baris in desa["baris"]] == [None, 0.0]
+    assert desa["persen_progres"] == 0.0
 
     # Dasar tugas: ketiga titik masuk SubSLS A1 (wilayah penugasannya)
     subsls = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "subsls"}).json()
     assert [baris["kode"] for baris in subsls["baris"]] == ["A1"]
     assert [baris["jumlah"] for baris in subsls["baris"]] == [3]
-    assert [(baris["belum"], baris["sudah_posisi"]) for baris in subsls["baris"]] == [(1, 2)]
+    assert [(baris["belum"], baris["benar_awal"]) for baris in subsls["baris"]] == [(1, 2)]
 
     sls = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "sls"}).json()
     assert [baris["kode"] for baris in sls["baris"]] == ["3307010010003900"]
@@ -210,7 +216,26 @@ def test_rekap_progres_per_tingkat(
         f"/runs/{run_id}/rekap", params={"tingkat": "subsls", "dasar": "posisi"}
     ).json()
     assert [baris["kode"] for baris in subsls_posisi["baris"]] == ["A1", "A2"]
-    assert [baris["persen_belum"] for baris in subsls_posisi["baris"]] == [0.0, 100.0]
+    assert [baris["persen_progres"] for baris in subsls_posisi["baris"]] == [None, 0.0]
+
+
+def test_rekap_persen_progres_kosong_kalau_penyebut_nol(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Persentase progres kosong (``null``) kalau belum dan tindakan sama-sama 0."""
+    baris = (
+        data_kecil.baris_titik_a("1", "A1", 0.2, 0.2),
+        data_kecil.baris_titik_a("2", "A1", 0.3, 0.3),
+    )
+    titik, peta = berkas_uji(tmp_path, baris)
+    run_id = unggah(klien, titik, peta).json()["id"]
+    jalankan(sesi_pabrik)
+
+    rekap = klien.get(f"/runs/{run_id}/rekap").json()
+    assert (rekap["belum"], rekap["benar_awal"]) == (0, 2)
+    assert (rekap["ditindak_posisi_benar"], rekap["ditindak_posisi_salah"]) == (0, 0)
+    assert rekap["persen_progres"] is None
+    assert rekap["baris"][0]["persen_progres"] is None
 
 
 def test_rekap_memuat_kategori_tanpa_wilayah(
@@ -248,7 +273,7 @@ def test_rekap_memuat_kategori_tanpa_wilayah(
     assert [baris_["kode"] for baris_ in posisi["baris"]] == ["A1", "A2", None]
     assert posisi["baris"][-1]["nama"] == "(tanpa wilayah)"
     assert posisi["baris"][-1]["tanpa_wilayah"] == 1
-    assert (posisi["sudah_posisi"], posisi["belum"]) == (2, 3)
+    assert (posisi["benar_awal"], posisi["belum"]) == (2, 3)
 
 
 def test_rekap_job_belum_dijalankan(
@@ -259,7 +284,9 @@ def test_rekap_job_belum_dijalankan(
     run_id = unggah(klien, titik, peta).json()["id"]
 
     rekap = klien.get(f"/runs/{run_id}/rekap").json()
-    assert rekap["total"] == 0 and rekap["baris"] == [] and rekap["persen_belum"] == 0.0
+    assert rekap["total"] == 0 and rekap["baris"] == []
+    # belum ada hasil: penyebutnya 0, jadi persentasenya kosong (bukan 0%)
+    assert rekap["persen_progres"] is None
     assert rekap["dasar"] == "tugas"
 
 

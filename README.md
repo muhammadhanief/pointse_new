@@ -73,8 +73,10 @@ T3 juga sudah diuji **end-to-end lawan MariaDB asli** (`pointse_new`; kredensial
   397.364 baris tersimpan (79 duplikat `assignment_id` dibuang — sama dengan output QGIS),
   `jumlah_tanpa_wilayah` = 82 (titik di luar semua poligon), rekap kabupaten/kecamatan/desa/sls
   sesuai untuk kedua dasar (`tugas` 7.567 baris, `posisi` 7.799 baris termasuk kategori
-  "(tanpa wilayah)"), dengan rincian `belum` 48.364 / `sudah_posisi` 349.000 /
-  `sudah_manual` 0 (Proses A tidak pernah melakukan perbaikan manual) / `tanpa_wilayah` 82.
+  "(tanpa wilayah)"), dengan rincian `belum` 48.364 / `benar_awal` 349.000 /
+  `ditindak_posisi_benar` 0 / `ditindak_posisi_salah` 0 / `digeser` 0 / `tanpa_wilayah` 82
+  (Proses A belum punya kolom `flag_edit_atr_repair`/`flag_position`, jadi persentase
+  progresnya 0%).
 - Satu job aktif per (kdkab, tipe) terbukti: unggahan baru membuat job lama berstatus
   `digantikan` dan `titik_hasil`-nya dihapus.
 - Performa: 397.364 baris tersimpan dalam ±45 detik (±9.000 baris/detik) pada pengukuran ini,
@@ -98,10 +100,14 @@ Agar DB tidak membengkak saat dipakai semua kabupaten/kota, skema awal dirapikan
   membaca tabel ini, jadi tidak pernah memindai `titik_hasil`.
 - `runs.jumlah_tanpa_wilayah` — jumlah titik yang tidak masuk poligon wilkerstat mana pun.
 
-Migrasi `0003` merinci hitungan rekap (PRD §5) menjadi kolom `belum`, `sudah_posisi`
-(`flag_repair` = 0 tanpa perubahan atribut manual), `sudah_manual` (`flag_repair` = 0 karena
-`flag_edit_atr_repair` = 1), dan `tanpa_wilayah` (titik pada baris itu yang tidak masuk poligon
-mana pun); `jumlah` = `belum` + `sudah_posisi` + `sudah_manual`.
+Migrasi `0003`/`0004` merinci hitungan rekap (PRD §5) menjadi `belum` (`flag_repair` = 1),
+`benar_awal` (`flag_repair` = 0 tanpa tindakan manual), `ditindak_posisi_benar` (`flag_repair` = 0,
+`flag_edit_atr_repair` = 1, `flag_repair_initial` = 0), `ditindak_posisi_salah` (`flag_repair` = 0,
+`flag_edit_atr_repair` = 1, `flag_repair_initial` = 1), `digeser` (`flag_position` = 1), dan
+`tanpa_wilayah`; `jumlah` = `belum` + `benar_awal` + `ditindak_posisi_benar` +
+`ditindak_posisi_salah`. Persentase progres = (`ditindak_posisi_benar` + `ditindak_posisi_salah`) /
+(`belum` + `ditindak_posisi_benar` + `ditindak_posisi_salah`) dan ditampilkan kosong kalau
+penyebutnya 0.
 
 Titik yang tidak bisa dipetakan ke wilayah pada dasar rekap dihitung sebagai baris kategori
 **"(tanpa wilayah)"**: `rekap_subsls.wilayah_id` NULL untuk dasar `tugas` (kode
@@ -112,7 +118,7 @@ Dengan begitu **jumlah setiap dasar = `runs.jumlah_baris`** dan tidak ada titik 
 `wilayah` tetap hanya berisi SubSLS yang benar-benar ada di peta (kode asing tidak dibuatkan
 baris seadanya).
 
-Hasil ukur pada data uji penuh satu kabupaten (397.364 baris, MariaDB, setelah migrasi `0003`):
+Hasil ukur pada data uji penuh satu kabupaten (397.364 baris, MariaDB, setelah migrasi `0004`):
 
 | Tabel | Sebelum | Sesudah |
 |---|---|---|

@@ -180,9 +180,11 @@ def test_sql_migrasi_untuk_mysql(capsys: pytest.CaptureFixture[str]) -> None:
     assert "FOREIGN KEY(wilayah_asal_id) REFERENCES wilayah (id)" in sql
     assert "FOREIGN KEY(run_id) REFERENCES runs (id) ON DELETE CASCADE" in sql
     assert "CREATE INDEX ix_titik_hasil_run_flag_repair ON titik_hasil (run_id, flag_repair)" in sql
-    # migrasi 0003: hitungan rekap dipisah dan wilayah_id boleh NULL
-    assert "sudah_posisi INTEGER NOT NULL" in sql
-    assert "sudah_manual INTEGER NOT NULL" in sql
+    # migrasi 0003/0004: hitungan rekap dipisah, wilayah_id boleh NULL
+    assert "ditindak_posisi_benar INTEGER NOT NULL" in sql
+    assert "ditindak_posisi_salah INTEGER NOT NULL" in sql
+    assert "benar_awal INTEGER NOT NULL" in sql
+    assert "digeser INTEGER NOT NULL" in sql
     assert "tanpa_wilayah INTEGER NOT NULL" in sql
     assert "CONSTRAINT uq_rekap_subsls_run_dasar_wilayah UNIQUE (run_id, dasar, wilayah_id)" in sql
     assert "PRIMARY KEY (id)" in sql

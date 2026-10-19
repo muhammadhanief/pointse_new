@@ -37,7 +37,7 @@ Copy-Item .env.example .env          # lalu isi kredensial MySQL
 | GET | `/runs` | Daftar job (saring `tipe`, `status`, `kdkab`; paging `limit`/`offset`) |
 | GET | `/runs/{id}` | Status job + jumlah baris hasil tersimpan + `jumlah_tanpa_wilayah` |
 | GET | `/runs/{id}/hasil` | Baris hasil titik (paging); wilayah dibalas sebagai `wilayah_tugas`, `wilayah_asal`, `wilayah_edit` |
-| GET | `/runs/{id}/rekap?tingkat=&dasar=` | Rekap progres per wilayah: `kabupaten`, `kecamatan`, `desa`, `sls`, `subsls`; `dasar` = `tugas` (bawaan) atau `posisi`; tiap baris memuat `jumlah`, `belum`, `sudah_posisi`, `sudah_manual`, `tanpa_wilayah`, `persen_belum`; kategori `wilayah_id` NULL dibalas sebagai kode `null` + nama "(tanpa wilayah)" dan ditaruh paling akhir |
+| GET | `/runs/{id}/rekap?tingkat=&dasar=` | Rekap progres per wilayah: `kabupaten`, `kecamatan`, `desa`, `sls`, `subsls`; `dasar` = `tugas` (bawaan) atau `posisi`; tiap baris memuat `jumlah`, `belum`, `benar_awal`, `ditindak_posisi_benar`, `ditindak_posisi_salah`, `digeser`, `tanpa_wilayah`, `persen_progres` (kosong kalau penyebutnya 0); kategori `wilayah_id` NULL dibalas sebagai kode `null` + nama "(tanpa wilayah)" dan ditaruh paling akhir |
 
 Belum ada autentikasi (T4). Isi `user` sementara dikirim lewat form.
 
@@ -67,19 +67,24 @@ Status job: `menunggu` → `jalan` → `sukses` / `gagal` (atau `digantikan`).
 | `runs` | satu baris per job (berkas masukan, status, `jumlah_baris`, `jumlah_tanpa_wilayah` = titik di luar poligon wilkerstat) |
 | `wilayah` | dimensi wilayah: satu baris per SubSLS (`idsubsls`) dengan kode + nama; diisi dari peta lewat **upsert** dan tidak pernah dihapus |
 | `titik_hasil` | hasil per titik: kunci `(run_id, urut)`, flag (`flag_repair`, `flag_position`, …), `kk/btt/bku/bttk/bbtt`, `usaha`, koordinat, `level_6_full_code`, dan wilayah lewat `wilayah_asal_id`/`wilayah_edit_id` |
-| `rekap_subsls` | snapshot rekap per SubSLS per job: `jumlah`, `belum`, `sudah_posisi`, `sudah_manual`, `tanpa_wilayah` untuk dua `dasar` (`tugas` = `level_6_full_code`, `posisi` = hasil join peta) |
+| `rekap_subsls` | snapshot rekap per SubSLS per job: `jumlah`, `belum`, `benar_awal`, `ditindak_posisi_benar`, `ditindak_posisi_salah`, `digeser`, `tanpa_wilayah` untuk dua `dasar` (`tugas` = `level_6_full_code`, `posisi` = hasil join peta) |
 
 Nama/kode wilayah tidak lagi disimpan di `titik_hasil` (dinormalkan ke `wilayah`), dan
 dashboard membaca `rekap_subsls` sehingga tidak perlu memindai `titik_hasil`.
 
 Arti hitungan (PRD §5) dan baris kategori "(tanpa wilayah)":
 
-- `belum` = `flag_repair` = 1; `sudah_posisi` = `flag_repair` = 0 dan
-  `flag_edit_atr_repair` bukan 1 (Proses A yang kolomnya NULL dianggap 0);
-  `sudah_manual` = `flag_repair` = 0 dan `flag_edit_atr_repair` = 1; `jumlah` =
-  `belum` + `sudah_posisi` + `sudah_manual`.
-- `tanpa_wilayah` = titik pada baris itu yang tidak masuk poligon wilkerstat mana pun
-  (keterangan tersendiri, bisa tumpang tindih dengan `belum`).
+- `belum` = `flag_repair` = 1; `benar_awal` = `flag_repair` = 0 dan `flag_edit_atr_repair`
+  bukan 1 (Proses A yang kolomnya NULL dianggap 0); `ditindak_posisi_benar` = `flag_repair` = 0,
+  `flag_edit_atr_repair` = 1, `flag_repair_initial` = 0; `ditindak_posisi_salah` =
+  `flag_repair` = 0, `flag_edit_atr_repair` = 1, `flag_repair_initial` = 1; `jumlah` =
+  `belum` + `benar_awal` + `ditindak_posisi_benar` + `ditindak_posisi_salah`.
+- `digeser` = titik dengan `flag_position` = 1 dan `tanpa_wilayah` = titik pada baris itu yang
+  tidak masuk poligon wilkerstat mana pun (keduanya keterangan tersendiri, bisa tumpang tindih
+  dengan kolom lain).
+- Persentase progres dihitung saat dibaca (`app.layanan.rekap_run`), tidak disimpan:
+  (`ditindak_posisi_benar` + `ditindak_posisi_salah`) / (`belum` + `ditindak_posisi_benar` +
+  `ditindak_posisi_salah`); kosong (`null`) kalau penyebutnya 0.
 - `wilayah_id` NULL = kategori terpisah "(tanpa wilayah)": dasar `tugas` untuk
   `level_6_full_code` kosong / tidak ada di tabel `wilayah`, dasar `posisi` untuk titik di
   luar semua poligon. Kunci utama `rekap_subsls` memakai `id` (`UNIQUE (run_id, dasar,
@@ -98,7 +103,7 @@ Arti hitungan (PRD §5) dan baris kategori "(tanpa wilayah)":
 - `app/worker.py` — worker Proses A/B (klaim job, batch simpan, dimensi wilayah, rekap)
 - `app/api.py` — endpoint FastAPI
 - `migrations/` — migrasi Alembic (`alembic upgrade head`; `0002` normalisasi skema, `0003`
-  hitungan rekap terpisah + baris "(tanpa wilayah)")
+  baris "(tanpa wilayah)" untuk rekap, `0004` kolom hitungan rekap dipisah)
 - `tests/` — tes pytest (SQLite sementara; tes data penuh di `docs/` ditandai `slow`:
   `test_proses_a_qgis.py`, `test_proses_b_qgis.py`, dan `test_proses_b_edit_qgis.py` untuk
   data uji yang sudah diedit)

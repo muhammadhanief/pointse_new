@@ -58,16 +58,23 @@ class HasilOut(BaseModel):
 
 
 class RekapBarisOut(BaseModel):
-    """Rekap progres satu wilayah."""
+    """Rekap progres satu wilayah.
+
+    ``persen_progres`` = (``ditindak_posisi_benar`` + ``ditindak_posisi_salah``) /
+    (``belum`` + ``ditindak_posisi_benar`` + ``ditindak_posisi_salah``); ``None``
+    (kosong) kalau penyebutnya 0.
+    """
 
     kode: str | None = None
     nama: str | None = None
     jumlah: int
     belum: int
-    sudah_posisi: int
-    sudah_manual: int
+    ditindak_posisi_benar: int
+    ditindak_posisi_salah: int
+    benar_awal: int
+    digeser: int
     tanpa_wilayah: int
-    persen_belum: float
+    persen_progres: float | None = None
 
 
 class RekapOut(BaseModel):
@@ -78,8 +85,10 @@ class RekapOut(BaseModel):
     dasar: str
     total: int
     belum: int
-    sudah_posisi: int
-    sudah_manual: int
+    ditindak_posisi_benar: int
+    ditindak_posisi_salah: int
+    benar_awal: int
+    digeser: int
     tanpa_wilayah: int
-    persen_belum: float
+    persen_progres: float | None = None
     baris: list[RekapBarisOut]

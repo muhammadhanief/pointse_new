@@ -74,20 +74,28 @@ Hasil harus identik dengan output QGIS pada data uji.
 6. Output: **Hasil Pengecekan Titik Hasil Penggeseran**.
 
 ### Indikator progres
-Jumlah titik dipisah menjadi empat hitungan:
+Jumlah titik dipisah menjadi:
 
 - `belum`: `flag_repair` = 1;
-- `sudah_posisi`: `flag_repair` = 0 dan `flag_edit_atr_repair` = 0 (diperbaiki lewat
-  posisi; pada Proses A kolom itu kosong sehingga NULL dianggap 0);
-- `sudah_manual`: `flag_repair` = 0 dan `flag_edit_atr_repair` = 1 (atribut diperbaiki
-  manual);
-- `tanpa_wilayah`: titik yang tidak masuk poligon wilkerstat mana pun (informasi
+- `benar_awal`: `flag_repair` = 0 dan `flag_edit_atr_repair` bukan 1 (pada Proses A kolom
+  itu kosong, NULL dianggap 0) — titik sudah benar tanpa tindakan manual;
+- `ditindak_posisi_benar`: `flag_repair` = 0, `flag_edit_atr_repair` = 1, dan
+  `flag_repair_initial` = 0 (atribut ditindak manual dan posisinya sudah di SubSLS tugas);
+- `ditindak_posisi_salah`: `flag_repair` = 0, `flag_edit_atr_repair` = 1, dan
+  `flag_repair_initial` = 1 (ditindak manual tetapi posisinya masih belum sesuai);
+- `digeser`: `flag_position` = 1 (titik dipindah; keterangan tersendiri, bisa tumpang
+  tindih dengan kolom lain);
+- `tanpa_wilayah`: titik yang tidak masuk poligon wilkerstat mana pun (keterangan
   tersendiri, bisa tumpang tindih dengan `belum`).
 
-Persentase yang ditampilkan = `belum` / jumlah titik. Titik yang tidak bisa dipetakan
-ke wilayah pada dasar rekap yang dipakai dihitung sebagai kategori terpisah
-"(tanpa wilayah)", jadi jumlah tiap dasar selalu utuh. Semua direkap per
-kabupaten/kota, kecamatan, desa, dan SLS/SubSLS.
+Persentase progres = (`ditindak_posisi_benar` + `ditindak_posisi_salah`) / (`belum` +
+`ditindak_posisi_benar` + `ditindak_posisi_salah`); `benar_awal` dan `digeser` tidak ikut
+dihitung. Kalau penyebutnya 0, persentasenya ditampilkan kosong (bukan 0%).
+
+Titik yang tidak bisa dipetakan ke wilayah pada dasar rekap yang dipakai dihitung sebagai
+kategori terpisah "(tanpa wilayah)", jadi jumlah tiap dasar selalu utuh (`jumlah` =
+`belum` + `benar_awal` + `ditindak_posisi_benar` + `ditindak_posisi_salah`). Semua
+direkap per kabupaten/kota, kecamatan, desa, dan SLS/SubSLS.
 
 ## 6. Fitur (urut prioritas)
 1. Login SSO BPS
@@ -115,16 +123,20 @@ hanya berkas di disk server.
   `flag_repair`), `kk`/`btt`/`bku`/`bttk`/`bbtt`, `usaha`, dan koordinat
   origin/edited. Nama & kode wilayah tidak disimpan di sini (lewat `wilayah`).
 - `rekap_subsls`: snapshot rekap per SubSLS per job — kunci utama `id`, unik
-  `(run_id, dasar, wilayah_id)`; kolom `jumlah`, `belum`, `sudah_posisi`,
-  `sudah_manual`, `tanpa_wilayah`, dan `dasar` (`tugas` = `level_6_full_code` titik,
-  `posisi` = hasil join peta: `wilayah_edit_id` bila ada, kalau tidak `wilayah_asal_id`).
-  Index: `(run_id, dasar)`.
+  `(run_id, dasar, wilayah_id)`; kolom `jumlah`, `belum`, `benar_awal`,
+  `ditindak_posisi_benar`, `ditindak_posisi_salah`, `digeser`, `tanpa_wilayah`, dan
+  `dasar` (`tugas` = `level_6_full_code` titik, `posisi` = hasil join peta:
+  `wilayah_edit_id` bila ada, kalau tidak `wilayah_asal_id`). Index: `(run_id, dasar)`.
   - `wilayah_id` NULL = kategori "(tanpa wilayah)": titik yang tidak bisa dipetakan ke
     wilayah pada dasar itu (dasar `tugas`: `level_6_full_code` kosong atau tidak ada di
     tabel `wilayah`; dasar `posisi`: titik di luar semua poligon). Karena kolom kunci
     utama di MySQL tidak boleh NULL, kunci utama tabel ini memakai `id`.
-  - `jumlah` = `belum` + `sudah_posisi` + `sudah_manual`; `tanpa_wilayah` adalah
-    keterangan tersendiri (titik pada baris itu yang tidak masuk poligon mana pun).
+  - `jumlah` = `belum` + `benar_awal` + `ditindak_posisi_benar` + `ditindak_posisi_salah`;
+    `digeser` dan `tanpa_wilayah` adalah keterangan tersendiri (bisa tumpang tindih
+    dengan kolom lain).
+  - Persentase progres tidak disimpan: dihitung saat dibaca sebagai
+    (`ditindak_posisi_benar` + `ditindak_posisi_salah`) / (`belum` +
+    `ditindak_posisi_benar` + `ditindak_posisi_salah`), kosong kalau penyebutnya 0.
   - Jumlah baris tiap dasar = `runs.jumlah_baris` (tidak ada titik yang hilang).
 
 Rekap dihitung lewat query GROUP BY di basis data saat job sukses dan disimpan sebagai

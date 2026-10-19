@@ -11,7 +11,8 @@ Empat tabel:
   karena jadi kunci wilayah **tugas** pada rekap;
 - ``rekap_subsls`` : snapshot rekap progres per SubSLS per job, dua dasar
   (``DASAR_TUGAS``/``DASAR_POSISI``), dihitung lewat query GROUP BY di DB; hitungan
-  dipisah menjadi ``belum``/``sudah_posisi``/``sudah_manual``/``tanpa_wilayah``.
+  dipisah menjadi ``belum``/``benar_awal``/``ditindak_posisi_benar``/
+  ``ditindak_posisi_salah``/``digeser``/``tanpa_wilayah``.
 
 Catatan pilihan tipe:
 
@@ -187,14 +188,24 @@ class RekapSubsls(Base):
 
     Hitungan dipisah (indikator progres PRD §5):
 
-    - ``belum``          : titik dengan ``flag_repair`` = 1;
-    - ``sudah_posisi``   : ``flag_repair`` = 0 dan ``flag_edit_atr_repair`` bukan 1
-      (perbaikan lewat posisi; untuk Proses A yang kolomnya NULL, NULL dianggap 0);
-    - ``sudah_manual``   : ``flag_repair`` = 0 dan ``flag_edit_atr_repair`` = 1
-      (atribut diperbaiki manual);
-    - ``tanpa_wilayah``  : titik pada baris itu yang tidak masuk poligon wilkerstat
+    - ``belum``                 : titik dengan ``flag_repair`` = 1;
+    - ``benar_awal``            : ``flag_repair`` = 0 dan ``flag_edit_atr_repair``
+      dianggap 0 (NULL pada Proses A) -- sudah benar tanpa tindakan manual;
+    - ``ditindak_posisi_benar`` : ``flag_repair`` = 0, ``flag_edit_atr_repair`` = 1, dan
+      ``flag_repair_initial`` = 0 -- petugas menindak atributnya dan posisi titik sekarang
+      sudah di SubSLS tugasnya;
+    - ``ditindak_posisi_salah`` : ``flag_repair`` = 0, ``flag_edit_atr_repair`` = 1, dan
+      ``flag_repair_initial`` = 1 -- ditindak manual tetapi posisinya masih belum sesuai;
+    - ``digeser``               : ``flag_position`` = 1 (titik dipindah; keterangan
+      tersendiri, bisa tumpang tindih dengan kolom lain);
+    - ``tanpa_wilayah``         : titik pada baris itu yang tidak masuk poligon wilkerstat
       mana pun (``wilayah_asal_id`` dan ``wilayah_edit_id`` sama-sama kosong);
-    - ``jumlah`` = ``belum`` + ``sudah_posisi`` + ``sudah_manual``.
+    - ``jumlah`` = ``belum`` + ``benar_awal`` + ``ditindak_posisi_benar`` +
+      ``ditindak_posisi_salah``.
+
+    Persentase progres = (``ditindak_posisi_benar`` + ``ditindak_posisi_salah``) /
+    (``belum`` + ``ditindak_posisi_benar`` + ``ditindak_posisi_salah``); kalau penyebutnya
+    0 persentasenya kosong (NULL) -- dihitung di :func:`app.layanan.rekap_run`.
 
     ``wilayah_id`` NULL = kategori terpisah "(tanpa wilayah)": titik yang tidak bisa
     dipetakan ke wilayah pada dasar itu (dasar ``tugas``: ``level_6_full_code``
@@ -221,6 +232,8 @@ class RekapSubsls(Base):
 
     jumlah: Mapped[int] = mapped_column(Integer)
     belum: Mapped[int] = mapped_column(Integer)
-    sudah_posisi: Mapped[int] = mapped_column(Integer)
-    sudah_manual: Mapped[int] = mapped_column(Integer)
+    ditindak_posisi_benar: Mapped[int] = mapped_column(Integer)
+    ditindak_posisi_salah: Mapped[int] = mapped_column(Integer)
+    benar_awal: Mapped[int] = mapped_column(Integer)
+    digeser: Mapped[int] = mapped_column(Integer)
     tanpa_wilayah: Mapped[int] = mapped_column(Integer)

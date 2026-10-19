@@ -279,9 +279,9 @@ def hasil_run(
     return total, keluaran
 
 
-def _persen(belum: object, jumlah: object) -> object:
-    """Persentase titik belum diperbaiki, dihitung di basis data."""
-    return func.round(100.0 * belum / func.nullif(jumlah, 0), 2)
+def _persen(pembilang: object, penyebut: object) -> object:
+    """Persentase di basis data; NULL kalau penyebutnya 0 (ditampilkan kosong)."""
+    return func.round(100.0 * pembilang / func.nullif(penyebut, 0), 2)
 
 
 #: Label untuk baris rekap yang tidak menunjuk wilayah (``wilayah_id`` NULL).
@@ -298,25 +298,37 @@ def rekap_run(
     Baris kategori terpisah "(tanpa wilayah)" (``wilayah_id`` NULL: titik yang tidak
     bisa dipetakan ke wilayah pada dasar itu) ikut disertakan dan diletakkan paling
     akhir.
+
+    Persentase progres = (``ditindak_posisi_benar`` + ``ditindak_posisi_salah``) /
+    (``belum`` + ``ditindak_posisi_benar`` + ``ditindak_posisi_salah``); jadi
+    ``benar_awal`` tidak ikut dihitung. Kalau penyebutnya 0, nilainya ``None``
+    (ditampilkan kosong).
     """
     kolom_kode, kolom_nama = (getattr(Wilayah, nama) for nama in TINGKAT[tingkat])
 
-    belum = func.coalesce(func.sum(RekapSubsls.belum), 0)
     jumlah = func.coalesce(func.sum(RekapSubsls.jumlah), 0)
     hitungan = {
         "jumlah": jumlah,
-        "belum": belum,
-        "sudah_posisi": func.coalesce(func.sum(RekapSubsls.sudah_posisi), 0),
-        "sudah_manual": func.coalesce(func.sum(RekapSubsls.sudah_manual), 0),
+        "belum": func.coalesce(func.sum(RekapSubsls.belum), 0),
+        "ditindak_posisi_benar": func.coalesce(
+            func.sum(RekapSubsls.ditindak_posisi_benar), 0
+        ),
+        "ditindak_posisi_salah": func.coalesce(
+            func.sum(RekapSubsls.ditindak_posisi_salah), 0
+        ),
+        "benar_awal": func.coalesce(func.sum(RekapSubsls.benar_awal), 0),
+        "digeser": func.coalesce(func.sum(RekapSubsls.digeser), 0),
         "tanpa_wilayah": func.coalesce(func.sum(RekapSubsls.tanpa_wilayah), 0),
     }
+    ditindak = hitungan["ditindak_posisi_benar"] + hitungan["ditindak_posisi_salah"]
+    penyebut = hitungan["belum"] + ditindak
 
     per_kelompok = sesi.execute(
         select(
             kolom_kode.label("kode"),
             kolom_nama.label("nama"),
             *(nilai.label(nama) for nama, nilai in hitungan.items()),
-            _persen(belum, jumlah).label("persen_belum"),
+            _persen(ditindak, penyebut).label("persen_progres"),
         )
         .select_from(RekapSubsls)
         # LEFT JOIN: baris "(tanpa wilayah)" (wilayah_id NULL) tetap terbawa.
@@ -328,6 +340,7 @@ def rekap_run(
     baris: list[dict[str, object]] = []
     for hasil in per_kelompok:
         tanpa = hasil["kode"] is None
+        persen = hasil["persen_progres"]
         baris.append(
             {
                 "kode": None if tanpa else str(hasil["kode"]),
@@ -335,24 +348,27 @@ def rekap_run(
                 if tanpa
                 else (None if hasil["nama"] is None else str(hasil["nama"])),
                 **{nama: int(hasil[nama]) for nama in hitungan},
-                "persen_belum": float(hasil["persen_belum"] or 0.0),
+                "persen_progres": None if persen is None else float(persen),
             }
         )
     # Urutan kode menanjak, baris "(tanpa wilayah)" paling akhir (urutan NULL
     # berbeda antara MySQL dan SQLite, jadi diurutkan di sini saja).
     baris.sort(key=lambda satu: (satu["kode"] is None, satu["kode"] or ""))
 
-    total = sum(satu["jumlah"] for satu in baris)
-    total_belum = sum(satu["belum"] for satu in baris)
+    ringkas = {
+        nama: sum(int(satu[nama]) for satu in baris) for nama in hitungan if nama != "jumlah"
+    }
+    total = sum(int(satu["jumlah"]) for satu in baris)
+    ditindak_total = ringkas["ditindak_posisi_benar"] + ringkas["ditindak_posisi_salah"]
+    penyebut_total = ringkas["belum"] + ditindak_total
     return {
         "run_id": run_id,
         "tingkat": tingkat,
         "dasar": dasar,
         "total": total,
-        "belum": total_belum,
-        "sudah_posisi": sum(satu["sudah_posisi"] for satu in baris),
-        "sudah_manual": sum(satu["sudah_manual"] for satu in baris),
-        "tanpa_wilayah": sum(satu["tanpa_wilayah"] for satu in baris),
-        "persen_belum": round(100.0 * total_belum / total, 2) if total else 0.0,
+        **ringkas,
+        "persen_progres": round(100.0 * ditindak_total / penyebut_total, 2)
+        if penyebut_total
+        else None,
         "baris": baris,
     }

@@ -185,24 +185,25 @@ def _jumlah_kasus(syarat: object) -> object:
 
 
 def _kolom_hitungan() -> tuple[object, ...]:
-    """Kolom hitungan rekap: jumlah, belum, sudah_posisi, sudah_manual, tanpa_wilayah.
+    """Kolom hitungan rekap (indikator progres PRD §5), urut seperti ``KOLOM_REKAP``.
 
-    ``flag_edit_atr_repair`` NULL (Proses A tidak punya kolom itu) dianggap 0,
-    jadi titik ``flag_repair`` = 0 pada Proses A masuk ``sudah_posisi``.
+    ``flag_edit_atr_repair`` NULL (Proses A tidak punya kolom itu) dianggap 0, jadi
+    titik ``flag_repair`` = 0 pada Proses A masuk ``benar_awal``.
     """
-    tanpa_manual = or_(
+    tanpa_tindakan = or_(
         TitikHasil.flag_edit_atr_repair.is_(None), TitikHasil.flag_edit_atr_repair == 0
     )
+    ditindak = and_(TitikHasil.flag_repair == 0, TitikHasil.flag_edit_atr_repair == 1)
     tak_masuk_poligon = and_(
         TitikHasil.wilayah_asal_id.is_(None), TitikHasil.wilayah_edit_id.is_(None)
     )
     return (
         func.count(),
         _jumlah_kasus(TitikHasil.flag_repair == 1),
-        _jumlah_kasus(and_(TitikHasil.flag_repair == 0, tanpa_manual)),
-        _jumlah_kasus(
-            and_(TitikHasil.flag_repair == 0, TitikHasil.flag_edit_atr_repair == 1)
-        ),
+        _jumlah_kasus(and_(ditindak, TitikHasil.flag_repair_initial == 0)),
+        _jumlah_kasus(and_(ditindak, TitikHasil.flag_repair_initial == 1)),
+        _jumlah_kasus(and_(TitikHasil.flag_repair == 0, tanpa_tindakan)),
+        _jumlah_kasus(TitikHasil.flag_position == 1),
         _jumlah_kasus(tak_masuk_poligon),
     )
 
@@ -214,8 +215,10 @@ KOLOM_REKAP: list[str] = [
     "dasar",
     "jumlah",
     "belum",
-    "sudah_posisi",
-    "sudah_manual",
+    "ditindak_posisi_benar",
+    "ditindak_posisi_salah",
+    "benar_awal",
+    "digeser",
     "tanpa_wilayah",
 ]
 

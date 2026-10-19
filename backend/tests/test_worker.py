@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy import select
 from sqlalchemy.dialects import mysql
@@ -42,6 +42,18 @@ BARIS_B = (
     data_kecil.baris_titik_b("2", "A1", 0.3, 0.3, latitude=0.9, longitude=2.5),
     data_kecil.baris_titik_b("3", "A1", 0.4, 0.4, flag_repair_initial=1, flag_repair=0),
 )
+
+
+class Hitungan(NamedTuple):
+    """Hitungan satu baris rekap (PRD §5); kolom yang tidak disebut bernilai 0."""
+
+    jumlah: int = 0
+    belum: int = 0
+    ditindak_benar: int = 0
+    ditindak_salah: int = 0
+    benar_awal: int = 0
+    digeser: int = 0
+    tanpa_wilayah: int = 0
 
 
 def buat_job(
@@ -92,10 +104,8 @@ def kode_wilayah(sesi: Session, wilayah_id: int | None) -> str | None:
     return sesi.scalar(select(Wilayah.idsubsls).where(Wilayah.id == wilayah_id))
 
 
-def rekap(
-    sesi: Session, run_id: int, dasar: str
-) -> dict[str | None, tuple[int, int, int, int, int]]:
-    """Rekap satu dasar: ``idsubsls -> (jumlah, belum, sudah_posisi, sudah_manual, tanpa_wilayah)``.
+def rekap(sesi: Session, run_id: int, dasar: str) -> dict[str | None, Hitungan]:
+    """Rekap satu dasar: ``idsubsls -> Hitungan``.
 
     Kunci ``None`` = baris kategori terpisah "(tanpa wilayah)" (``wilayah_id`` NULL).
     """
@@ -104,8 +114,10 @@ def rekap(
             Wilayah.idsubsls,
             RekapSubsls.jumlah,
             RekapSubsls.belum,
-            RekapSubsls.sudah_posisi,
-            RekapSubsls.sudah_manual,
+            RekapSubsls.ditindak_posisi_benar,
+            RekapSubsls.ditindak_posisi_salah,
+            RekapSubsls.benar_awal,
+            RekapSubsls.digeser,
             RekapSubsls.tanpa_wilayah,
         )
         .select_from(RekapSubsls)
@@ -113,14 +125,14 @@ def rekap(
         .where(RekapSubsls.run_id == run_id, RekapSubsls.dasar == dasar)
     ).all()
     return {
-        kode: (jumlah, belum, posisi, manual, tanpa)
-        for kode, jumlah, belum, posisi, manual, tanpa in baris
+        kode: Hitungan(jumlah, belum, benar, salah, awal, digeser, tanpa)
+        for kode, jumlah, belum, benar, salah, awal, digeser, tanpa in baris
     }
 
 
 def total_rekap(sesi: Session, run_id: int, dasar: str) -> int:
     """Jumlah titik pada satu dasar rekap (termasuk baris "(tanpa wilayah)")."""
-    return sum(satu[0] for satu in rekap(sesi, run_id, dasar).values())
+    return sum(satu.jumlah for satu in rekap(sesi, run_id, dasar).values())
 
 
 def test_ukuran_batch_penyimpanan_sepuluh_ribu() -> None:
@@ -199,8 +211,8 @@ def test_rekap_subsls_diisi_dua_dasar(
 
     Dasar ``tugas`` memakai ``level_6_full_code`` (ketiga titik ditugaskan di A1),
     dasar ``posisi`` memakai hasil join peta (dua titik di A1, satu di A2). Proses A
-    tidak punya ``flag_edit_atr_repair``, jadi titik yang sudah diperbaiki masuk
-    ``sudah_posisi`` (NULL dianggap 0).
+    tidak punya ``flag_edit_atr_repair`` dan ``flag_position``, jadi titik
+    ``flag_repair`` = 0 masuk ``benar_awal`` dan ``digeser`` tetap 0.
     """
     job = buat_job(sesi, tmp_path)
     sesi.rollback()
@@ -208,10 +220,12 @@ def test_rekap_subsls_diisi_dua_dasar(
     assert proses_satu_job(sesi_pabrik) is True
     sesi.expire_all()
 
-    assert rekap(sesi, job.id, DASAR_TUGAS) == {"A1": (3, 1, 2, 0, 0)}
+    assert rekap(sesi, job.id, DASAR_TUGAS) == {
+        "A1": Hitungan(jumlah=3, belum=1, benar_awal=2)
+    }
     assert rekap(sesi, job.id, DASAR_POSISI) == {
-        "A1": (2, 0, 2, 0, 0),
-        "A2": (1, 1, 0, 0, 0),
+        "A1": Hitungan(jumlah=2, benar_awal=2),
+        "A2": Hitungan(jumlah=1, belum=1),
     }
     # jumlah tiap dasar harus utuh (PRD §5: indikator progres per wilayah).
     assert total_rekap(sesi, job.id, DASAR_TUGAS) == job.jumlah_baris == 3
@@ -223,8 +237,9 @@ def test_rekap_basis_posisi_memakai_wilayah_hasil_edit(
 ) -> None:
     """Proses B: dasar ``posisi`` mengikuti wilayah hasil edit, ``tugas`` tetap awal.
 
-    Tiga titik: satu apa adanya (``sudah_posisi``), satu digeser pindah SubSLS
-    (``belum``), satu ``flag_repair``-nya diubah manual (``sudah_manual``).
+    Tiga titik: satu apa adanya (``benar_awal``), satu digeser pindah SubSLS
+    (``belum`` + ``digeser``), satu ``flag_repair``-nya diubah manual sehingga
+    posisinya benar (``ditindak_posisi_benar``).
     """
     job = buat_job(sesi, tmp_path, tipe=TIPE_B)
     sesi.rollback()
@@ -232,32 +247,73 @@ def test_rekap_basis_posisi_memakai_wilayah_hasil_edit(
     assert proses_satu_job(sesi_pabrik) is True
     sesi.expire_all()
 
-    assert rekap(sesi, job.id, DASAR_TUGAS) == {"A1": (3, 1, 1, 1, 0)}
+    assert rekap(sesi, job.id, DASAR_TUGAS) == {
+        "A1": Hitungan(
+            jumlah=3, belum=1, ditindak_benar=1, benar_awal=1, digeser=1
+        )
+    }
     assert rekap(sesi, job.id, DASAR_POSISI) == {
-        "A1": (2, 0, 1, 1, 0),
-        "A2": (1, 1, 0, 0, 0),
+        "A1": Hitungan(jumlah=2, ditindak_benar=1, benar_awal=1),
+        "A2": Hitungan(jumlah=1, belum=1, digeser=1),
     }
     assert total_rekap(sesi, job.id, DASAR_POSISI) == job.jumlah_baris == 3
 
 
-def test_rekap_memisahkan_sudah_posisi_dan_sudah_manual(
+def test_rekap_memisahkan_benar_awal_dan_tindakan(
     sesi: Session, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
-    """Kolom ``sudah_posisi`` dan ``sudah_manual`` dihitung terpisah (PRD §5)."""
+    """``benar_awal`` dan ``ditindak_posisi_benar`` dihitung terpisah (PRD §5)."""
     job = buat_job(sesi, tmp_path, tipe=TIPE_B)
     sesi.rollback()
 
     assert proses_satu_job(sesi_pabrik) is True
     sesi.expire_all()
 
-    jumlah, belum, sudah_posisi, sudah_manual, tanpa = rekap(
-        sesi, job.id, DASAR_TUGAS
-    )["A1"]
-    assert (jumlah, belum) == (3, 1)
-    # titik 1: flag_repair 0 & flag_edit_atr_repair 0; titik 3: flag_repair 0 &
-    # flag_edit_atr_repair 1 (atribut diperbaiki manual).
-    assert (sudah_posisi, sudah_manual) == (1, 1)
-    assert tanpa == 0
+    hasil = rekap(sesi, job.id, DASAR_TUGAS)["A1"]
+    # titik 1: flag_repair 0 & flag_edit_atr_repair 0 (tanpa tindakan manual);
+    # titik 3: flag_repair 0, flag_edit_atr_repair 1, flag_repair_initial 0
+    # (ditindak manual dan posisinya sudah di SubSLS tugasnya).
+    assert hasil == Hitungan(
+        jumlah=3, belum=1, ditindak_benar=1, benar_awal=1, digeser=1
+    )
+
+
+def test_rekap_ditindak_tapi_posisi_masih_salah(
+    sesi: Session, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """``ditindak_posisi_salah``: atribut ditindak manual tetapi posisi masih salah.
+
+    Titik 2 digeser ke A2 dengan ``flag_repair`` sudah diubah manual (0), jadi
+    ``flag_edit_atr_repair`` = 1 sementara ``flag_repair_initial`` hasil join baru
+    tetap 1 (SubSLS hasil join != SubSLS tugas).
+    """
+    baris = (
+        data_kecil.baris_titik_b("1", "A1", 0.2, 0.2),
+        data_kecil.baris_titik_b(
+            "2", "A1", 0.3, 0.3, latitude=0.4, longitude=2.4,
+            flag_repair_initial=1, flag_repair=0,
+        ),
+    )
+    job = buat_job(sesi, tmp_path, tipe=TIPE_B, baris=baris)
+    sesi.rollback()
+
+    assert proses_satu_job(sesi_pabrik) is True
+    sesi.expire_all()
+
+    hasil = {satu.assignment_id: satu for satu in baris_hasil(sesi, job.id)}["2"]
+    assert hasil.flag_edit_atr_repair == 1
+    assert hasil.flag_repair_initial == 1
+    assert hasil.flag_repair == 0
+    assert hasil.flag_position == 1
+
+    assert rekap(sesi, job.id, DASAR_TUGAS) == {
+        "A1": Hitungan(jumlah=2, ditindak_salah=1, benar_awal=1, digeser=1)
+    }
+    # dasar posisi: titik 1 di A1, titik 2 (digeser) di A2
+    assert rekap(sesi, job.id, DASAR_POSISI) == {
+        "A1": Hitungan(jumlah=1, benar_awal=1),
+        "A2": Hitungan(jumlah=1, ditindak_salah=1, digeser=1),
+    }
 
 
 def test_titik_di_luar_peta_dihitung_tanpa_wilayah(
@@ -283,12 +339,14 @@ def test_titik_di_luar_peta_dihitung_tanpa_wilayah(
     assert hasil["4"].wilayah_asal_id is None
 
     # dasar tugas: titik 4 ada di A1 (penugasan), tetapi tanpa wilayah posisi
-    assert rekap(sesi, job.id, DASAR_TUGAS) == {"A1": (4, 2, 2, 0, 1)}
+    assert rekap(sesi, job.id, DASAR_TUGAS) == {
+        "A1": Hitungan(jumlah=4, belum=2, benar_awal=2, tanpa_wilayah=1)
+    }
     # dasar posisi: baris kategori "(tanpa wilayah)" (kunci None)
     assert rekap(sesi, job.id, DASAR_POSISI) == {
-        "A1": (2, 0, 2, 0, 0),
-        "A2": (1, 1, 0, 0, 0),
-        None: (1, 1, 0, 0, 1),
+        "A1": Hitungan(jumlah=2, benar_awal=2),
+        "A2": Hitungan(jumlah=1, belum=1),
+        None: Hitungan(jumlah=1, belum=1, tanpa_wilayah=1),
     }
     assert total_rekap(sesi, job.id, DASAR_TUGAS) == job.jumlah_baris == 4
     assert total_rekap(sesi, job.id, DASAR_POSISI) == job.jumlah_baris == 4
@@ -319,9 +377,9 @@ def test_kode_subsls_tak_ada_di_peta_masuk_kategori_tanpa_wilayah(
 
     # titik 1: level_6 "A9" (tak ada di peta), titik 2: level_6 kosong; keduanya
     # jatuh di A1 dan flag_repair-nya 1 (A1 != level_6)
-    assert rekap(sesi, job.id, DASAR_TUGAS) == {None: (2, 2, 0, 0, 0)}
+    assert rekap(sesi, job.id, DASAR_TUGAS) == {None: Hitungan(jumlah=2, belum=2)}
     # dasar posisi: keduanya masuk poligon A1
-    assert rekap(sesi, job.id, DASAR_POSISI) == {"A1": (2, 2, 0, 0, 0)}
+    assert rekap(sesi, job.id, DASAR_POSISI) == {"A1": Hitungan(jumlah=2, belum=2)}
     assert total_rekap(sesi, job.id, DASAR_TUGAS) == job.jumlah_baris == 2
 
 
@@ -437,7 +495,7 @@ def test_hasil_job_lama_digantikan_oleh_job_baru(
     assert proses_satu_job(sesi_pabrik) is True
     sesi.expire_all()
     rekap_lama = rekap(sesi, lama.id, DASAR_TUGAS)
-    assert rekap_lama == {"A1": (3, 1, 2, 0, 0)}
+    assert rekap_lama == {"A1": Hitungan(jumlah=3, belum=1, benar_awal=2)}
 
     baru = buat_job(sesi, tmp_path, nama="baru")
     sesi.rollback()
@@ -450,7 +508,9 @@ def test_hasil_job_lama_digantikan_oleh_job_baru(
     assert baris_hasil(sesi, lama.id) == []
     assert len(baris_hasil(sesi, baru.id)) == 3
     assert rekap(sesi, lama.id, DASAR_TUGAS) == rekap_lama, "snapshot rekap job lama tetap ada"
-    assert rekap(sesi, baru.id, DASAR_TUGAS) == {"A1": (3, 1, 2, 0, 0)}
+    assert rekap(sesi, baru.id, DASAR_TUGAS) == {
+        "A1": Hitungan(jumlah=3, belum=1, benar_awal=2)
+    }
 
 
 def test_klaim_melewati_job_yang_sedang_jalan(sesi: Session, tmp_path: Path) -> None:
