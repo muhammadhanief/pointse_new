@@ -138,14 +138,21 @@ def proses_a(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFram
     -------
     GeoDataFrame
         Kolom ``KOLOM_HASIL`` (urutan sama dengan model QGIS) + geometri titik
-        dalam EPSG:4326. Urutan baris mengikuti urutan ``titik``; index-nya
-        index asli ``titik``. ``assignment_id`` unik.
+        dalam EPSG:4326, ``assignment_id`` unik. Urutan baris meniru QGIS:
+        terkelompok per poligon mengikuti urutan ``peta`` (di dalam poligon
+        mengikuti urutan ``titik``), lalu titik yang tidak cocok di paling
+        akhir. Index tiap baris = index asli ``titik``.
 
     Notes
     -----
     Bila beberapa poligon cocok untuk satu titik (titik tepat di garis batas),
     dipakai poligon yang **pertama** pada urutan ``peta`` — sama seperti
     ``METHOD=1`` (first matching feature) di QGIS.
+
+    Untuk ``assignment_id`` yang muncul lebih dari sekali, baris **pertama**
+    pada urutan hasil di atas yang dipertahankan (perilaku
+    ``removeduplicatesbyattribute``), sisanya dibuang. Model QGIS tidak punya
+    aturan lain, jadi urutan baris masukan ``titik`` ikut menentukan.
     """
     titik_4326 = pastikan_crs4326(titik, "titik")
     peta_4326 = pastikan_crs4326(peta, "peta")
@@ -168,10 +175,21 @@ def proses_a(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFram
     # METHOD=1: ambil poligon pertama (urutan peta) untuk tiap titik.
     gabung = gabung.sort_values(["_urut", "_posisi"], kind="stable")
     gabung = gabung.drop_duplicates(subset="_urut", keep="first")
-    gabung = gabung.sort_values("_urut", kind="stable")
+
+    # Urutan output joinattributesbylocation (METHOD=1) di QGIS: algoritme
+    # mengiterasi peta poligon demi poligon, jadi baris terkelompok per poligon
+    # (urutan peta, lalu urutan titik); titik yang tidak cocok ditambahkan
+    # paling akhir lewat mergevectorlayers (OUTPUT + NON_MATCHING).
+    cocok = gabung["_posisi"].notna()
+    gabung = pd.concat(
+        [
+            gabung[cocok].sort_values(["_posisi", "_urut"], kind="stable"),
+            gabung[~cocok].sort_values("_urut", kind="stable"),
+        ]
+    )
 
     # mergevectorlayers + removeduplicatesbyattribute(assignment_id):
-    # duplikat assignment_id dibuang, yang dipertahankan yang muncul lebih dulu.
+    # QGIS mempertahankan baris PERTAMA yang ditemui, sisanya dibuang.
     gabung = gabung.drop_duplicates(subset="assignment_id", keep="first")
 
     urut = gabung["_urut"].to_numpy()

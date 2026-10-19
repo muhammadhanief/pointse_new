@@ -127,6 +127,20 @@ def test_duplikat_assignment_id_dibuang_yang_pertama() -> None:
     assert list(hasil.index) == [0, 2]
 
 
+def test_urutan_hasil_per_poligon_lalu_tak_cocok() -> None:
+    """Baris dikelompokkan per poligon (urutan peta); titik tak cocok di akhir."""
+    titik = buat_titik(
+        [
+            {"assignment_id": "a", "x": 1.5, "y": 0.5},  # poligon ke-2
+            {"assignment_id": "b", "x": 9.0, "y": 9.0},  # tidak cocok
+            {"assignment_id": "c", "x": 0.5, "y": 0.5},  # poligon ke-1
+        ]
+    )
+    hasil = proses_a(titik, PETA_DUA)
+    assert list(hasil["assignment_id"]) == ["c", "a", "b"]
+    assert list(hasil.index) == [2, 0, 1]
+
+
 @pytest.mark.parametrize(
     ("kode_bang", "harapan"),
     [

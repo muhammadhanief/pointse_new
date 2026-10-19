@@ -67,6 +67,28 @@ def test_beda_flag_psls_hanya_pada_assignment_id_duplikat() -> None:
     assert laporan["beda_total"] == len(id_beda)  # type: ignore[arg-type]
 
 
+def test_urutan_hasil_seperti_qgis() -> None:
+    """Baris terkelompok per poligon (urutan peta) dan titik tak cocok di akhir.
+
+    Kolom ``idsubsls_origin`` dihitung per poligon, jadi urutannya harus
+    non-decreasing terhadap urutan poligon di peta. Ini yang dilakukan
+    ``joinattributesbylocation`` (iterasi peta) + ``mergevectorlayers``.
+    """
+    titik = qgis_data.muat_titik()
+    peta = qgis_data.muat_peta()
+
+    hasil = proses_a(titik, peta)
+
+    posisi_peta = {k: i for i, k in enumerate(peta["idsubsls"])}
+    cocok = hasil["idsubsls_origin"].notna().to_numpy()
+    urutan_poligon = hasil.loc[cocok, "idsubsls_origin"].map(posisi_peta)
+
+    assert not urutan_poligon.isna().any()
+    nilai = urutan_poligon.to_numpy()
+    assert (nilai[1:] >= nilai[:-1]).all(), "baris tidak terkelompok per urutan peta"
+    assert cocok[: cocok.sum()].all(), "titik tak cocok tidak ditaruh di akhir"
+
+
 def test_jumlah_baris_duplikat_dibuang() -> None:
     """Jumlah baris hasil = jumlah titik unik assignment_id (duplikat dibuang)."""
     titik = qgis_data.muat_titik()
