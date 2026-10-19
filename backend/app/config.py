@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # CORS: hanya domain frontend yang boleh memanggil API
     cors_origins: list[str] = []
 
+    # Autentikasi: frontend menukar kode OIDC SSO BPS, lalu mengirim token sesi
+    # HS256 sebagai Bearer ke backend. AUTH_SECRET harus sama dengan frontend.
+    auth_required: bool = True
+    auth_secret: str = ""
+    auth_issuer: str = "pointse"
+    auth_audience: str = "pointse-backend"
+
     # Unggahan berkas mentah (GPKG/GeoJSON) disimpan di disk server, bukan di DB
     dir_unggahan: str = "data/unggahan"
     #: Geotag master per kabupaten (permanen, tidak ikut pemangkasan run).

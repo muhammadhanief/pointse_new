@@ -4,6 +4,7 @@ uvicorn[standard]==0.54.0
 pydantic-settings==2.16.0
 python-dotenv==1.2.4
 python-multipart==0.0.32
+PyJWT==2.10.1
 
 # Basis data MySQL
 SQLAlchemy==2.1.5

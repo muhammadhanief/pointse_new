@@ -34,12 +34,14 @@ npm run dev
 
 - [x] T0 Kerangka repo
 - [x] T1 Fungsi Proses A + tes lawan output QGIS
-- [ ] T2 Fungsi Proses B + tes lawan output QGIS — **belum dianggap selesai**: data uji yang
-      ada hanya mewakili kasus "tidak ada titik digeser/diedit". Menunggu berkas peta/titik
-      hasil penggeseran dari petugas untuk menguji kasus titik yang benar-benar digeser.
+- [x] T2 Fungsi Proses B + tes lawan output QGIS (kasus tanpa editan dan kasus 6 titik
+      digeser/atribut diubah; lihat `backend/tests/test_proses_b_qgis.py` dan
+      `test_proses_b_edit_qgis.py`)
 - [x] T3 API FastAPI + skema MySQL + Alembic (termasuk revisi garis waktu, penyimpanan, dan
       rekap: migrasi `0005`)
-- [ ] T4 Login SSO BPS
+- [x] T4 Login SSO BPS (OIDC Authorization Code + PKCE, sesi JWT httpOnly, otorisasi per
+      wilayah). Login lokal sudah dicoba; pemetaan `org` masih asumsi dan perlu diuji dengan
+      beberapa akun nyata.
 - [ ] T5 Kerangka frontend (sidebar, layout)
 - [ ] T6 Halaman upload dan jalankan proses
 - [ ] T7 Dashboard rekap progres
@@ -110,7 +112,33 @@ masukan Proses B.
 - Semua endpoint ekspor sudah memanggil `layanan.periksa_akses(kdprov, kdkab)` sebagai titik
   pemasangan otorisasi per wilayah untuk T4 (sekarang belum menolak apa pun).
 
-## Catatan skema (T3 lanjutan, migrasi `0002`–`0005`)
+## Catatan T4 (SSO BPS)
+
+- Login memakai OIDC Authorization Code + PKCE di frontend Next.js; callback persis di
+  `/api/auth/callback`. Sesi disimpan sebagai JWT HS256 di cookie httpOnly, lalu
+  diteruskan ke backend sebagai Bearer. Backend memverifikasi token dan membatasi
+  wilayah sesuai peran (`3300`/`33000` admin provinsi, `3307`/`33070` petugas
+  kabupaten/kota).
+- Client OIDC yang dipakai untuk uji lokal adalah client aplikasi Alih Audio
+  (`33000-alihaudio-4s8`, redirect `http://localhost:3000/api/auth/callback`). Client ini
+  **bukan** client produksi pointse; produksi harus mendaftarkan client sendiri untuk
+  domain `*.bps.go.id`.
+- Client uji tidak mengirim atribut `org` di UserInfo/ID token. Frontend memakai REST API
+  Data Pegawai BPS (service account/Client Credentials) untuk mengambil
+  `attributes.org`, `provinceCode`, dan `cityCode`. Pada akun uji, `org` bernilai `92000`
+  tetapi `provinceCode` `33`/`cityCode` `00`; karena itu kode wilayah dipilih dari
+  `provinceCode`+`cityCode` bila awalan provinsi `org` tidak cocok. Hasilnya provinsi
+  `33` (bukan `92`).
+- Cloudflare di `accounts.bps.go.id` memblokir fingerprint TLS Node/undici (HTTP 403
+  "Just a moment"). Panggilan discovery/token/JWKS/UserInfo/API Pegawai dari server
+  Next.js karena itu memakai binary `curl` (tersedia di Windows/Linux); bila tidak ada,
+  kode jatuh ke `fetch` bawaan.
+- Database pengembangan sekarang memakai **MySQL 8.0.30 Laragon** di
+  `127.0.0.1:3306` (root tanpa password), database `pointse`; migrasi `0005` diperbaiki
+  agar `DEFAULT (CURRENT_DATE)` kompatibel dengan MySQL 8. MariaDB jauh yang dipakai
+  sebelumnya tidak lagi dapat dihubungi.
+
+## Catatan skema (T3 lanjutan, migrasi `0002`—`0005`)
 
 Agar DB tidak membengkak saat dipakai semua kabupaten/kota, skema dirapikan bertahap:
 

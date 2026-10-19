@@ -88,17 +88,6 @@ class KesalahanPerubahan(ValueError):
     """Perubahan antar dua run tidak bisa dihitung (mis. ada run yang belum sukses)."""
 
 
-def periksa_akses(kdprov: str | None, kdkab: str | None) -> None:
-    """Titik pemasangan otorisasi per wilayah (menyusul di T4).
-
-    Belum ada autentikasi, jadi fungsi ini belum menolak apa pun. Saat T4 dipasang,
-    di sini dicek apakah pengguna berhak atas (``kdprov``, ``kdkab``); endpoint
-    ekspor sudah memanggilnya sehingga tidak perlu diubah lagi. ``None`` berarti
-    pengguna meminta seluruh wilayah.
-    """
-    return None
-
-
 def kode_kabupaten(kdprov: str, kdkab: str) -> str:
     """Kode kabupaten/kota 4 digit (``3307``), dari kode peta yang mungkin ``07``."""
     prov = str(kdprov).strip()
@@ -108,6 +97,21 @@ def kode_kabupaten(kdprov: str, kdkab: str) -> str:
     if len(kab) == 2:
         return f"{prov[:2]}{kab}"
     return kab
+
+
+def kandidat_kdkab(kdprov: str | None, kdkab: str) -> list[str]:
+    """Bentuk kode kabupaten/kota yang mungkin tersimpan di ``runs``.
+
+    Peta wilkerstat memakai kode pendek (``07``), sedangkan master/SSO memakai
+    kode 4 digit (``3307``). Penyaring harus mencocokkan keduanya.
+    """
+    prov = str(kdprov).strip() if kdprov is not None else ""
+    kode = str(kdkab).strip()
+    if prov and len(kode) == 2:
+        kode = f"{prov[:2]}{kode}"
+    if len(kode) == 4:
+        return sorted({kode, kode[2:]})
+    return [kode]
 
 
 def normalisasi_kode_kabupaten(kdprov: str, kdkab: str) -> str:
@@ -488,7 +492,7 @@ def daftar_run(
     if kdprov is not None:
         saring.append(Run.kdprov == kdprov)
     if kdkab is not None:
-        saring.append(Run.kdkab == kdkab)
+        saring.append(Run.kdkab.in_(kandidat_kdkab(kdprov, kdkab)))
 
     total = int(sesi.scalar(select(func.count()).select_from(Run).where(*saring)) or 0)
     baris = list(
@@ -752,7 +756,7 @@ def _saring_run(
     if provinsi is not None:
         saring.append(Run.kdprov == provinsi)
     if kdkab is not None:
-        saring.append(Run.kdkab == kdkab)
+        saring.append(Run.kdkab.in_(kandidat_kdkab(provinsi, kdkab)))
     return saring
 
 

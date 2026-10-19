@@ -11,9 +11,20 @@ cd backend
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 Copy-Item .env.example .env          # lalu isi kredensial MySQL
-.venv\Scripts\python.exe -m alembic upgrade head   # buat tabel runs, wilayah, titik_hasil, rekap_desa, rekap_kabupaten
+.venv\Scripts\python.exe -m alembic upgrade head   # buat semua tabel (termasuk geotag_master)
 .venv\Scripts\python.exe -m alembic check          # pastikan skema DB = model ORM
 ```
+
+Pengembangan lokal memakai **MySQL 8.0.30 dari Laragon** (`127.0.0.1:3306`, user `root`
+tanpa password) dan database `pointse`:
+
+```sql
+CREATE DATABASE pointse CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+Lalu isi `backend/.env` dengan `DB_HOST=127.0.0.1`, `DB_PORT=3306`, `DB_USER=root`,
+`DB_PASSWORD=`, dan `DB_NAME=pointse`. Migrasi `0005` sudah memakai
+`DEFAULT (CURRENT_DATE)` agar kompatibel dengan MySQL 8 (MariaDB menerima keduanya).
 
 ## Jalan & tes
 
@@ -50,14 +61,24 @@ Copy-Item .env.example .env          # lalu isi kredensial MySQL
 | GET | `/runs/{id}/ekspor/titik.gpkg` | Unduh titik perlu tindakan sebagai GPKG (titik EPSG:4326; pakai koordinat edited kalau ada, kalau tidak origin) |
 | GET | `/ekspor/rekap.csv?tingkat=&tipe=&kdprov=&kdkab=&dasar=&tanggal_awal=&tanggal_akhir=` | Unduh rekap **kabupaten** atau **desa** sebagai CSV; satu baris per run per wilayah, rentang `tanggal_data` inklusif |
 
-Semua endpoint ekspor sudah memanggil `layanan.periksa_akses(kdprov, kdkab)` sebagai titik
-pemasangan otorisasi per wilayah untuk T4 (sekarang belum menolak apa pun). CSV memakai
-UTF-8 tanpa BOM dan pemisah koma.
+Semua endpoint selain `/health` membutuhkan header `Authorization: Bearer <token sesi>`.
+Token dibuat frontend setelah login SSO BPS (lihat `frontend/README.md`) dan diverifikasi
+backend memakai `AUTH_SECRET` yang sama. Isi `user` dari form diabaikan saat SSO aktif.
+CSV memakai UTF-8 tanpa BOM dan pemisah koma.
 
-Belum ada autentikasi (T4). Isi `user` sementara dikirim lewat form. Fungsi
-`app/peran.py:peran_dari_org` sudah menyiapkan pemetaan sementara `org` 4 digit
-(`3300` = admin provinsi, `3307` = petugas kabupaten/kota), tetapi **belum
-ditegakkan** di endpoint sampai SSO terpasang.
+### Autentikasi dan peran (T4)
+
+- `AUTH_REQUIRED=true` (bawaan) mewajibkan token. `AUTH_REQUIRED=false` hanya untuk tes/mode
+  lokal tanpa SSO.
+- `AUTH_SECRET` minimal 32 karakter dan harus sama dengan `AUTH_SECRET` frontend.
+- `org` SSO 4/5 digit dipetakan ke peran oleh `app/peran.py`: `3300`/`33000` = admin provinsi
+  `33`; `3307`/`33070` = petugas kabupaten/kota `3307`.
+- Admin provinsi hanya boleh mengunggah geotag master, tetapi boleh menjalankan Proses A/B
+  dan melihat data kabupaten/kota di provinsinya (pengawasan/uji). Petugas kabupaten/kota
+  hanya boleh menjalankan Proses A/B dan melihat kabupaten/kotanya. Filter wilayah pada
+  endpoint daftar/ringkasan/tren/ekspor otomatis dibatasi ke wilayah pengguna.
+- `runs.kdkab` bisa berbentuk kode peta pendek (`07`) atau 4 digit (`3307`); penyaring
+  mencocokkan keduanya.
 
 ## Alur pemrosesan
 
@@ -185,8 +206,10 @@ sebagai masukan Proses B**.
 
 ## Isi
 
-- `app/config.py` — setelan dari `.env` (MySQL, CORS, folder unggahan, worker)
+- `app/config.py` — setelan dari `.env` (MySQL, CORS, auth, folder unggahan, worker)
 - `app/db.py` — engine + sesi SQLAlchemy (MySQL lewat PyMySQL)
+- `app/auth.py` — verifikasi token sesi HS256 + pembatasan wilayah per peran
+- `app/peran.py` — pemetaan `org` SSO 4/5 digit ke peran
 - `app/models.py` — tabel `runs`, `wilayah`, `titik_hasil`, `rekap_desa`, `rekap_kabupaten` (PRD §7)
 - `app/wilayah.py` — dimensi wilayah (baris dari peta, upsert, pemetaan kode → id; kode di
   luar peta dibiarkan tanpa id, bukan dibuatkan baris seadanya)

@@ -259,8 +259,13 @@ def _tambah_kolom_runs() -> None:
     """
     kolom = (
         sa.Column("kdprov", sa.String(length=4), nullable=False, server_default=""),
+        # MySQL 8 mewajibkan default ekspresi dalam tanda kurung; SQLite juga
+        # menerima bentuk ini.
         sa.Column(
-            "tanggal_data", sa.Date(), nullable=False, server_default=sa.text("CURRENT_DATE")
+            "tanggal_data",
+            sa.Date(),
+            nullable=False,
+            server_default=sa.text("(CURRENT_DATE)"),
         ),
         sa.Column("detail_tersedia", ANGKA_KECIL, nullable=False, server_default="0"),
     )

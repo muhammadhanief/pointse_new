@@ -2,7 +2,9 @@
 
 Catatan alur: unggah berkas **langsung membuat** baris ``runs`` berstatus
 ``menunggu``; worker (proses terpisah, lihat :mod:`app.worker`) yang mengambil
-dan menjalankannya. Belum ada autentikasi (menyusul di T4).
+dan menjalankannya. Sejak T4, seluruh endpoint selain ``/health`` membutuhkan
+``Authorization: Bearer`` berisi token sesi dari frontend; wilayah dibatasi
+sesuai peran SSO (lihat :mod:`app.auth`).
 
 Kunci wilayah di seluruh endpoint adalah (``kdprov``, ``kdkab``); ``tanggal_data``
 (tanggal data, default tanggal unggah) dipisah dari ``created_at`` (waktu unggah).
@@ -21,7 +23,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from app import ekspor, layanan
+from app import auth, ekspor, layanan
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.layanan import (
@@ -32,6 +34,7 @@ from app.layanan import (
     Tingkat,
 )
 from app.models import DASAR_TUGAS, TIPE_A, TIPE_B, Run
+from app.peran import PERAN_ADMIN_PROVINSI
 from app.skema import (
     DaftarMasterOut,
     DaftarRunOut,
@@ -88,12 +91,13 @@ def unggah_run(
             "Proses B: kosongkan (peta diambil dari run A terakhir)."
         ),
     ),
-    user: str | None = Form(None, description="Nama pengguna (sementara dari form, belum SSO)"),
+    user: str | None = Form(None, description="Nama pengguna (diabaikan saat SSO aktif)"),
     tanggal_data: date | None = Form(None, description="Tanggal data (default: tanggal unggah)"),
     layer_titik: str | None = Form(None, description="Nama layer berkas titik (wajib untuk GPKG banyak layer)"),
     layer_peta: str | None = Form(None, description="Nama layer berkas peta"),
     sesi: Session = Depends(get_session),
     setelan: Settings = Depends(get_settings),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> Run:
     """Unggah berkas masukan dan antrekan job (status ``menunggu``).
 
@@ -124,6 +128,13 @@ def unggah_run(
             status_code=422, detail="Proses B butuh berkas titik hasil edit Proses A"
         )
 
+    # Wilayah tetap dibatasi peran: petugas hanya kabupaten/kotanya, admin
+    # provinsi boleh menjalankan A/B untuk kabupaten/kota di provinsinya
+    # (pengawasan/uji); unggah master tetap khusus admin provinsi.
+    # Mode lama masih menerima nama pengunggah dari form; saat SSO aktif, identitas
+    # selalu diambil dari token agar tidak bisa dipalsukan.
+    nama_user = pengguna.nama if setelan.auth_required else user
+
     dir_run = Path(setelan.dir_unggahan) / uuid.uuid4().hex
     try:
         if tipe_bersih == TIPE_A:
@@ -134,11 +145,12 @@ def unggah_run(
                 info = layanan.periksa_unggahan(
                     tipe_bersih, berkas_input, berkas_peta, layer_titik, layer_peta
                 )
+                auth.pastikan_akses(pengguna, info.kdprov, info.kdkab)
                 run = layanan.buat_run(
                     sesi,
                     tipe=tipe_bersih,
                     info=info,
-                    user=user,
+                    user=nama_user,
                     nama_input=Path(titik.filename or berkas_input.name).name,
                     nama_peta=Path(peta.filename or berkas_peta.name).name,
                     berkas_input=berkas_input,
@@ -148,6 +160,7 @@ def unggah_run(
             else:
                 # Alur baru: peta dari kabkot + geotag master dari provinsi.
                 nama_peta, kdprov, kdkab = layanan.periksa_peta(berkas_peta, layer_peta)
+                auth.pastikan_akses(pengguna, kdprov, kdkab)
                 kode = layanan.kode_kabupaten(kdprov, kdkab)
                 master = layanan.master_terbaru(sesi, kode)
                 if master is None:
@@ -168,7 +181,7 @@ def unggah_run(
                     sesi,
                     tipe=tipe_bersih,
                     info=info,
-                    user=user,
+                    user=nama_user,
                     nama_input=master.nama_file,
                     nama_peta=Path(peta.filename or berkas_peta.name).name,
                     berkas_input=Path(master.berkas),
@@ -184,11 +197,12 @@ def unggah_run(
                 info = layanan.periksa_unggahan(
                     tipe_bersih, berkas_input, berkas_peta, layer_titik, layer_peta
                 )
+                auth.pastikan_akses(pengguna, info.kdprov, info.kdkab)
                 run = layanan.buat_run(
                     sesi,
                     tipe=tipe_bersih,
                     info=info,
-                    user=user,
+                    user=nama_user,
                     nama_input=Path(titik.filename or berkas_input.name).name,
                     nama_peta=Path(peta.filename or berkas_peta.name).name,
                     berkas_input=berkas_input,
@@ -198,6 +212,7 @@ def unggah_run(
             else:
                 # Alur baru: peta diambil dari run A terakhir, bukan diunggah ulang.
                 info_b = layanan.periksa_titik_b(berkas_input, layer_titik)
+                auth.pastikan_akses(pengguna, info_b.kdprov, info_b.kdkab)
                 sumber_a = layanan.run_a_terakhir(
                     sesi, info_b.kdprov, info_b.kode_kabupaten
                 )
@@ -230,7 +245,7 @@ def unggah_run(
                     sesi,
                     tipe=tipe_bersih,
                     info=info,
-                    user=user,
+                    user=nama_user,
                     nama_input=Path(titik.filename or berkas_input.name).name,
                     nama_peta=sumber_a.nama_file_peta,
                     berkas_input=berkas_input,
@@ -258,9 +273,10 @@ def unggah_master_geotag(
     titik: UploadFile = File(..., description="Berkas geotag asli kabupaten/kota (GPKG/GeoJSON)"),
     tanggal_data: date | None = Form(None, description="Tanggal data geotag (default: hari ini)"),
     layer: str | None = Form(None, description="Nama layer berkas geotag"),
-    user: str | None = Form(None, description="Nama pengguna (sementara dari form, belum SSO)"),
+    user: str | None = Form(None, description="Nama pengguna (diabaikan saat SSO aktif)"),
     sesi: Session = Depends(get_session),
     setelan: Settings = Depends(get_settings),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> MasterGeotagOut:
     """Unggah geotag master per kabupaten/kota (admin provinsi).
 
@@ -273,7 +289,9 @@ def unggah_master_geotag(
     except KesalahanUnggahan as galat:
         raise HTTPException(status_code=422, detail=str(galat)) from galat
 
-    layanan.periksa_akses(kode[:2], kode)
+    auth.pastikan_peran(pengguna, PERAN_ADMIN_PROVINSI)
+    auth.pastikan_akses(pengguna, kode[:2], kode)
+    nama_user = pengguna.nama if setelan.auth_required else user
     dir_master = Path(setelan.dir_master) / kode / uuid.uuid4().hex
     try:
         berkas = _simpan_unggahan(titik, dir_master, "geotag")
@@ -287,7 +305,7 @@ def unggah_master_geotag(
             berkas=berkas,
             layer=info.layer,
             jumlah_baris=info.jumlah_baris,
-            user=user,
+            user=nama_user,
         )
     except KesalahanUnggahan as galat:
         shutil.rmtree(dir_master, ignore_errors=True)
@@ -306,9 +324,10 @@ def daftar_master_geotag(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> DaftarMasterOut:
-    """Daftar versi geotag master (terbaru lebih dulu)."""
-    layanan.periksa_akses(kdprov, kdkab)
+    """Daftar versi geotag master (terbaru lebih dulu), dibatasi wilayah pengguna."""
+    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
     total, baris = layanan.daftar_master(
         sesi, kdprov=kdprov, kdkab=kdkab, limit=limit, offset=offset
     )
@@ -326,8 +345,10 @@ def daftar_run(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> DaftarRunOut:
-    """Daftar job terbaru lebih dulu (dengan penyaring dan paging)."""
+    """Daftar job terbaru lebih dulu (dengan penyaring dan paging), dibatasi wilayah."""
+    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
     total, baris = layanan.daftar_run(
         sesi,
         tipe=tipe.strip().upper() if tipe else None,
@@ -347,12 +368,14 @@ def ringkasan(
     kdkab: str | None = Query(None, description="Saring satu kabupaten/kota, mis. 07"),
     dasar: Dasar = Query(DASAR_TUGAS, description="'tugas' (wilayah penugasan) atau 'posisi'"),
     sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> RingkasanOut:
     """Ringkasan provinsi: satu baris per kabupaten/kota (run terakhir tiap tipe).
 
     Angka dibaca dari ``rekap_kabupaten``; ``belum_ada_upload_tipe_b`` menandai
     kabupaten/kota yang belum pernah menerima unggahan Proses B.
     """
+    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
     return RingkasanOut.model_validate(
         layanan.ringkasan(
             sesi,
@@ -372,10 +395,12 @@ def tren(
     kdkab: str | None = Query(None, description="Saring satu kabupaten/kota, mis. 07"),
     dasar: Dasar = Query(DASAR_TUGAS, description="'tugas' (wilayah penugasan) atau 'posisi'"),
     sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> TrenOut:
     """Tren progres per ``tanggal_data`` (run sukses terakhir pada tanggal itu)."""
     if tingkat not in ("kabupaten", "provinsi"):
         raise HTTPException(status_code=422, detail="tingkat tren harus 'kabupaten' atau 'provinsi'")
+    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
     return TrenOut.model_validate(
         layanan.tren(
             sesi,
@@ -389,13 +414,18 @@ def tren(
 
 
 @router.get("/runs/{run_id}", response_model=RunDetailOut)
-def status_run(run_id: int, sesi: Session = Depends(get_session)) -> RunDetailOut:
+def status_run(
+    run_id: int,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> RunDetailOut:
     """Status satu job: status, waktu, pesan galat, jumlah hasil tersimpan.
 
     ``detail_tersedia`` = ``false`` berarti baris ``titik_hasil`` run ini sudah
     dipangkas (angka rekapnya tetap utuh).
     """
     run = _ambil_run(sesi, run_id)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
     return RunDetailOut(
         **RunOut.model_validate(run).model_dump(),
         jumlah_tersimpan=layanan.jumlah_tersimpan(sesi, run_id),
@@ -408,6 +438,7 @@ def hasil_run(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> HasilOut:
     """Baris hasil titik untuk satu job (paging, urut seperti keluaran Proses).
 
@@ -415,6 +446,7 @@ def hasil_run(
     tindakan manual tidak muncul di sini (terhitung di rekap).
     """
     run = _ambil_run(sesi, run_id)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
     total, baris = layanan.hasil_run(sesi, run_id, limit=limit, offset=offset)
     return HasilOut(
         run_id=run_id,
@@ -432,6 +464,7 @@ def rekap_run(
     tingkat: Tingkat = Query("kabupaten", description="kabupaten/kecamatan/desa/sls/subsls"),
     dasar: Dasar = Query(DASAR_TUGAS, description="'tugas' (wilayah penugasan) atau 'posisi'"),
     sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> RekapOut | RekapDetailOut:
     """Rekap progres per wilayah (default dasar ``tugas``).
 
@@ -444,6 +477,7 @@ def rekap_run(
     (409 bila sudah dipangkas). Baris tanpa wilayah dibalas "(tanpa wilayah)".
     """
     run = _ambil_run(sesi, run_id)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
     try:
         rekap = layanan.rekap_run(sesi, run, tingkat, dasar)
     except DetailTidakTersedia as galat:
@@ -460,6 +494,7 @@ def perubahan(
     limit: int = Query(200, ge=1, le=1000, description="Maksimal baris perubahan per titik"),
     offset: int = Query(0, ge=0, description="Offset baris perubahan per titik"),
     sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> PerubahanOut:
     """Perubahan antara dua run: selisih rekap kabupaten/desa + perubahan per titik.
 
@@ -469,6 +504,8 @@ def perubahan(
     """
     awal = _ambil_run(sesi, run_awal)
     akhir = _ambil_run(sesi, run_akhir)
+    auth.pastikan_akses(pengguna, awal.kdprov, awal.kdkab)
+    auth.pastikan_akses(pengguna, akhir.kdprov, akhir.kdkab)
     try:
         hasil = layanan.perubahan(
             sesi, run_awal=awal, run_akhir=akhir, dasar=dasar, limit=limit, offset=offset
@@ -505,6 +542,7 @@ def ekspor_hasil_a(
     run_id: int,
     sesi: Session = Depends(get_session),
     setelan: Settings = Depends(get_settings),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> FileResponse:
     """Unduh keluaran Proses A sebagai GPKG (bahan edit di QGIS).
 
@@ -514,7 +552,7 @@ def ekspor_hasil_a(
     (baseline/sukses terakhir); selain itu HTTP 409.
     """
     run = _ambil_run(sesi, run_id)
-    layanan.periksa_akses(run.kdprov, run.kdkab)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
     try:
         berkas = ekspor.berkas_hasil_a(run, setelan)
     except ekspor.EksporTidakTersedia as galat:
@@ -527,10 +565,11 @@ def ekspor_titik_csv(
     run_id: int,
     sesi: Session = Depends(get_session),
     setelan: Settings = Depends(get_settings),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> StreamingResponse:
     """Unduh titik perlu tindakan run ini sebagai CSV (dibaca dari ``titik_hasil``)."""
     run = _ambil_run(sesi, run_id)
-    layanan.periksa_akses(run.kdprov, run.kdkab)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
     try:
         spool = ekspor.spool_titik_csv(sesi, run, setelan)
     except ekspor.EksporTidakTersedia as galat:
@@ -543,10 +582,11 @@ def ekspor_titik_gpkg(
     run_id: int,
     sesi: Session = Depends(get_session),
     setelan: Settings = Depends(get_settings),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> FileResponse:
     """Unduh titik perlu tindakan run ini sebagai GPKG (titik EPSG:4326)."""
     run = _ambil_run(sesi, run_id)
-    layanan.periksa_akses(run.kdprov, run.kdkab)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
     try:
         berkas = ekspor.berkas_titik_gpkg(sesi, run, setelan)
     except ekspor.EksporTidakTersedia as galat:
@@ -565,6 +605,7 @@ def ekspor_rekap(
     tanggal_akhir: date | None = Query(None, description="Akhir rentang tanggal data (termasuk)"),
     sesi: Session = Depends(get_session),
     setelan: Settings = Depends(get_settings),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> StreamingResponse:
     """Unduh rekap kabupaten/desa sebagai CSV.
 
@@ -577,7 +618,7 @@ def ekspor_rekap(
         raise HTTPException(
             status_code=422, detail=f"tipe harus '{TIPE_A}' atau '{TIPE_B}', bukan '{tipe}'"
         )
-    layanan.periksa_akses(kdprov, kdkab)
+    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
     try:
         spool = ekspor.spool_rekap_csv(
             sesi,

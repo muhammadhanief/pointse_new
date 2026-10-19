@@ -188,10 +188,15 @@ Edit titik langsung di web, notifikasi, multi-bahasa, perbaikan logika model
 (misalnya flag_position yang hanya membandingkan latitude) sebelum replikasi persis lulus uji.
 
 ## 11. Pertanyaan terbuka
-- Client id/secret dan redirect URI SSO BPS (OIDC/Keycloak) belum tersedia; lihat
-  `docs/Panduan SSO Client.pdf`.
-- Pemetaan atribut SSO `org` ke peran: asumsi sementara 4 digit (`3300` = admin provinsi,
-  `3307` = petugas kabupaten/kota). Perlu diuji dengan akun SSO nyata.
+- Client id/secret dan redirect URI SSO BPS untuk **produksi** belum tersedia. Client
+  `33000-alihaudio-4s8` hanya dipakai untuk uji lokal (redirect
+  `http://localhost:3000/api/auth/callback`) dan tidak boleh dipakai di produksi.
+- Pemetaan atribut SSO `org` ke peran: SSO BPS memakai `org` 5 digit (mis. `34000`),
+  dinormalisasi ke 4 digit (`3400`). Client uji tidak mengirim `org`; nilainya diambil
+  dari REST API Data Pegawai. Pada akun uji, `org` (`92000`) tidak sejalan dengan
+  `provinceCode` (`33`), jadi kode wilayah dipilih dari `provinceCode`+`cityCode`
+  (`3300`) bila awalan provinsi `org` berbeda. Aturan ini masih perlu diuji dengan
+  beberapa akun provinsi dan kabupaten/kota nyata.
 - Kebijakan `level_6_full_code` kosong pada geotag master: saat ini diabaikan, tetapi
   berkas ditolak kalau tidak ada satu pun kode yang bisa diverifikasi.
 
@@ -209,7 +214,10 @@ Edit titik langsung di web, notifikasi, multi-bahasa, perbaikan logika model
 - T3 lanjutan: alur master geotag per kabupaten — selesai: `geotag_master` (migrasi `0007`),
   Proses A otomatis dari unggahan peta, Proses B hanya unggah GPKG hasil edit dan memakai
   peta run A sukses terakhir; fungsi `peran_dari_org` disiapkan untuk T4
-- T4: Login SSO
+- T4: Login SSO - selesai: OIDC Authorization Code + PKCE, callback
+  `/api/auth/callback`, sesi JWT httpOnly, verifikasi token di backend, otorisasi per
+  wilayah, dan fallback `org` lewat REST API Data Pegawai. Login lokal sudah berhasil;
+  pemetaan `org`/wilayah masih asumsi yang perlu diuji dengan beberapa akun nyata.
 - T5: Kerangka frontend (sidebar, layout) dengan data tiruan
 - T6: Halaman upload dan jalankan proses
 - T7: Dashboard rekap progres

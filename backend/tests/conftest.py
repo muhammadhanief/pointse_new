@@ -11,6 +11,8 @@ import os
 
 # Harus diset SEBELUM app.main diimpor (setelan dibaca sekali lalu di-cache).
 os.environ["WORKER_ENABLED"] = "false"
+# Tes memakai pengguna dev longgar; tes autentikasi mengaktifkannya sendiri.
+os.environ["AUTH_REQUIRED"] = "false"
 
 from collections.abc import Iterator  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -80,6 +82,7 @@ def setelan(dir_unggahan: Path, dir_master: Path) -> Settings:
     """Setelan aplikasi untuk tes (worker mati, unggahan ke folder tes)."""
     return Settings(
         worker_enabled=False,
+        auth_required=False,
         dir_unggahan=str(dir_unggahan),
         dir_master=str(dir_master),
     )

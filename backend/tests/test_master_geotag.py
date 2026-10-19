@@ -246,19 +246,21 @@ def test_b_memakai_peta_dari_run_a_terakhir(
     assert run_b.jumlah_baris == 3
 
 
-def test_peran_dari_org_4_digit() -> None:
-    """Asumsi sementara: org 3300 = provinsi, 3307 = kabupaten/kota."""
-    provinsi = peran_dari_org("3300")
-    assert provinsi.nama == PERAN_ADMIN_PROVINSI
-    assert provinsi.kdprov == "33"
-    assert provinsi.kdkab is None
+def test_peran_dari_org_4_dan_5_digit() -> None:
+    """SSO BPS mengirim org 5 digit; asumsi 4 digit tetap diterima."""
+    for org in ("3300", "33000"):
+        provinsi = peran_dari_org(org)
+        assert provinsi.nama == PERAN_ADMIN_PROVINSI
+        assert provinsi.kdprov == "33"
+        assert provinsi.kdkab is None
 
-    kabkot = peran_dari_org("3307")
-    assert kabkot.nama == PERAN_PETUGAS_KABKOT
-    assert kabkot.kdprov == "33"
-    assert kabkot.kdkab == "3307"
+    for org in ("3307", "33070", "33071"):
+        kabkot = peran_dari_org(org)
+        assert kabkot.nama == PERAN_PETUGAS_KABKOT
+        assert kabkot.kdprov == "33"
+        assert kabkot.kdkab == "3307"
 
-    for salah in ("330", "33000", "3307x", ""):
+    for salah in ("330", "3307x", "", "123456"):
         try:
             peran_dari_org(salah)
         except ValueError:

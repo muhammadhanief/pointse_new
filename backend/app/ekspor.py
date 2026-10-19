@@ -510,7 +510,12 @@ def _saringan_rekap(
     if kdprov is not None:
         saring.append(Run.kdprov == kdprov)
     if kdkab is not None:
-        saring.append(Run.kdkab == kdkab)
+        # Peta memakai kode pendek (``07``), master/SSO memakai 4 digit (``3307``).
+        kode = str(kdkab).strip()
+        if kdprov and len(kode) == 2:
+            kode = f"{str(kdprov)[:2]}{kode}"
+        kandidat = sorted({kode, kode[2:]}) if len(kode) == 4 else [kode]
+        saring.append(Run.kdkab.in_(kandidat))
     if tanggal_awal is not None:
         saring.append(Run.tanggal_data >= tanggal_awal)
     if tanggal_akhir is not None:
