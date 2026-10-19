@@ -57,3 +57,17 @@ penuh setelah ada data edit asli dari petugas.
 Tes backend tidak memerlukan server MySQL: tabel dibuat dari model ORM di SQLite sementara,
 dan kueri yang khusus MySQL (`FOR UPDATE SKIP LOCKED`, DDL migrasi) diuji lewat kompilasi ke
 dialek MySQL. Jalankan migrasi sungguhan dengan `alembic upgrade head` setelah `.env` diisi.
+
+T3 juga sudah diuji **end-to-end lawan MariaDB asli** (`pointse_new`; kredensial hanya ada di
+`backend/.env`, tidak di-commit):
+
+- `alembic upgrade head` jalan dan `alembic check` bersih (skema DB = model ORM).
+- Data uji penuh kdkab 3307 (397.443 titik) diunggah lewat `POST /runs` dan diproses worker:
+  397.364 baris tersimpan (79 duplikat `assignment_id` dibuang — sama dengan output QGIS),
+  rekap kabupaten/kecamatan/desa/sls sesuai (265 desa, 7.799 SubSLS, 48.364 titik belum diperbaiki).
+- Satu job aktif per (kdkab, tipe) terbukti: unggahan baru membuat job lama berstatus
+  `digantikan` dan `titik_hasil`-nya dihapus.
+- Performa: penyimpanan ±1.000 baris/detik saat backend jauh dari server DB (latensi jaringan
+  per batch 10.000 baris). Untuk produksi, jalankan worker di server yang sama dengan MySQL.
+- Peta SLS memakai kode wilayah pendek (`kdkab` `07`, `kddesa` `005`), jadi nilai `runs.kdkab`
+  dan kolom wilayah mengikuti kode di berkas sumber.
