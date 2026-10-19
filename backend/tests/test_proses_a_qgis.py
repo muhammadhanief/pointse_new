@@ -6,6 +6,7 @@ memproses seluruh kabupaten (397 ribu titik).
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from app.proses_a import KOLOM_HASIL, proses_a
@@ -87,6 +88,28 @@ def test_urutan_hasil_seperti_qgis() -> None:
     nilai = urutan_poligon.to_numpy()
     assert (nilai[1:] >= nilai[:-1]).all(), "baris tidak terkelompok per urutan peta"
     assert cocok[: cocok.sum()].all(), "titik tak cocok tidak ditaruh di akhir"
+
+
+def test_duplikat_memakai_baris_pertama_di_input() -> None:
+    """Aturan yang dipilih: untuk assignment_id ganda, dipakai kemunculan pertama.
+
+    Model QGIS hanya mempertahankan baris pertama yang ditemui
+    (``removeduplicatesbyattribute``), tanpa aturan lain. Untuk data uji ini
+    kemunculan pertama di file adalah baris dengan ``flag_psls`` = 0.
+    """
+    titik = qgis_data.muat_titik()
+    peta = qgis_data.muat_peta()
+    hasil = proses_a(titik, peta)
+
+    ganda = titik[titik["assignment_id"].duplicated(keep=False)]
+    pertama = ganda.drop_duplicates("assignment_id", keep="first").set_index("assignment_id")
+    nilai_hasil = hasil.set_index("assignment_id")["flag_psls"].reindex(pertama.index)
+
+    assert len(pertama) == 79
+    assert (
+        pd.to_numeric(nilai_hasil, errors="coerce")
+        == pd.to_numeric(pertama["flag_psls"], errors="coerce")
+    ).all()
 
 
 def test_jumlah_baris_duplikat_dibuang() -> None:
