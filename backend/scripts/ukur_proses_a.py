@@ -9,11 +9,8 @@ Skrip ini alat ukur, bukan bagian aplikasi.
 
 from __future__ import annotations
 
-import ctypes
 import sys
 import time
-import tracemalloc
-from ctypes import wintypes
 from pathlib import Path
 
 import pandas as pd
@@ -26,43 +23,11 @@ import qgis_data  # noqa: E402
 
 from app.proses_a import KOLOM_HASIL, proses_a  # noqa: E402
 
+import _memori as _modul_memori  # noqa: E402
 
-class _ProcessMemoryCounters(ctypes.Structure):
-    _fields_ = [
-        ("cb", wintypes.DWORD),
-        ("PageFaultCount", wintypes.DWORD),
-        ("PeakWorkingSetSize", ctypes.c_size_t),
-        ("WorkingSetSize", ctypes.c_size_t),
-        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-        ("PagefileUsage", ctypes.c_size_t),
-        ("PeakPagefileUsage", ctypes.c_size_t),
-    ]
-
-
-def _memori(metrik: str) -> float | None:
-    """Memori proses saat ini / puncak (MB), kalau OS mengizinkan."""
-    try:
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-        fungsi = kernel32.K32GetProcessMemoryInfo
-        fungsi.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessMemoryCounters), wintypes.DWORD]
-        fungsi.restype = wintypes.BOOL
-
-        counter = _ProcessMemoryCounters()
-        counter.cb = ctypes.sizeof(_ProcessMemoryCounters)
-        proses = kernel32.GetCurrentProcess()
-        if not fungsi(proses, ctypes.byref(counter), counter.cb):
-            return None
-        return getattr(counter, metrik) / 1024 / 1024
-    except Exception:  # bukan Windows / API tidak ada
-        return None
-
-
-def _mb(nilai: float | None) -> str:
-    return "n/a" if nilai is None else f"{nilai:,.0f} MB"
+# Alias pendek supaya pemakaian di bawah ringkas.
+_memori = _modul_memori.memori
+_mb = _modul_memori.mb
 
 
 def main() -> int:
@@ -76,7 +41,6 @@ def main() -> int:
     print(f"python : {sys.version.split()[0]}")
     print(f"memori awal (RSS)   : {_mb(_memori('WorkingSetSize'))}")
 
-    tracemalloc.start()
     t0 = time.perf_counter()
     titik = qgis_data.muat_titik()
     peta = qgis_data.muat_peta()
@@ -87,13 +51,10 @@ def main() -> int:
     t0 = time.perf_counter()
     hasil = proses_a(titik, peta)
     t_proses = time.perf_counter() - t0
-    arus, puncak_python = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
 
     print(f"\n[proses] waktu {t_proses:,.1f} s")
     print(f"[proses] memori proses (RSS) : {_mb(_memori('WorkingSetSize'))}")
     print(f"[proses] memori puncak proses: {_mb(_memori('PeakWorkingSetSize'))}")
-    print(f"[proses] puncak alokasi Python: {_mb(puncak_python / 1024 / 1024)}")
     print(f"[proses] hasil {len(hasil):,} baris")
 
     # ------- bandingkan dengan output QGIS -------
