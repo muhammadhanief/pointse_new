@@ -1,0 +1,48 @@
+# Data mentah & dokumen internal BPS (jangan di-commit, lihat AGENTS.md)
+docs/**/*.gpkg
+docs/**/*.geojson
+docs/**/*.shp
+docs/**/*.shx
+docs/**/*.dbf
+docs/**/*.prj
+docs/**/*.pdf
+docs/**/*.xlsx
+docs/**/*.csv
+
+# Frontend (Next.js)
+node_modules/
+.next/
+out/
+build/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+
+# Python / backend
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Environment & kredensial
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editor & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Sementara
+*.log
+tmp/
