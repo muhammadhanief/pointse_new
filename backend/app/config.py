@@ -1,0 +1,42 @@
+"""Konfigurasi aplikasi; nilai dibaca dari variabel lingkungan / file `.env`."""
+
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Setelan aplikasi pointse."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    app_name: str = "pointse"
+    debug: bool = False
+
+    # Basis data MySQL (hanya backend yang mengaksesnya)
+    db_host: str = "localhost"
+    db_port: int = 3306
+    db_user: str = ""
+    db_password: str = ""
+    db_name: str = "pointse"
+
+    # CORS: hanya domain frontend yang boleh memanggil API
+    cors_origins: list[str] = []
+
+    @property
+    def database_url(self) -> str:
+        """URL koneksi SQLAlchemy untuk MySQL (driver PyMySQL)."""
+        return (
+            f"mysql+pymysql://{self.db_user}:{self.db_password}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}?charset=utf8mb4"
+        )
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Ambil setelan aplikasi (hasil dibaca sekali lalu di-cache)."""
+    return Settings()

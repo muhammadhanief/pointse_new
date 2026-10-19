@@ -5,8 +5,7 @@ mengerjakan task apa pun, terutama bagian "Proses" untuk logika spasial.
 
 ## Struktur
 - `backend/`  FastAPI (Python), geopandas, SQLAlchemy + PyMySQL, Alembic
-- `pointse_frontend/` Next.js 16 + React 19 + Tailwind 4 (scaffold `create-next-app`;
-  sesuai keputusan pemilik proyek nama folder TETAP `pointse_frontend/`, bukan `frontend/`).
+- `frontend/` Next.js 16 + React 19 + Tailwind 4 (scaffold `create-next-app`).
   Deploy di server BPS (domain `*.bps.go.id`), bukan Vercel — syarat SSO BPS.
 - Acuan tampilan (sidebar dan gaya) = aplikasi lokal SE2026:
   `D:\2026\SID\SPBE\Sistem Informasi\se2026\assignse2026\assignse2026`
@@ -31,11 +30,13 @@ mengerjakan task apa pun, terutama bagian "Proses" untuk logika spasial.
     PENTING: SSO BPS hanya boleh dipakai aplikasi berdomain `*.bps.go.id` (di-hosting di
     layanan BPS) — hosting di luar BPS (mis. Vercel) tidak boleh memakai SSO BPS.
 
-## Perintah (isi/koreksi sesuai kenyataan)
-- Backend jalan: `cd backend && uvicorn app.main:app --reload`
-- Backend tes: `cd backend && pytest -q`
-- Frontend jalan: `cd pointse_frontend && npm run dev`
-- Migrasi DB: `cd backend && alembic upgrade head`
+## Perintah (venv di `backend/.venv`, Windows)
+- Buat venv: `cd backend; python -m venv .venv`
+- Install dependensi: `backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt`
+- Backend jalan: `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --reload`
+- Backend tes: `cd backend; .venv\Scripts\python.exe -m pytest -q`
+- Frontend jalan: `cd frontend; npm run dev`
+- Migrasi DB: `cd backend; .venv\Scripts\python.exe -m alembic upgrade head` (menyusul di T3)
 
 ## Aturan teknis
 - Database hanya MySQL. Jangan pakai PostgreSQL/PostGIS. Jangan simpan geometri di DB.
