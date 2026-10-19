@@ -41,6 +41,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 from sqlalchemy import (
+    BigInteger,
     Date,
     DateTime,
     Double,
@@ -140,6 +141,9 @@ class Run(Base):
     tanggal_data: Mapped[date] = mapped_column(Date, default=hari_ini)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    #: Waktu UTC heartbeat terakhir worker (diperbarui tiap batch simpan).
+    #: Job ``jalan`` yang heartbeat-nya kedaluwarsa dianggap terhenti.
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     hasil: Mapped[list[TitikHasil]] = relationship(
@@ -187,10 +191,12 @@ class TitikHasil(Base):
     )
 
     # Kunci utama gabungan: urut = urutan keluaran proses (dipakai untuk paging).
+    # BIGINT karena mode potongan memakai kunci urutan sementara yang lebih besar
+    # dari batas INTEGER sebelum dirapikan menjadi 0..n-1.
     run_id: Mapped[int] = mapped_column(
         ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
     )
-    urut: Mapped[int] = mapped_column(Integer, primary_key=True)
+    urut: Mapped[int] = mapped_column(BigInteger, primary_key=True)
 
     assignment_id: Mapped[str] = mapped_column(String(64))
     level_6_full_code: Mapped[str | None] = mapped_column(String(16))

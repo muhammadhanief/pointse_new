@@ -124,35 +124,16 @@ def _flag(series: pd.Series, nilai: tuple[int, ...]) -> pd.Series:
     return _angka(series).isin(nilai).astype("int8")
 
 
-def proses_a(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Jalankan Proses A (identifikasi titik) sesuai model QGIS.
+def _proses_a_inti(
+    titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame, urut_awal: int = 0
+) -> gpd.GeoDataFrame:
+    """Inti Proses A; juga dipakai per potongan titik (mode hemat memori).
 
-    Parameters
-    ----------
-    titik : GeoDataFrame
-        Titik bangunan. Wajib punya kolom ``KOLOM_TITIK``.
-    peta : GeoDataFrame
-        Poligon batas wilkerstat. Wajib punya kolom ``KOLOM_PETA``.
-
-    Returns
-    -------
-    GeoDataFrame
-        Kolom ``KOLOM_HASIL`` (urutan sama dengan model QGIS) + geometri titik
-        dalam EPSG:4326, ``assignment_id`` unik. Urutan baris meniru QGIS:
-        terkelompok per poligon mengikuti urutan ``peta`` (di dalam poligon
-        mengikuti urutan ``titik``), lalu titik yang tidak cocok di paling
-        akhir. Index tiap baris = index asli ``titik``.
-
-    Notes
-    -----
-    Bila beberapa poligon cocok untuk satu titik (titik tepat di garis batas),
-    dipakai poligon yang **pertama** pada urutan ``peta`` — sama seperti
-    ``METHOD=1`` (first matching feature) di QGIS.
-
-    Untuk ``assignment_id`` yang muncul lebih dari sekali, baris **pertama**
-    pada urutan hasil di atas yang dipertahankan (perilaku
-    ``removeduplicatesbyattribute``), sisanya dibuang. Model QGIS tidak punya
-    aturan lain, jadi urutan baris masukan ``titik`` ikut menentukan.
+    ``urut_awal`` adalah nomor urut titik pertama pada potongan ini di berkas
+    asal. Selain 30 kolom hasil, keluaran menyertakan kolom bantu ``_posisi``
+    (nomor poligon yang cocok, kosong kalau tak cocok) dan ``_urut`` (nomor
+    urut titik di berkas asal) supaya pemanggil bisa menggabungkan potongan
+    dengan urutan yang sama seperti :func:`proses_a`.
     """
     titik_4326 = pastikan_crs4326(titik, "titik")
     peta_4326 = pastikan_crs4326(peta, "peta")
@@ -162,7 +143,7 @@ def proses_a(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFram
     # Simpan index asli supaya hasil bisa ditelusuri; urutan baris pakai _urut.
     indeks_asli = titik_4326.index
     titik_urut = titik_4326.reset_index(drop=True)
-    titik_urut["_urut"] = range(len(titik_urut))
+    titik_urut["_urut"] = range(urut_awal, urut_awal + len(titik_urut))
 
     # Poligon diberi nomor urut; join memakai kolom wilayah saja (JOIN_FIELDS).
     nama_geom_peta = peta_4326.geometry.name
@@ -193,6 +174,9 @@ def proses_a(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFram
     gabung = gabung.drop_duplicates(subset="assignment_id", keep="first")
 
     urut = gabung["_urut"].to_numpy()
+    # Posisi baris di potongan ini (bukan nomor global) untuk mengambil geometri
+    # dan index asli; hanya berbeda dari ``urut`` kalau ``urut_awal`` > 0.
+    posisi_lokal = urut - urut_awal
 
     # Susun 30 kolom hasil sesuai urutan refactor fields model QGIS.
     hasil = pd.DataFrame(index=gabung.index)
@@ -234,10 +218,63 @@ def proses_a(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFram
     hasil["usaha"] = gabung["count_usaha"].to_numpy()
     hasil["nama_usaha_bang"] = gabung["nama_usaha_bang"].to_numpy()
 
+    # Kolom bantu untuk penggabungan potongan (tidak ikut keluaran proses_a).
+    hasil["_posisi"] = gabung["_posisi"].to_numpy()
+    hasil["_urut"] = gabung["_urut"].to_numpy()
+
     hasil = gpd.GeoDataFrame(
         hasil,
-        geometry=titik_urut.geometry.to_numpy()[urut],
+        geometry=titik_urut.geometry.to_numpy()[posisi_lokal],
         crs=CRS_TARGET,
     )
-    hasil.index = indeks_asli.to_numpy()[urut]
+    hasil.index = indeks_asli.to_numpy()[posisi_lokal]
+    return hasil[list(KOLOM_HASIL) + ["_posisi", "_urut", "geometry"]]
+
+
+def proses_a(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Jalankan Proses A (identifikasi titik) sesuai model QGIS.
+
+    Parameters
+    ----------
+    titik : GeoDataFrame
+        Titik bangunan. Wajib punya kolom ``KOLOM_TITIK``.
+    peta : GeoDataFrame
+        Poligon batas wilkerstat. Wajib punya kolom ``KOLOM_PETA``.
+
+    Returns
+    -------
+    GeoDataFrame
+        Kolom ``KOLOM_HASIL`` (urutan sama dengan model QGIS) + geometri titik
+        dalam EPSG:4326, ``assignment_id`` unik. Urutan baris meniru QGIS:
+        terkelompok per poligon mengikuti urutan ``peta`` (di dalam poligon
+        mengikuti urutan ``titik``), lalu titik yang tidak cocok di paling
+        akhir. Index tiap baris = index asli ``titik``.
+
+    Notes
+    -----
+    Bila beberapa poligon cocok untuk satu titik (titik tepat di garis batas),
+    dipakai poligon yang **pertama** pada urutan ``peta`` — sama seperti
+    ``METHOD=1`` (first matching feature) di QGIS.
+
+    Untuk ``assignment_id`` yang muncul lebih dari sekali, baris **pertama**
+    pada urutan hasil di atas yang dipertahankan (perilaku
+    ``removeduplicatesbyattribute``), sisanya dibuang. Model QGIS tidak punya
+    aturan lain, jadi urutan baris masukan ``titik`` ikut menentukan.
+    """
+    hasil = _proses_a_inti(titik, peta)
     return hasil[list(KOLOM_HASIL) + ["geometry"]]
+
+
+def proses_a_potongan(
+    titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame, urut_awal: int = 0
+) -> gpd.GeoDataFrame:
+    """Proses A untuk **satu potongan** titik (mode hemat memori).
+
+    Aturan hitungnya sama dengan :func:`proses_a`; bedanya, keluaran belum
+    dihapus-duplikat antar potongan dan masih menyertakan kolom bantu
+    ``_posisi``/``_urut``. Pemanggil menggabungkan potongan, membuang
+    ``assignment_id`` ganda dengan urutan (:func:`app.worker.kunci_potongan`),
+    lalu menyimpannya ke basis data.
+    """
+    return _proses_a_inti(titik, peta, urut_awal)
+

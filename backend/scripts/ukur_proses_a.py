@@ -1,105 +1,184 @@
-"""Ukur waktu + memori Proses A pada data uji penuh, lalu bandingkan output QGIS.
+"""Ukur waktu per tahap + puncak RSS Proses A (tanpa basis data).
 
-Jalankan dari folder ``backend``:
+Contoh pemakaian dari folder ``backend``::
 
-    .venv\\Scripts\\python.exe scripts\\ukur_proses_a.py
+    .venv\\Scripts\\python.exe scripts\\ukur_proses_a.py ^
+        --titik "..\\docs\\Titik Bangunan dan SLS\\3307\\Landmark Bangunan\\landmark_202523307.gpkg" ^
+        --peta "..\\docs\\Titik Bangunan dan SLS\\3307\\Peta SLS SubSLS\\Final_SLS_202513307.geojson" ^
+        --chunk 50000
 
-Skrip ini alat ukur, bukan bagian aplikasi.
+``--chunk 0`` (default) memproses seluruh titik sekaligus; nilai > 0 memakai
+mode hemat memori yang sama dengan worker (baca per potongan + siapkan baris per
+batch). Skrip ini **tidak** membuka basis data; hasil tiap batch dibuang setelah
+dihitung supaya puncak RSS mencerminkan pemrosesan, bukan penyimpanan.
+
+Puncak RSS dibaca dengan ``resource.getrusage(RUSAGE_SELF).ru_maxrss`` di
+Linux/macOS. Di Windows modul ``resource`` tidak tersedia, jadi dipakai
+``scripts/_memori.py`` (API ``K32GetProcessMemoryInfo`` lewat ``ctypes``) —
+tanpa ``psutil``.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
 
-import pandas as pd
+import geopandas as gpd
 
-# Pakai utilitas data uji yang sama dengan tes (satu sumber kebenaran).
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
+AKAR = Path(__file__).resolve().parents[1]
+DIR_SCRIPTS = Path(__file__).resolve().parent
+sys.path.insert(0, str(AKAR))
+sys.path.insert(0, str(DIR_SCRIPTS))
 
-import qgis_data  # noqa: E402
+import _memori  # noqa: E402
 
-from app.proses_a import KOLOM_HASIL, proses_a  # noqa: E402
+from app import worker as modul_worker  # noqa: E402
+from app.potongan import baca_potongan  # noqa: E402
+from app.proses_a import proses_a, proses_a_potongan  # noqa: E402
 
-import _memori as _modul_memori  # noqa: E402
+try:  # Linux/macOS; Windows tidak punya modul resource
+    import resource
+except ImportError:  # pragma: no cover - hanya Windows
+    resource = None  # type: ignore[assignment]
 
-# Alias pendek supaya pemakaian di bawah ringkas.
-_memori = _modul_memori.memori
-_mb = _modul_memori.mb
+
+def puncak_rss_mb() -> float | None:
+    """Puncak RSS proses dalam MB (``resource`` atau API Windows, tanpa psutil)."""
+    if resource is not None:
+        nilai = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        # Linux/BSD: kilobyte; macOS: byte.
+        return nilai / 1024 if sys.platform != "darwin" else nilai / (1024 * 1024)
+    return _memori.memori("PeakWorkingSetSize")
 
 
-def main() -> int:
-    if not qgis_data.ada_data_uji():
-        print("Data uji tidak ada di docs/. Skrip ini butuh data uji penuh.")
+def _mb(nilai: float | None) -> str:
+    return "n/a" if nilai is None else f"{nilai:,.0f} MB"
+
+
+def _siapkan_baris(hasil: gpd.GeoDataFrame) -> None:
+    """Tirukan persiapan batch worker (tanpa insert), lalu buang hasilnya."""
+    siap = modul_worker.tambah_kolom_wilayah(hasil, {})
+    for mulai in range(0, len(siap), modul_worker.UKURAN_BATCH):
+        potongan = siap.iloc[mulai : mulai + modul_worker.UKURAN_BATCH]
+        modul_worker.siapkan_baris(potongan, 0)
+
+
+def ukur(
+    berkas_titik: Path,
+    berkas_peta: Path,
+    chunk: int,
+    layer_titik: str | None,
+    layer_peta: str | None,
+) -> int:
+    """Jalankan pengukuran; kembalikan 0 kalau berhasil."""
+    if not berkas_titik.exists():
+        print(f"berkas titik tidak ditemukan: {berkas_titik}")
+        return 1
+    if not berkas_peta.exists():
+        print(f"berkas peta tidak ditemukan: {berkas_peta}")
+        return 1
+    if chunk < 0:
+        print("--chunk tidak boleh negatif")
         return 1
 
     print("=" * 78)
-    print("UKUR PROSES A — data uji kdkab 3307")
+    print("UKUR PROSES A")
     print("=" * 78)
-    print(f"python : {sys.version.split()[0]}")
-    print(f"memori awal (RSS)   : {_mb(_memori('WorkingSetSize'))}")
+    print(f"python      : {sys.version.split()[0]}")
+    print(f"titik       : {berkas_titik}")
+    print(f"peta        : {berkas_peta}")
+    print(f"chunk       : {chunk if chunk else '0 (tanpa pemecahan)'}")
+    print(f"RSS awal    : {_mb(puncak_rss_mb())}")
 
     t0 = time.perf_counter()
-    titik = qgis_data.muat_titik()
-    peta = qgis_data.muat_peta()
-    t_baca = time.perf_counter() - t0
-    print(f"\n[baca] titik {len(titik):,} baris | peta {len(peta):,} poligon")
-    print(f"[baca] waktu {t_baca:,.1f} s | memori {_mb(_memori('WorkingSetSize'))}")
+    peta = gpd.read_file(berkas_peta, layer=layer_peta)
+    t_peta = time.perf_counter() - t0
+    print(f"\n[baca peta] {len(peta):,} poligon | {t_peta:,.1f} s | puncak RSS {_mb(puncak_rss_mb())}")
 
-    t0 = time.perf_counter()
-    hasil = proses_a(titik, peta)
-    t_proses = time.perf_counter() - t0
+    t_baca = t_proses = t_siap = 0.0
+    jumlah_titik = 0
 
-    print(f"\n[proses] waktu {t_proses:,.1f} s")
-    print(f"[proses] memori proses (RSS) : {_mb(_memori('WorkingSetSize'))}")
-    print(f"[proses] memori puncak proses: {_mb(_memori('PeakWorkingSetSize'))}")
-    print(f"[proses] hasil {len(hasil):,} baris")
+    if chunk <= 0:
+        t0 = time.perf_counter()
+        titik = gpd.read_file(berkas_titik, layer=layer_titik)
+        t_baca = time.perf_counter() - t0
+        jumlah_titik = len(titik)
+        print(f"[baca titik] {jumlah_titik:,} baris | {t_baca:,.1f} s | puncak RSS {_mb(puncak_rss_mb())}")
 
-    # ------- bandingkan dengan output QGIS -------
-    t0 = time.perf_counter()
-    qgis = qgis_data.muat_output_a()
-    laporan = qgis_data.bandingkan(hasil, qgis, KOLOM_HASIL)
-    t_banding = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        hasil = proses_a(titik, peta)
+        t_proses = time.perf_counter() - t0
+        print(f"[proses] {len(hasil):,} baris | {t_proses:,.1f} s | puncak RSS {_mb(puncak_rss_mb())}")
 
+        t0 = time.perf_counter()
+        _siapkan_baris(hasil)
+        t_siap = time.perf_counter() - t0
+        print(f"[siapkan baris] {len(hasil):,} baris | {t_siap:,.1f} s | puncak RSS {_mb(puncak_rss_mb())}")
+    else:
+        nomor = 0
+        iterator = baca_potongan(berkas_titik, layer_titik, chunk)
+        while True:
+            t0 = time.perf_counter()
+            try:
+                urut_awal, potongan = next(iterator)
+            except StopIteration:
+                break
+            baca = len(potongan)
+            t_baca_satu = time.perf_counter() - t0
+            t_baca += t_baca_satu
+            jumlah_titik += baca
+            nomor += 1
+
+            t0 = time.perf_counter()
+            hasil = proses_a_potongan(potongan, peta, urut_awal)
+            t_proses_satu = time.perf_counter() - t0
+            t_proses += t_proses_satu
+
+            t0 = time.perf_counter()
+            _siapkan_baris(hasil)
+            t_siap_satu = time.perf_counter() - t0
+            t_siap += t_siap_satu
+
+            print(
+                f"[potongan {nomor:>3}] titik {urut_awal:,}..{urut_awal + baca - 1:,} "
+                f"({baca:,}) | baca {t_baca_satu:,.2f} s | proses {t_proses_satu:,.2f} s "
+                f"| siapkan {t_siap_satu:,.2f} s | puncak RSS {_mb(puncak_rss_mb())}"
+            )
+
+    total = t_peta + t_baca + t_proses + t_siap
     print("\n" + "-" * 78)
-    print("BANDINGKAN DENGAN OUTPUT QGIS (hasil_identifikasi_titik_model1.gpkg)")
-    print("-" * 78)
-    print(f"baris hasil : {laporan['baris_hasil']:,}")
-    print(f"baris QGIS  : {laporan['baris_qgis']:,}")
-    print(f"tanpa pasangan -> hanya di hasil: {laporan['hanya_di_hasil']:,}"
-          f" | hanya di QGIS: {laporan['hanya_di_qgis']:,}")
-    print(f"waktu bandingkan: {t_banding:,.1f} s")
-    print("\nbaris berbeda per kolom:")
-    for kolom, jumlah in laporan["beda_per_kolom"].items():  # type: ignore[union-attr]
-        tanda = "OK " if jumlah == 0 else "BEDA"
-        print(f"  [{tanda}] {kolom:<24} {jumlah:,}")
-    print(f"\nTOTAL beda: {laporan['beda_total']:,}")
-
-    # ------- info tambahan: asal selisih -------
-    id_beda_psls = laporan["id_beda_per_kolom"].get("flag_psls")
-    jumlah_beda_psls = 0 if id_beda_psls is None else len(id_beda_psls)
-    duplikat = set(titik.loc[titik["assignment_id"].duplicated(keep=False), "assignment_id"])
-    tanpa_wilayah = int(hasil["idsubsls_origin"].isna().sum())
-
-    print(f"\nassignment_id ganda di input   : {len(duplikat):,}")
-    print(f"selisih flag_psls              : {jumlah_beda_psls:,} baris "
-          f"(semua dari assignment_id ganda: {id_beda_psls is not None and set(id_beda_psls) <= duplikat})")
-    print(f"titik tanpa wilayah (tak cocok): {tanpa_wilayah:,} baris (flag_repair = 1)")
-
-    semua_sama = laporan["beda_total"] == jumlah_beda_psls and semua_sama_selain_psls(laporan)
-    print("\nVERDICT:", "SAMA dengan output QGIS (selisih hanya flag_psls pada assignment_id ganda)"
-          if semua_sama else "ADA BEDA di luar flag_psls pada assignment_id ganda")
+    print(f"titik diproses : {jumlah_titik:,}")
+    print(f"baca peta      : {t_peta:,.1f} s")
+    print(f"baca titik     : {t_baca:,.1f} s ({chunk or 'sekali'} baris per baca)")
+    print(f"proses A       : {t_proses:,.1f} s")
+    print(f"siapkan baris  : {t_siap:,.1f} s")
+    print(f"total tahap    : {total:,.1f} s")
+    print(f"PUNCAK RSS     : {_mb(puncak_rss_mb())}")
     return 0
 
 
-def semua_sama_selain_psls(laporan: dict) -> bool:
-    """True bila tidak ada kolom lain yang berbeda selain flag_psls."""
-    return all(
-        jumlah == 0
-        for kolom, jumlah in laporan["beda_per_kolom"].items()
-        if kolom != "flag_psls"
+def main(argv: list[str] | None = None) -> int:
+    """Baca argumen lalu jalankan pengukuran."""
+    parser = argparse.ArgumentParser(description="Ukur waktu + puncak RSS Proses A.")
+    parser.add_argument("--titik", required=True, type=Path, help="berkas titik (GPKG/GeoJSON)")
+    parser.add_argument("--peta", required=True, type=Path, help="berkas peta (GPKG/GeoJSON)")
+    parser.add_argument(
+        "--chunk",
+        type=int,
+        default=0,
+        help="jumlah titik per potongan (0 = tanpa pemecahan)",
+    )
+    parser.add_argument("--layer-titik", default=None, help="nama layer berkas titik")
+    parser.add_argument("--layer-peta", default=None, help="nama layer berkas peta")
+    argumen = parser.parse_args(argv)
+    return ukur(
+        argumen.titik,
+        argumen.peta,
+        argumen.chunk,
+        argumen.layer_titik,
+        argumen.layer_peta,
     )
 
 

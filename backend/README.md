@@ -77,6 +77,40 @@ Belum ada autentikasi (T4). Isi `user` sementara dikirim lewat form.
 
 Status job: `menunggu` → `jalan` → `sukses` / `gagal`.
 
+### Mode hemat memori (`PROSES_CHUNK_TITIK`)
+
+Set `PROSES_CHUNK_TITIK` > 0 (mis. `50000`) untuk membaca titik per potongan
+dengan `pyogrio` (`skip_features`/`max_features`) sementara peta tetap utuh di
+memori. Hasil tiap potongan langsung di-`upsert` ke `titik_hasil` per batch
+10.000 baris; `assignment_id` ganda lintas potongan dimenangkan oleh baris yang
+paling awal pada urutan hasil (sama dengan mode biasa). Karena kunci urut
+sementara bisa melebihi `INTEGER`, `titik_hasil.urut` kini `BIGINT`; setelah
+rekap dihitung, urut dirapikan menjadi peringkat `0..n-1` sebelum pemangkasan,
+jadi hasil akhir (termasuk celah `urut` setelah pemangkasan) identik dengan mode
+biasa. Nilai `0` (default) memakai mode lama (seluruh titik sekaligus).
+
+### Worker cron dan job menggantung
+
+- `python -m app.worker --once` mengambil **paling banyak satu** job, memproses,
+  lalu keluar. Kunci `GET_LOCK` MariaDB mencegah dua pemanggilan cron berjalan
+  bersamaan (di SQLite/tes kunci ini no-op).
+- Worker memperbarui `runs.heartbeat_at` tiap batch. Job `jalan` yang heartbeat-nya
+  lebih lama dari `JOB_TIMEOUT_MENIT` (default 10) dianggap terhenti: statusnya
+  `gagal`, pesannya "proses terhenti, kemungkinan dimatikan server", hasil
+  separuhnya dibersihkan, dan aturan satu job aktif tidak lagi menghalangi unggahan
+  baru untuk kabupaten/tipe itu.
+
+### Alat ukur
+
+`scripts/ukur_proses_a.py` mengukur waktu per tahap dan puncak RSS tanpa basis
+data. Di Linux/macOS memakai `resource.getrusage`; di Windows memakai API
+`K32GetProcessMemoryInfo` lewat `scripts/_memori.py` (tanpa `psutil`).
+
+```powershell
+.venv\Scripts\python.exe scripts\ukur_proses_a.py --titik <GPKG> --peta <GeoJSON> --chunk 0
+.venv\Scripts\python.exe scripts\ukur_proses_a.py --titik <GPKG> --peta <GeoJSON> --chunk 50000
+```
+
 ## Skema basis data
 
 | Tabel | Isi |

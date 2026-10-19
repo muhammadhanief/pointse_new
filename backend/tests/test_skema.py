@@ -232,6 +232,9 @@ def test_sql_migrasi_untuk_mysql(capsys: pytest.CaptureFixture[str]) -> None:
     )
     # isi data dilewati di mode offline; tabel rekap_subsls lama dihapus
     assert "DROP TABLE rekap_subsls" in sql
+    # migrasi 0006: heartbeat job + urut BIGINT untuk kunci sementara mode potongan
+    assert "ALTER TABLE runs ADD COLUMN heartbeat_at DATETIME" in sql
+    assert "ALTER TABLE titik_hasil MODIFY urut BIGINT NOT NULL" in sql
 
 
 def test_migrasi_0005_mengisi_rekap_dari_data_lama(tmp_path: Path) -> None:

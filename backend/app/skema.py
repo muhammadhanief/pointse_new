@@ -38,6 +38,7 @@ class RunOut(BaseModel):
     tanggal_data: date
     created_at: datetime
     started_at: datetime | None = None
+    heartbeat_at: datetime | None = None
     finished_at: datetime | None = None
 
 

@@ -37,6 +37,7 @@ yang bisa dibangun ulang dengan menjalankan ulang job.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from types import SimpleNamespace
 
 import sqlalchemy as sa
 from alembic import context, op
@@ -44,7 +45,7 @@ from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session
 
 from app import rekap as modul_rekap
-from app.models import KOLOM_HITUNGAN, Run
+from app.models import KOLOM_HITUNGAN
 
 revision = "0005"
 down_revision = "0004"
@@ -202,22 +203,38 @@ def _isi_data() -> None:
     if not run_ids:
         return
 
+    def run_ringkas(run_id: int) -> SimpleNamespace | None:
+        """Kolom ``runs`` yang dipakai rekap, tanpa memuat model ORM lengkap.
+
+        Migrasi tidak boleh bergantung pada kolom yang baru ditambahkan migrasi
+        berikutnya (mis. ``heartbeat_at`` di 0006), jadi dibaca eksplisit.
+        """
+        baris = (
+            koneksi.execute(
+                sa.text("SELECT id, tipe, kdprov, kdkab FROM runs WHERE id = :id"),
+                {"id": run_id},
+            )
+            .mappings()
+            .first()
+        )
+        return None if baris is None else SimpleNamespace(**baris)
+
     # Session di atas koneksi migrasi: commit-nya hanya melepas savepoint, jadi
     # transaksi migrasi tetap utuh.
     sesi = Session(bind=koneksi, join_transaction_mode="create_savepoint")
     try:
         for run_id in run_ids:
-            run = sesi.get(Run, run_id)
+            run = run_ringkas(run_id)
             if run is not None:
                 # Rekap dibaca dari semua titik dulu, sebelum titik dipangkas di bawah.
-                modul_rekap.simpan_rekap(sesi, run)
+                modul_rekap.simpan_rekap(sesi, run)  # type: ignore[arg-type]
                 for dasar in modul_rekap.DASAR:
                     _verifikasi(koneksi, run_id, dasar)
         sesi.flush()
         for run_id in run_ids:
-            run = sesi.get(Run, run_id)
+            run = run_ringkas(run_id)
             if run is not None:
-                modul_rekap.pangkas_titik_hasil(sesi, run)
+                modul_rekap.pangkas_titik_hasil(sesi, run)  # type: ignore[arg-type]
         sesi.commit()
     finally:
         sesi.close()

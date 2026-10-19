@@ -114,32 +114,14 @@ def _flag_tanpa_kosong(nilai: pd.Series) -> pd.Series:
     return nilai.astype("int8") if not nilai.isna().any() else nilai.astype("Int8")
 
 
-def proses_b(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Jalankan Proses B (pengecekan titik hasil penggeseran) sesuai model QGIS.
+def _proses_b_inti(
+    titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame, urut_awal: int = 0
+) -> gpd.GeoDataFrame:
+    """Inti Proses B; juga dipakai per potongan titik (mode hemat memori).
 
-    Parameters
-    ----------
-    titik : GeoDataFrame
-        Titik hasil pengolahan (keluaran :func:`app.proses_a.proses_a` yang
-        sudah diedit/digeser). Wajib punya kolom ``KOLOM_TITIK_B``.
-    peta : GeoDataFrame
-        Peta batas wilkerstat **lama** lapangan. Wajib punya kolom ``KOLOM_PETA``.
-
-    Returns
-    -------
-    GeoDataFrame
-        Kolom ``KOLOM_HASIL_B`` (urutan sama dengan model QGIS) + geometri titik
-        dalam CRS masukan. Urutan baris seperti Proses A: terkelompok per
-        poligon peta lama (urutan peta), titik tak cocok di akhir; index-nya
-        index asli ``titik``. ``assignment_id`` unik.
-
-    Notes
-    -----
-    Model 02 tidak punya node reproject, jadi kedua masukan dianggap ber-CRS
-    sama (pemanggil yang bertanggung jawab menyiapkannya, mis. lapisan API).
-
-    Aturan join, penghapusan duplikat, dan urutan baris mengikuti Proses A
-    (lihat :mod:`app.proses_a`), karena model QGIS-nya memakai node yang sama.
+    Selain 35 kolom hasil, keluaran menyertakan kolom bantu ``_posisi`` dan
+    ``_urut`` untuk menggabungkan potongan dengan urutan yang sama seperti
+    :func:`proses_b` (lihat :func:`app.proses_a._proses_a_inti`).
     """
     if not isinstance(titik, gpd.GeoDataFrame):
         raise TypeError(f"titik harus GeoDataFrame, bukan {type(titik).__name__}")
@@ -150,7 +132,7 @@ def proses_b(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFram
 
     indeks_asli = titik.index
     titik_urut = titik.reset_index(drop=True).copy()
-    titik_urut["_urut"] = range(len(titik_urut))
+    titik_urut["_urut"] = range(urut_awal, urut_awal + len(titik_urut))
     # refactorfields tahap 1: $y / $x geometri titik saat ini.
     titik_urut["_latitude_edited"] = titik_urut.geometry.y.astype("float64")
     titik_urut["_longitude_edited"] = titik_urut.geometry.x.astype("float64")
@@ -182,6 +164,8 @@ def proses_b(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFram
     gabung = gabung.drop_duplicates(subset="assignment_id", keep="first")
 
     urut = gabung["_urut"].to_numpy()
+    # Posisi baris di potongan ini (lihat _proses_a_inti).
+    posisi_lokal = urut - urut_awal
 
     # ---- refactorfields tahap 2: flag_edit_atr_repair, flag_position, flag_repair_initial ----
     flag_repair_awal = pd.to_numeric(gabung["flag_repair"], errors="coerce")
@@ -247,10 +231,58 @@ def proses_b(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFram
     hasil["nmsls"] = gabung["_peta_nmsls"].to_numpy()
     hasil["nama_usaha_bang"] = gabung["nama_usaha_bang"].to_numpy()
 
+    # Kolom bantu untuk penggabungan potongan (tidak ikut keluaran proses_b).
+    hasil["_posisi"] = gabung["_posisi"].to_numpy()
+    hasil["_urut"] = gabung["_urut"].to_numpy()
+
     hasil = gpd.GeoDataFrame(
         hasil,
-        geometry=titik_urut.geometry.to_numpy()[urut],
+        geometry=titik_urut.geometry.to_numpy()[posisi_lokal],
         crs=titik.crs,
     )
-    hasil.index = indeks_asli.to_numpy()[urut]
+    hasil.index = indeks_asli.to_numpy()[posisi_lokal]
+    return hasil[list(KOLOM_HASIL_B) + ["_posisi", "_urut", "geometry"]]
+
+
+def proses_b(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Jalankan Proses B (pengecekan titik hasil penggeseran) sesuai model QGIS.
+
+    Parameters
+    ----------
+    titik : GeoDataFrame
+        Titik hasil pengolahan (keluaran :func:`app.proses_a.proses_a` yang
+        sudah diedit/digeser). Wajib punya kolom ``KOLOM_TITIK_B``.
+    peta : GeoDataFrame
+        Peta batas wilkerstat **lama** lapangan. Wajib punya kolom ``KOLOM_PETA``.
+
+    Returns
+    -------
+    GeoDataFrame
+        Kolom ``KOLOM_HASIL_B`` (urutan sama dengan model QGIS) + geometri titik
+        dalam CRS masukan. Urutan baris seperti Proses A: terkelompok per
+        poligon peta lama (urutan peta), titik tak cocok di akhir; index-nya
+        index asli ``titik``. ``assignment_id`` unik.
+
+    Notes
+    -----
+    Model 02 tidak punya node reproject, jadi kedua masukan dianggap ber-CRS
+    sama (pemanggil yang bertanggung jawab menyiapkannya, mis. lapisan API).
+
+    Aturan join, penghapusan duplikat, dan urutan baris mengikuti Proses A
+    (lihat :mod:`app.proses_a`), karena model QGIS-nya memakai node yang sama.
+    """
+    hasil = _proses_b_inti(titik, peta)
     return hasil[list(KOLOM_HASIL_B) + ["geometry"]]
+
+
+def proses_b_potongan(
+    titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame, urut_awal: int = 0
+) -> gpd.GeoDataFrame:
+    """Proses B untuk **satu potongan** titik (mode hemat memori).
+
+    Aturan hitungnya sama dengan :func:`proses_b`. Pemanggil yang menyiapkan
+    CRS (model 02 tidak punya node reproject) dan menggabungkan potongan
+    memakai kolom bantu ``_posisi``/``_urut``.
+    """
+    return _proses_b_inti(titik, peta, urut_awal)
+

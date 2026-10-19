@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +35,10 @@ class Settings(BaseSettings):
     worker_enabled: bool = True
     max_workers: int = 1
     interval_polling: float = 1.0
+    #: 0 = titik dibaca/diproses sekaligus; > 0 = per potongan (hemat memori).
+    proses_chunk_titik: int = Field(0, ge=0)
+    #: Job ``jalan`` yang heartbeat-nya lebih lama dari ini dianggap terhenti.
+    job_timeout_menit: int = Field(10, ge=1)
 
     @property
     def database_url(self) -> str:
