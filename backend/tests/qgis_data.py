@@ -26,6 +26,7 @@ OUTPUT_B_GPKG = DIR_DOCS / "hasil_pengecekan_posisi_model2.gpkg"
 
 LAYER_TITIK = "geotag"
 LAYER_OUTPUT_A = "hasil_identifikasi_titik"
+LAYER_OUTPUT_B = "hasil_pengecekan_titik_hasil_penggeseran"
 
 # Kolom yang di output QGIS tersimpan sebagai TEXT (artefak refactor fields),
 # padahal isinya angka; dibandingkan secara angka saat verifikasi.
@@ -46,10 +47,24 @@ KOLOM_NUMERIK: tuple[str, ...] = (
 
 _SENTINEL = object()
 
+# Kolom keluaran Proses B yang di QGIS tersimpan sebagai TEXT padahal isinya
+# angka (flag_edit_atr_repair, latitude_origin, ...); dibandingkan sebagai angka.
+KOLOM_NUMERIK_B: tuple[str, ...] = KOLOM_NUMERIK + (
+    "flag_position",
+    "flag_edit_atr_repair",
+    "latitude_edited",
+    "longitude_edited",
+)
+
 
 def ada_data_uji() -> bool:
     """True bila semua file data uji Proses A tersedia."""
     return TITIK_GPKG.exists() and PETA_GEOJSON.exists() and OUTPUT_A_GPKG.exists()
+
+
+def ada_data_uji_b() -> bool:
+    """True bila data uji Proses A *dan* keluaran Proses B dari QGIS tersedia."""
+    return ada_data_uji() and OUTPUT_B_GPKG.exists()
 
 
 def muat_titik() -> gpd.GeoDataFrame:
@@ -65,6 +80,11 @@ def muat_peta() -> gpd.GeoDataFrame:
 def muat_output_a() -> gpd.GeoDataFrame:
     """Baca output Proses A dari QGIS sebagai pembanding."""
     return gpd.read_file(OUTPUT_A_GPKG, layer=LAYER_OUTPUT_A)
+
+
+def muat_output_b() -> gpd.GeoDataFrame:
+    """Baca output Proses B dari QGIS sebagai pembanding."""
+    return gpd.read_file(OUTPUT_B_GPKG, layer=LAYER_OUTPUT_B)
 
 
 def bandingkan(
