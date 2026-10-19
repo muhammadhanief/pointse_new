@@ -46,11 +46,18 @@ npm run dev
 
 ## Catatan Proses B (T2)
 
-`backend/app/proses_b.py` sudah identik dengan keluaran QGIS pada data uji 3307 (semua kolom,
-397.364 baris), tetapi data uji itu hanya mewakili kasus **tanpa titik digeser dan tanpa
-atribut diedit** (semua `flag_position` dan `flag_edit_atr_repair` bernilai 0). Kasus titik yang
-benar-benar digeser/diedit baru diuji lewat tes unit; PRD §9 untuk Proses B dinyatakan lulus
-penuh setelah ada data edit asli dari petugas.
+`backend/app/proses_b.py` sudah identik dengan keluaran QGIS pada data uji 3307 untuk **dua
+kasus**, semuanya dibandingkan penuh (semua kolom, 397.364 baris, 0 beda):
+
+- kasus tanpa editan (`docs/hasil_pengecekan_posisi_model2.gpkg`; semua `flag_position` dan
+  `flag_edit_atr_repair` = 0) — tes `tests/test_proses_b_qgis.py`;
+- kasus **ada editan** (`docs/Titik Bangunan dan SLS/3307/hasil_edit_runmodel2.gpkg`; 6 titik
+  digeser dan `flag_repair`-nya diubah manual) — tes `tests/test_proses_b_edit_qgis.py`.
+
+Berkas masukan model untuk kasus kedua tidak ikut di `docs/` (hanya keluarannya), jadi
+masukannya disusun ulang dari keluaran Proses A oleh `qgis_data.muat_input_b_edit` (geser
+geometri titik yang `flag_position` = 1 dan ubah `flag_repair` titik yang
+`flag_edit_atr_repair` = 1 menjadi 0). Dengan dua tes ini PRD §9 untuk Proses B terpenuhi.
 
 ## Catatan T3
 
@@ -65,8 +72,9 @@ T3 juga sudah diuji **end-to-end lawan MariaDB asli** (`pointse_new`; kredensial
 - Data uji penuh kdkab 3307 (397.443 titik) diunggah lewat `POST /runs` dan diproses worker:
   397.364 baris tersimpan (79 duplikat `assignment_id` dibuang — sama dengan output QGIS),
   `jumlah_tanpa_wilayah` = 82 (titik di luar semua poligon), rekap kabupaten/kecamatan/desa/sls
-  sesuai (264 desa, 7.567 SubSLS pada dasar `tugas`, 7.798 pada dasar `posisi`,
-  48.364 titik belum diperbaiki).
+  sesuai untuk kedua dasar (`tugas` 7.567 baris, `posisi` 7.799 baris termasuk kategori
+  "(tanpa wilayah)"), dengan rincian `belum` 48.364 / `sudah_posisi` 349.000 /
+  `sudah_manual` 0 (Proses A tidak pernah melakukan perbaikan manual) / `tanpa_wilayah` 82.
 - Satu job aktif per (kdkab, tipe) terbukti: unggahan baru membuat job lama berstatus
   `digantikan` dan `titik_hasil`-nya dihapus.
 - Performa: 397.364 baris tersimpan dalam ±45 detik (±9.000 baris/detik) pada pengukuran ini,
@@ -90,14 +98,28 @@ Agar DB tidak membengkak saat dipakai semua kabupaten/kota, skema awal dirapikan
   membaca tabel ini, jadi tidak pernah memindai `titik_hasil`.
 - `runs.jumlah_tanpa_wilayah` — jumlah titik yang tidak masuk poligon wilkerstat mana pun.
 
-Hasil ukur pada data uji penuh satu kabupaten (397.364 baris, MariaDB):
+Migrasi `0003` merinci hitungan rekap (PRD §5) menjadi kolom `belum`, `sudah_posisi`
+(`flag_repair` = 0 tanpa perubahan atribut manual), `sudah_manual` (`flag_repair` = 0 karena
+`flag_edit_atr_repair` = 1), dan `tanpa_wilayah` (titik pada baris itu yang tidak masuk poligon
+mana pun); `jumlah` = `belum` + `sudah_posisi` + `sudah_manual`.
+
+Titik yang tidak bisa dipetakan ke wilayah pada dasar rekap dihitung sebagai baris kategori
+**"(tanpa wilayah)"**: `rekap_subsls.wilayah_id` NULL untuk dasar `tugas` (kode
+`level_6_full_code` kosong atau tidak ada di tabel `wilayah`) maupun dasar `posisi` (titik di
+luar semua poligon). Karena kolom kunci utama di MySQL tidak boleh NULL, kunci utama
+`rekap_subsls` dipindah ke `id` (`UNIQUE (run_id, dasar, wilayah_id)` tetap menjaga keunikan).
+Dengan begitu **jumlah setiap dasar = `runs.jumlah_baris`** dan tidak ada titik yang hilang;
+`wilayah` tetap hanya berisi SubSLS yang benar-benar ada di peta (kode asing tidak dibuatkan
+baris seadanya).
+
+Hasil ukur pada data uji penuh satu kabupaten (397.364 baris, MariaDB, setelah migrasi `0003`):
 
 | Tabel | Sebelum | Sesudah |
 |---|---|---|
-| `titik_hasil` (data + indeks) | 223,48 MB | 106,73 MB |
-| `wilayah` | — | 2,11 MB (7.966 baris) |
-| `rekap_subsls` | — | 4,57 MB (15.365 baris) |
+| `titik_hasil` (data + indeks) | 223,48 MB | 101,78 MB |
+| `wilayah` | — | 2,02 MB (7.966 baris) |
+| `rekap_subsls` | — | 2,69 MB (15.366 baris: 7.567 dasar `tugas` + 7.799 dasar `posisi`) |
 
-Perkiraan per kabupaten/run: ±113 MB (sebelumnya ±223 MB); untuk 35 kabupaten ±4,0 GB
+Perkiraan per kabupaten/run: ±107 MB (sebelumnya ±223 MB); untuk 35 kabupaten ±3,7 GB
 (sebelumnya ±7,8 GB). Snapshot `rekap_subsls` dan baris `runs` **tidak** ikut dihapus saat hasil
 lama digantikan job baru — yang dihapus hanya isi `titik_hasil`.

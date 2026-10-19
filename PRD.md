@@ -74,8 +74,20 @@ Hasil harus identik dengan output QGIS pada data uji.
 6. Output: **Hasil Pengecekan Titik Hasil Penggeseran**.
 
 ### Indikator progres
-Jumlah dan persentase titik dengan `flag_repair` = 1 (belum diperbaiki) vs 0 (sudah),
-direkap per kabupaten/kota, kecamatan, desa, dan SLS/SubSLS.
+Jumlah titik dipisah menjadi empat hitungan:
+
+- `belum`: `flag_repair` = 1;
+- `sudah_posisi`: `flag_repair` = 0 dan `flag_edit_atr_repair` = 0 (diperbaiki lewat
+  posisi; pada Proses A kolom itu kosong sehingga NULL dianggap 0);
+- `sudah_manual`: `flag_repair` = 0 dan `flag_edit_atr_repair` = 1 (atribut diperbaiki
+  manual);
+- `tanpa_wilayah`: titik yang tidak masuk poligon wilkerstat mana pun (informasi
+  tersendiri, bisa tumpang tindih dengan `belum`).
+
+Persentase yang ditampilkan = `belum` / jumlah titik. Titik yang tidak bisa dipetakan
+ke wilayah pada dasar rekap yang dipakai dihitung sebagai kategori terpisah
+"(tanpa wilayah)", jadi jumlah tiap dasar selalu utuh. Semua direkap per
+kabupaten/kota, kecamatan, desa, dan SLS/SubSLS.
 
 ## 6. Fitur (urut prioritas)
 1. Login SSO BPS
@@ -85,12 +97,38 @@ direkap per kabupaten/kota, kecamatan, desa, dan SLS/SubSLS.
 5. Ekspor hasil (CSV/GPKG)
 6. Peta visualisasi titik (opsional, terakhir)
 
-## 7. Model data MySQL (garis besar)
-- `runs`: id, tipe (A/B), kdkab, user, status, nama file input, created_at
-- `titik_hasil`: run_id, assignment_id, semua kolom hasil di atas
-  (unique run_id + assignment_id)
-- Index: `assignment_id`, `idsubsls`, `kdkab`
-- Rekap progres dihitung lewat query atau view, bukan dihitung ulang di Python.
+## 7. Model data MySQL (skema terpasang)
+Empat tabel (lihat `backend/migrations/`); geometri/peta mentah tidak pernah masuk DB,
+hanya berkas di disk server.
+
+- `runs`: satu baris per job — id, tipe (A/B), kdkab, user, status (`menunggu`,
+  `jalan`, `sukses`, `gagal`, `digantikan`), nama + path berkas input/peta, layer yang
+  dipakai, `jumlah_baris`, `jumlah_tanpa_wilayah`, pesan galat, created/started/finished_at.
+  Index: `kdkab`, `status`, `tipe`.
+- `wilayah`: dimensi wilayah, satu baris per SubSLS — id, `idsubsls` (unik), `idsls`,
+  `nmsls`, `kdprov`..`nmdesa`. Diisi dari peta lewat upsert (nama disegarkan, tidak
+  pernah dihapus); kode di luar peta **tidak** dibuatkan baris seadanya. Index: `kdkab`.
+- `titik_hasil`: hasil per titik (ramping) — kunci `(run_id, urut)`, unik
+  `(run_id, assignment_id)`; `assignment_id`, `level_6_full_code`,
+  `wilayah_asal_id`/`wilayah_edit_id` (FK ke `wilayah`, boleh NULL),
+  flag (`flag_psls`, `flag_position`, `flag_edit_atr_repair`, `flag_repair_initial`,
+  `flag_repair`), `kk`/`btt`/`bku`/`bttk`/`bbtt`, `usaha`, dan koordinat
+  origin/edited. Nama & kode wilayah tidak disimpan di sini (lewat `wilayah`).
+- `rekap_subsls`: snapshot rekap per SubSLS per job — kunci utama `id`, unik
+  `(run_id, dasar, wilayah_id)`; kolom `jumlah`, `belum`, `sudah_posisi`,
+  `sudah_manual`, `tanpa_wilayah`, dan `dasar` (`tugas` = `level_6_full_code` titik,
+  `posisi` = hasil join peta: `wilayah_edit_id` bila ada, kalau tidak `wilayah_asal_id`).
+  Index: `(run_id, dasar)`.
+  - `wilayah_id` NULL = kategori "(tanpa wilayah)": titik yang tidak bisa dipetakan ke
+    wilayah pada dasar itu (dasar `tugas`: `level_6_full_code` kosong atau tidak ada di
+    tabel `wilayah`; dasar `posisi`: titik di luar semua poligon). Karena kolom kunci
+    utama di MySQL tidak boleh NULL, kunci utama tabel ini memakai `id`.
+  - `jumlah` = `belum` + `sudah_posisi` + `sudah_manual`; `tanpa_wilayah` adalah
+    keterangan tersendiri (titik pada baris itu yang tidak masuk poligon mana pun).
+  - Jumlah baris tiap dasar = `runs.jumlah_baris` (tidak ada titik yang hilang).
+
+Rekap dihitung lewat query GROUP BY di basis data saat job sukses dan disimpan sebagai
+snapshot, bukan dihitung ulang di Python tiap permintaan dashboard.
 
 ## 8. Non-fungsional
 - Proses berat jalan sebagai background task dengan status yang bisa dipantau.
@@ -112,10 +150,11 @@ Edit titik langsung di web, notifikasi, multi-bahasa, perbaikan logika model
 - Siapa yang mengedit titik (di QGIS atau nanti di web) dan bagaimana hasil editnya masuk?
 
 ## 12. Rencana task (kerjakan satu per satu, commit tiap selesai)
-- T0: Kerangka repo (`backend/`, `frontend/`, `docs/`), AGENTS.md, .gitignore
-- T1: Fungsi Proses A di Python + tes lawan output QGIS
-- T2: Fungsi Proses B + tes lawan output QGIS
-- T3: API FastAPI (upload, jalankan, status, hasil) + skema MySQL + Alembic
+- T0: Kerangka repo (`backend/`, `frontend/`, `docs/`), AGENTS.md, .gitignore — selesai
+- T1: Fungsi Proses A di Python + tes lawan output QGIS — selesai
+- T2: Fungsi Proses B + tes lawan output QGIS — selesai (data uji dengan titik digeser
+  dan atribut diubah manual: `docs/Titik Bangunan dan SLS/3307/hasil_edit_runmodel2.gpkg`)
+- T3: API FastAPI (upload, jalankan, status, hasil) + skema MySQL + Alembic — selesai
 - T4: Login SSO
 - T5: Kerangka frontend (sidebar, layout) dengan data tiruan
 - T6: Halaman upload dan jalankan proses

@@ -54,24 +54,6 @@ def test_bersih_menyeragamkan_nilai() -> None:
     assert modul.bersih(7) == "7"
 
 
-def test_kode_induk_diturunkan_dari_idsubsls() -> None:
-    """Kode induk diambil per potongan kode BPS (kode pendek, seperti berkas asli)."""
-    assert modul.kode_induk(KODE_SUBSLS) == {
-        "kdprov": "33",
-        "kdkab": "07",
-        "kdkec": "010",
-        "kddesa": "001",
-        "idsls": KODE_SLS,
-    }
-    assert modul.kode_induk("A1") == {
-        "kdprov": None,
-        "kdkab": None,
-        "kdkec": None,
-        "kddesa": None,
-        "idsls": None,
-    }
-
-
 def test_baris_dari_peta_unik_dan_tanpa_geometri() -> None:
     """Peta bisa punya poligon berulang per SubSLS: dimensi hanya satu baris."""
     peta_ulang = gpd.GeoDataFrame(
@@ -102,13 +84,25 @@ def test_baris_dari_peta_menolak_kolom_kurang() -> None:
         modul.baris_dari_peta(peta)
 
 
-def test_baris_minimal_menurunkan_kode_induk() -> None:
-    """Baris minimal (tanpa nama) tetap punya kode induk dari kodenya."""
-    baris = modul.baris_minimal(f" {KODE_SUBSLS} ")
-    assert baris["idsubsls"] == KODE_SUBSLS
-    assert baris["nmsls"] is None
-    assert baris["kdkec"] == "010"
-    assert set(baris) == set(modul.KOLOM_DIMENSI)
+def test_peta_id_hanya_kode_yang_ada_di_wilayah(sesi: Session) -> None:
+    """Kode yang tidak ada di ``wilayah`` dibiarkan tanpa id (tidak dibuatkan baris).
+
+    Titik dengan kode seperti itu disimpan dengan kolom wilayah NULL dan dihitung
+    pada kategori "(tanpa wilayah)" rekap, jadi tabel dimensi tetap bersih.
+    """
+    modul.upsert(sesi, modul.baris_dari_peta(peta_uji()))
+    sesi.commit()
+
+    id_wilayah = modul.peta_id(sesi, [KODE_SUBSLS, "A1", None, "  ", KODE_SUBSLS])
+
+    assert set(id_wilayah) == {KODE_SUBSLS}
+    assert id_wilayah[KODE_SUBSLS] == sesi.scalar(
+        select(Wilayah.id).where(Wilayah.idsubsls == KODE_SUBSLS)
+    )
+    assert sesi.scalar(select(func.count()).select_from(Wilayah)) == 1
+    # panggilan berikutnya dengan kode tak dikenal juga tidak menambah baris
+    assert modul.peta_id(sesi, ["A1"]) == {}
+    assert sesi.scalar(select(func.count()).select_from(Wilayah)) == 1
 
 
 def test_upsert_menambah_menyegarkan_dan_tidak_menghapus(sesi: Session) -> None:
@@ -125,22 +119,4 @@ def test_upsert_menambah_menyegarkan_dan_tidak_menghapus(sesi: Session) -> None:
     assert set(semua) == {KODE_SUBSLS, kode_lain}
     assert semua[KODE_SUBSLS].nmsls == "NAMA BARU", "nama lama harus disegarkan"
     assert semua[KODE_SUBSLS].nmkec == "MOJOTENGAH"
-    assert sesi.scalar(select(func.count()).select_from(Wilayah)) == 2
-
-
-def test_peta_id_melengkapi_kode_yang_belum_ada(sesi: Session) -> None:
-    """Kode SubSLS yang belum ada di ``wilayah`` dibuatkan baris minimal."""
-    modul.upsert(sesi, modul.baris_dari_peta(peta_uji()))
-    sesi.commit()
-
-    id_wilayah = modul.peta_id(sesi, [KODE_SUBSLS, "A1", None, "  ", KODE_SUBSLS])
-
-    assert set(id_wilayah) == {KODE_SUBSLS, "A1"}
-    assert id_wilayah[KODE_SUBSLS] == sesi.scalar(
-        select(Wilayah.id).where(Wilayah.idsubsls == KODE_SUBSLS)
-    )
-    minimal = sesi.scalar(select(Wilayah).where(Wilayah.idsubsls == "A1"))
-    assert minimal is not None and minimal.nmsls is None
-    # panggilan kedua tidak menambah baris lagi (idempoten)
-    assert modul.peta_id(sesi, ["A1"]) == {"A1": minimal.id}
     assert sesi.scalar(select(func.count()).select_from(Wilayah)) == 2

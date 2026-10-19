@@ -10,7 +10,8 @@ Empat tabel:
   ``wilayah_edit_id``), dan ``level_6_full_code`` tetap disimpan sebagai teks
   karena jadi kunci wilayah **tugas** pada rekap;
 - ``rekap_subsls`` : snapshot rekap progres per SubSLS per job, dua dasar
-  (``DASAR_TUGAS``/``DASAR_POSISI``), dihitung lewat query GROUP BY di DB.
+  (``DASAR_TUGAS``/``DASAR_POSISI``), dihitung lewat query GROUP BY di DB; hitungan
+  dipisah menjadi ``belum``/``sudah_posisi``/``sudah_manual``/``tanpa_wilayah``.
 
 Catatan pilihan tipe:
 
@@ -183,17 +184,43 @@ class RekapSubsls(Base):
     Diisi sekali di akhir job yang sukses lewat query GROUP BY (PRD §7), jadi
     dashboard tidak perlu memindai ``titik_hasil``. Barisnya bertahan walau
     ``titik_hasil`` job tersebut sudah digantikan job yang lebih baru.
+
+    Hitungan dipisah (indikator progres PRD §5):
+
+    - ``belum``          : titik dengan ``flag_repair`` = 1;
+    - ``sudah_posisi``   : ``flag_repair`` = 0 dan ``flag_edit_atr_repair`` bukan 1
+      (perbaikan lewat posisi; untuk Proses A yang kolomnya NULL, NULL dianggap 0);
+    - ``sudah_manual``   : ``flag_repair`` = 0 dan ``flag_edit_atr_repair`` = 1
+      (atribut diperbaiki manual);
+    - ``tanpa_wilayah``  : titik pada baris itu yang tidak masuk poligon wilkerstat
+      mana pun (``wilayah_asal_id`` dan ``wilayah_edit_id`` sama-sama kosong);
+    - ``jumlah`` = ``belum`` + ``sudah_posisi`` + ``sudah_manual``.
+
+    ``wilayah_id`` NULL = kategori terpisah "(tanpa wilayah)": titik yang tidak bisa
+    dipetakan ke wilayah pada dasar itu (dasar ``tugas``: ``level_6_full_code``
+    kosong atau tidak ada di tabel ``wilayah``; dasar ``posisi``: titik di luar semua
+    poligon). Karena baris kategori ini tidak menunjuk wilayah, kunci utama dipindah
+    ke ``id`` dan ``wilayah_id`` dibuat boleh NULL supaya FK tidak pernah gagal.
     """
 
     __tablename__ = "rekap_subsls"
-    __table_args__ = (Index("ix_rekap_subsls_run_dasar", "run_id", "dasar"),)
-
-    run_id: Mapped[int] = mapped_column(
-        ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True
+    __table_args__ = (
+        # UNIQUE ini menjaga satu baris per wilayah; baris kategori "(tanpa wilayah)"
+        # (wilayah_id NULL) tidak dijaga di MySQL (NULL boleh berulang), dijaga oleh
+        # penulisan snapshot yang selalu dibuang lalu diisi ulang dari GROUP BY.
+        UniqueConstraint(
+            "run_id", "dasar", "wilayah_id", name="uq_rekap_subsls_run_dasar_wilayah"
+        ),
+        Index("ix_rekap_subsls_run_dasar", "run_id", "dasar"),
     )
-    wilayah_id: Mapped[int] = mapped_column(ForeignKey("wilayah.id"), primary_key=True)
-    dasar: Mapped[str] = mapped_column(String(8), primary_key=True)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    wilayah_id: Mapped[int | None] = mapped_column(ForeignKey("wilayah.id"))
+    dasar: Mapped[str] = mapped_column(String(8))
 
     jumlah: Mapped[int] = mapped_column(Integer)
-    sudah: Mapped[int] = mapped_column(Integer)
     belum: Mapped[int] = mapped_column(Integer)
+    sudah_posisi: Mapped[int] = mapped_column(Integer)
+    sudah_manual: Mapped[int] = mapped_column(Integer)
+    tanpa_wilayah: Mapped[int] = mapped_column(Integer)

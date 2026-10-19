@@ -37,7 +37,7 @@ Copy-Item .env.example .env          # lalu isi kredensial MySQL
 | GET | `/runs` | Daftar job (saring `tipe`, `status`, `kdkab`; paging `limit`/`offset`) |
 | GET | `/runs/{id}` | Status job + jumlah baris hasil tersimpan + `jumlah_tanpa_wilayah` |
 | GET | `/runs/{id}/hasil` | Baris hasil titik (paging); wilayah dibalas sebagai `wilayah_tugas`, `wilayah_asal`, `wilayah_edit` |
-| GET | `/runs/{id}/rekap?tingkat=&dasar=` | Rekap progres per wilayah: `kabupaten`, `kecamatan`, `desa`, `sls`, `subsls`; `dasar` = `tugas` (bawaan) atau `posisi` |
+| GET | `/runs/{id}/rekap?tingkat=&dasar=` | Rekap progres per wilayah: `kabupaten`, `kecamatan`, `desa`, `sls`, `subsls`; `dasar` = `tugas` (bawaan) atau `posisi`; tiap baris memuat `jumlah`, `belum`, `sudah_posisi`, `sudah_manual`, `tanpa_wilayah`, `persen_belum`; kategori `wilayah_id` NULL dibalas sebagai kode `null` + nama "(tanpa wilayah)" dan ditaruh paling akhir |
 
 Belum ada autentikasi (T4). Isi `user` sementara dikirim lewat form.
 
@@ -67,20 +67,38 @@ Status job: `menunggu` → `jalan` → `sukses` / `gagal` (atau `digantikan`).
 | `runs` | satu baris per job (berkas masukan, status, `jumlah_baris`, `jumlah_tanpa_wilayah` = titik di luar poligon wilkerstat) |
 | `wilayah` | dimensi wilayah: satu baris per SubSLS (`idsubsls`) dengan kode + nama; diisi dari peta lewat **upsert** dan tidak pernah dihapus |
 | `titik_hasil` | hasil per titik: kunci `(run_id, urut)`, flag (`flag_repair`, `flag_position`, …), `kk/btt/bku/bttk/bbtt`, `usaha`, koordinat, `level_6_full_code`, dan wilayah lewat `wilayah_asal_id`/`wilayah_edit_id` |
-| `rekap_subsls` | snapshot rekap per SubSLS per job: `jumlah`/`sudah`/`belum` untuk dua `dasar` (`tugas` = `level_6_full_code`, `posisi` = hasil join peta) |
+| `rekap_subsls` | snapshot rekap per SubSLS per job: `jumlah`, `belum`, `sudah_posisi`, `sudah_manual`, `tanpa_wilayah` untuk dua `dasar` (`tugas` = `level_6_full_code`, `posisi` = hasil join peta) |
 
 Nama/kode wilayah tidak lagi disimpan di `titik_hasil` (dinormalkan ke `wilayah`), dan
 dashboard membaca `rekap_subsls` sehingga tidak perlu memindai `titik_hasil`.
+
+Arti hitungan (PRD §5) dan baris kategori "(tanpa wilayah)":
+
+- `belum` = `flag_repair` = 1; `sudah_posisi` = `flag_repair` = 0 dan
+  `flag_edit_atr_repair` bukan 1 (Proses A yang kolomnya NULL dianggap 0);
+  `sudah_manual` = `flag_repair` = 0 dan `flag_edit_atr_repair` = 1; `jumlah` =
+  `belum` + `sudah_posisi` + `sudah_manual`.
+- `tanpa_wilayah` = titik pada baris itu yang tidak masuk poligon wilkerstat mana pun
+  (keterangan tersendiri, bisa tumpang tindih dengan `belum`).
+- `wilayah_id` NULL = kategori terpisah "(tanpa wilayah)": dasar `tugas` untuk
+  `level_6_full_code` kosong / tidak ada di tabel `wilayah`, dasar `posisi` untuk titik di
+  luar semua poligon. Kunci utama `rekap_subsls` memakai `id` (`UNIQUE (run_id, dasar,
+  wilayah_id)`) karena MySQL tidak mengizinkan kolom kunci utama bernilai NULL; jumlah
+  tiap dasar tetap sama dengan `runs.jumlah_baris`.
 
 ## Isi
 
 - `app/config.py` — setelan dari `.env` (MySQL, CORS, folder unggahan, worker)
 - `app/db.py` — engine + sesi SQLAlchemy (MySQL lewat PyMySQL)
 - `app/models.py` — tabel `runs`, `wilayah`, `titik_hasil`, `rekap_subsls` (PRD §7)
-- `app/wilayah.py` — dimensi wilayah (baris dari peta, upsert, pemetaan kode → id)
+- `app/wilayah.py` — dimensi wilayah (baris dari peta, upsert, pemetaan kode → id; kode di
+  luar peta dibiarkan tanpa id, bukan dibuatkan baris seadanya)
 - `app/proses_a.py`, `app/proses_b.py` — hitungan spasial (model QGIS 01 & 02), murni tanpa I/O
 - `app/layanan.py` — pemeriksaan unggahan, pembuatan job, query hasil & rekap
 - `app/worker.py` — worker Proses A/B (klaim job, batch simpan, dimensi wilayah, rekap)
 - `app/api.py` — endpoint FastAPI
-- `migrations/` — migrasi Alembic (`alembic upgrade head`)
-- `tests/` — tes pytest (SQLite sementara; tes di `docs/` ditandai `slow`)
+- `migrations/` — migrasi Alembic (`alembic upgrade head`; `0002` normalisasi skema, `0003`
+  hitungan rekap terpisah + baris "(tanpa wilayah)")
+- `tests/` — tes pytest (SQLite sementara; tes data penuh di `docs/` ditandai `slow`:
+  `test_proses_a_qgis.py`, `test_proses_b_qgis.py`, dan `test_proses_b_edit_qgis.py` untuk
+  data uji yang sudah diedit)

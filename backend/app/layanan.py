@@ -284,6 +284,10 @@ def _persen(belum: object, jumlah: object) -> object:
     return func.round(100.0 * belum / func.nullif(jumlah, 0), 2)
 
 
+#: Label untuk baris rekap yang tidak menunjuk wilayah (``wilayah_id`` NULL).
+NAMA_TANPA_WILAYAH = "(tanpa wilayah)"
+
+
 def rekap_run(
     sesi: Session, run_id: int, tingkat: Tingkat, dasar: str = DASAR_TUGAS
 ) -> dict[str, object]:
@@ -291,50 +295,64 @@ def rekap_run(
 
     Angka diambil dari snapshot ``rekap_subsls`` (bukan memindai ``titik_hasil``)
     lalu dijumlahkan per tingkat wilayah dengan GROUP BY di basis data (PRD §7).
+    Baris kategori terpisah "(tanpa wilayah)" (``wilayah_id`` NULL: titik yang tidak
+    bisa dipetakan ke wilayah pada dasar itu) ikut disertakan dan diletakkan paling
+    akhir.
     """
     kolom_kode, kolom_nama = (getattr(Wilayah, nama) for nama in TINGKAT[tingkat])
 
     belum = func.coalesce(func.sum(RekapSubsls.belum), 0)
-    sudah = func.coalesce(func.sum(RekapSubsls.sudah), 0)
     jumlah = func.coalesce(func.sum(RekapSubsls.jumlah), 0)
+    hitungan = {
+        "jumlah": jumlah,
+        "belum": belum,
+        "sudah_posisi": func.coalesce(func.sum(RekapSubsls.sudah_posisi), 0),
+        "sudah_manual": func.coalesce(func.sum(RekapSubsls.sudah_manual), 0),
+        "tanpa_wilayah": func.coalesce(func.sum(RekapSubsls.tanpa_wilayah), 0),
+    }
 
     per_kelompok = sesi.execute(
         select(
             kolom_kode.label("kode"),
             kolom_nama.label("nama"),
-            jumlah.label("jumlah"),
-            sudah.label("sudah"),
-            belum.label("belum"),
+            *(nilai.label(nama) for nama, nilai in hitungan.items()),
             _persen(belum, jumlah).label("persen_belum"),
         )
-        .join(Wilayah, Wilayah.id == RekapSubsls.wilayah_id)
+        .select_from(RekapSubsls)
+        # LEFT JOIN: baris "(tanpa wilayah)" (wilayah_id NULL) tetap terbawa.
+        .join(Wilayah, Wilayah.id == RekapSubsls.wilayah_id, isouter=True)
         .where(RekapSubsls.run_id == run_id, RekapSubsls.dasar == dasar)
         .group_by(kolom_kode, kolom_nama)
-        .order_by(kolom_kode)
     ).mappings()
 
-    baris = [
-        {
-            "kode": None if hasil["kode"] is None else str(hasil["kode"]),
-            "nama": None if hasil["nama"] is None else str(hasil["nama"]),
-            "jumlah": int(hasil["jumlah"]),
-            "sudah": int(hasil["sudah"]),
-            "belum": int(hasil["belum"]),
-            "persen_belum": float(hasil["persen_belum"] or 0.0),
-        }
-        for hasil in per_kelompok
-    ]
+    baris: list[dict[str, object]] = []
+    for hasil in per_kelompok:
+        tanpa = hasil["kode"] is None
+        baris.append(
+            {
+                "kode": None if tanpa else str(hasil["kode"]),
+                "nama": NAMA_TANPA_WILAYAH
+                if tanpa
+                else (None if hasil["nama"] is None else str(hasil["nama"])),
+                **{nama: int(hasil[nama]) for nama in hitungan},
+                "persen_belum": float(hasil["persen_belum"] or 0.0),
+            }
+        )
+    # Urutan kode menanjak, baris "(tanpa wilayah)" paling akhir (urutan NULL
+    # berbeda antara MySQL dan SQLite, jadi diurutkan di sini saja).
+    baris.sort(key=lambda satu: (satu["kode"] is None, satu["kode"] or ""))
 
     total = sum(satu["jumlah"] for satu in baris)
-    sudah_total = sum(satu["sudah"] for satu in baris)
-    belum_total = sum(satu["belum"] for satu in baris)
+    total_belum = sum(satu["belum"] for satu in baris)
     return {
         "run_id": run_id,
         "tingkat": tingkat,
         "dasar": dasar,
         "total": total,
-        "sudah": sudah_total,
-        "belum": belum_total,
-        "persen_belum": round(100.0 * belum_total / total, 2) if total else 0.0,
+        "belum": total_belum,
+        "sudah_posisi": sum(satu["sudah_posisi"] for satu in baris),
+        "sudah_manual": sum(satu["sudah_manual"] for satu in baris),
+        "tanpa_wilayah": sum(satu["tanpa_wilayah"] for satu in baris),
+        "persen_belum": round(100.0 * total_belum / total, 2) if total else 0.0,
         "baris": baris,
     }

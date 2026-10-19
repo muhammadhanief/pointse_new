@@ -41,11 +41,13 @@ from sqlalchemy import (
     Numeric,
     Select,
     SmallInteger,
+    and_,
     case,
     delete,
     func,
     insert,
     literal,
+    or_,
     select,
     update,
 )
@@ -177,6 +179,47 @@ def _kasus(syarat: object) -> object:
     return case((syarat, 1), else_=0)
 
 
+def _jumlah_kasus(syarat: object) -> object:
+    """``SUM(CASE WHEN syarat THEN 1 ELSE 0 END)``, 0 kalau tidak ada baris."""
+    return func.coalesce(func.sum(_kasus(syarat)), 0)
+
+
+def _kolom_hitungan() -> tuple[object, ...]:
+    """Kolom hitungan rekap: jumlah, belum, sudah_posisi, sudah_manual, tanpa_wilayah.
+
+    ``flag_edit_atr_repair`` NULL (Proses A tidak punya kolom itu) dianggap 0,
+    jadi titik ``flag_repair`` = 0 pada Proses A masuk ``sudah_posisi``.
+    """
+    tanpa_manual = or_(
+        TitikHasil.flag_edit_atr_repair.is_(None), TitikHasil.flag_edit_atr_repair == 0
+    )
+    tak_masuk_poligon = and_(
+        TitikHasil.wilayah_asal_id.is_(None), TitikHasil.wilayah_edit_id.is_(None)
+    )
+    return (
+        func.count(),
+        _jumlah_kasus(TitikHasil.flag_repair == 1),
+        _jumlah_kasus(and_(TitikHasil.flag_repair == 0, tanpa_manual)),
+        _jumlah_kasus(
+            and_(TitikHasil.flag_repair == 0, TitikHasil.flag_edit_atr_repair == 1)
+        ),
+        _jumlah_kasus(tak_masuk_poligon),
+    )
+
+
+#: Kolom tujuan ``rekap_subsls`` yang diisi dari :func:`_kolom_hitungan`.
+KOLOM_REKAP: list[str] = [
+    "run_id",
+    "wilayah_id",
+    "dasar",
+    "jumlah",
+    "belum",
+    "sudah_posisi",
+    "sudah_manual",
+    "tanpa_wilayah",
+]
+
+
 def simpan_rekap(sesi: Session, run: Run) -> None:
     """Simpan snapshot rekap per SubSLS untuk dasar ``tugas`` dan ``posisi``.
 
@@ -184,36 +227,33 @@ def simpan_rekap(sesi: Session, run: Run) -> None:
     query, bukan di Python). Dasar ``tugas`` memakai ``level_6_full_code`` titik
     (wilayah penugasan), dasar ``posisi`` memakai wilayah hasil join peta
     (``wilayah_edit_id`` bila ada, kalau tidak ``wilayah_asal_id``).
+
+    Titik yang tidak bisa dipetakan ke wilayah pada dasar itu dihitung pada baris
+    ``wilayah_id`` NULL -- kategori "(tanpa wilayah)" -- supaya foreign key tidak
+    pernah gagal dan jumlah tiap dasar tetap sama dengan ``runs.jumlah_baris``:
+    dasar ``tugas`` join-nya dibiarkan LEFT (``level_6_full_code`` kosong atau tidak
+    ada di tabel ``wilayah``), dasar ``posisi`` tidak disaring (titik di luar semua
+    poligon).
     """
     sesi.execute(delete(RekapSubsls).where(RekapSubsls.run_id == run.id))
 
-    sudah = func.coalesce(func.sum(_kasus(TitikHasil.flag_repair == 0)), 0)
-    belum = func.coalesce(func.sum(_kasus(TitikHasil.flag_repair == 1)), 0)
-
+    hitungan = _kolom_hitungan()
     tugas = (
-        select(literal(run.id), Wilayah.id, literal(DASAR_TUGAS), func.count(), sudah, belum)
+        select(literal(run.id), Wilayah.id, literal(DASAR_TUGAS), *hitungan)
         .select_from(TitikHasil)
-        .join(Wilayah, Wilayah.idsubsls == TitikHasil.level_6_full_code)
+        .join(Wilayah, Wilayah.idsubsls == TitikHasil.level_6_full_code, isouter=True)
         .where(TitikHasil.run_id == run.id)
         .group_by(Wilayah.id)
     )
-    sesi.execute(
-        insert(RekapSubsls).from_select(
-            ["run_id", "wilayah_id", "dasar", "jumlah", "sudah", "belum"], tugas
-        )
-    )
+    sesi.execute(insert(RekapSubsls).from_select(KOLOM_REKAP, tugas))
 
     posisi = func.coalesce(TitikHasil.wilayah_edit_id, TitikHasil.wilayah_asal_id)
     dasar_posisi = (
-        select(literal(run.id), posisi, literal(DASAR_POSISI), func.count(), sudah, belum)
-        .where(TitikHasil.run_id == run.id, posisi.is_not(None))
+        select(literal(run.id), posisi, literal(DASAR_POSISI), *hitungan)
+        .where(TitikHasil.run_id == run.id)
         .group_by(posisi)
     )
-    sesi.execute(
-        insert(RekapSubsls).from_select(
-            ["run_id", "wilayah_id", "dasar", "jumlah", "sudah", "belum"], dasar_posisi
-        )
-    )
+    sesi.execute(insert(RekapSubsls).from_select(KOLOM_REKAP, dasar_posisi))
     sesi.commit()
 
 

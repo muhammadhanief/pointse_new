@@ -161,15 +161,21 @@ def test_rekap_progres_per_tingkat(
     kabupaten = klien.get(f"/runs/{run_id}/rekap").json()
     assert kabupaten["tingkat"] == "kabupaten"
     assert kabupaten["dasar"] == "tugas"
-    assert (kabupaten["total"], kabupaten["sudah"], kabupaten["belum"]) == (3, 2, 1)
+    assert (kabupaten["total"], kabupaten["belum"]) == (3, 1)
+    # Proses A: ``flag_edit_atr_repair`` kosong, jadi yang sudah diperbaiki
+    # dihitung ``sudah_posisi`` (NULL dianggap 0) dan ``sudah_manual`` = 0.
+    assert (kabupaten["sudah_posisi"], kabupaten["sudah_manual"]) == (2, 0)
+    assert kabupaten["tanpa_wilayah"] == 0
     assert kabupaten["persen_belum"] == 33.33
     assert kabupaten["baris"] == [
         {
             "kode": "3307",
             "nama": "WONOSOBO",
             "jumlah": 3,
-            "sudah": 2,
             "belum": 1,
+            "sudah_posisi": 2,
+            "sudah_manual": 0,
+            "tanpa_wilayah": 0,
             "persen_belum": 33.33,
         }
     ]
@@ -185,23 +191,64 @@ def test_rekap_progres_per_tingkat(
     assert [baris["kode"] for baris in desa["baris"]] == ["330701001", "330701002"]
     assert [baris["jumlah"] for baris in desa["baris"]] == [2, 1]
     assert [baris["belum"] for baris in desa["baris"]] == [0, 1]
+    assert [baris["sudah_posisi"] for baris in desa["baris"]] == [2, 0]
     assert desa["persen_belum"] == 33.33
 
     # Dasar tugas: ketiga titik masuk SubSLS A1 (wilayah penugasannya)
     subsls = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "subsls"}).json()
     assert [baris["kode"] for baris in subsls["baris"]] == ["A1"]
     assert [baris["jumlah"] for baris in subsls["baris"]] == [3]
-    assert [(baris["sudah"], baris["belum"]) for baris in subsls["baris"]] == [(2, 1)]
+    assert [(baris["belum"], baris["sudah_posisi"]) for baris in subsls["baris"]] == [(1, 2)]
 
     sls = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "sls"}).json()
     assert [baris["kode"] for baris in sls["baris"]] == ["3307010010003900"]
     assert [baris["nama"] for baris in sls["baris"]] == ["SLS 001"]
+    # tingkat SLS tidak punya baris "(tanpa wilayah)" pada data ini
+    assert all(baris["kode"] is not None for baris in sls["baris"])
 
     subsls_posisi = klien.get(
         f"/runs/{run_id}/rekap", params={"tingkat": "subsls", "dasar": "posisi"}
     ).json()
     assert [baris["kode"] for baris in subsls_posisi["baris"]] == ["A1", "A2"]
     assert [baris["persen_belum"] for baris in subsls_posisi["baris"]] == [0.0, 100.0]
+
+
+def test_rekap_memuat_kategori_tanpa_wilayah(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Titik di luar peta / tak punya SubSLS tugas muncul sebagai "(tanpa wilayah)".
+
+    Baris kategori itu diletakkan paling akhir dan tidak memakai FK (``kode`` None),
+    sementara jumlah tiap dasar tetap utuh.
+    """
+    baris = (
+        *BARIS_A,
+        # di luar semua poligon: tidak punya wilayah posisi
+        data_kecil.baris_titik_a("4", "A1", 5.0, 5.0),
+        # SubSLS tugas tidak ada di peta: tidak punya wilayah tugas
+        data_kecil.baris_titik_a("5", "A9", 0.2, 0.2),
+    )
+    titik, peta = berkas_uji(tmp_path, baris)
+    run_id = unggah(klien, titik, peta).json()["id"]
+    jalankan(sesi_pabrik)
+
+    tugas = klien.get(f"/runs/{run_id}/rekap", params={"tingkat": "subsls"}).json()
+    assert tugas["total"] == 5
+    assert [baris_["kode"] for baris_ in tugas["baris"]] == ["A1", None]
+    assert tugas["baris"][-1]["nama"] == "(tanpa wilayah)"
+    assert (tugas["baris"][-1]["jumlah"], tugas["baris"][-1]["belum"]) == (1, 1)
+    # kolom ``tanpa_wilayah`` dasar tugas: titik 4 ada di A1 (penugasan) tapi
+    # posisinya di luar poligon
+    assert tugas["baris"][0]["tanpa_wilayah"] == 1
+
+    posisi = klien.get(
+        f"/runs/{run_id}/rekap", params={"tingkat": "subsls", "dasar": "posisi"}
+    ).json()
+    assert posisi["total"] == 5
+    assert [baris_["kode"] for baris_ in posisi["baris"]] == ["A1", "A2", None]
+    assert posisi["baris"][-1]["nama"] == "(tanpa wilayah)"
+    assert posisi["baris"][-1]["tanpa_wilayah"] == 1
+    assert (posisi["sudah_posisi"], posisi["belum"]) == (2, 3)
 
 
 def test_rekap_job_belum_dijalankan(

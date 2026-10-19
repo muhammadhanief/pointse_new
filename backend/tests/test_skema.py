@@ -84,19 +84,29 @@ def test_semua_kolom_keluaran_proses_diputuskan() -> None:
     assert tersimpan <= keluaran | {"run_id", "urut", "wilayah_asal_id", "wilayah_edit_id"}
 
 
-def test_kunci_tabel_titik_hasil_dan_wilayah() -> None:
-    """Kunci utama titik_hasil = (run_id, urut); idsubsls wilayah unik."""
+def test_kunci_tabel_titik_hasil_wilayah_dan_rekap() -> None:
+    """Kunci utama titik_hasil = (run_id, urut); rekap_subsls berkunci ``id``.
+
+    ``rekap_subsls.wilayah_id`` boleh NULL (baris kategori "(tanpa wilayah)"), jadi
+    kunci utamanya tidak bisa memuat kolom itu (MySQL tidak mengizinkan kolom kunci
+    utama bernilai NULL) — kombinasi ``(run_id, dasar, wilayah_id)`` dijaga UNIQUE.
+    """
     assert [kolom.name for kolom in TitikHasil.__table__.primary_key] == ["run_id", "urut"]
-    assert {kolom.name for kolom in RekapSubsls.__table__.primary_key} == {
-        "run_id",
-        "wilayah_id",
-        "dasar",
+    assert [kolom.name for kolom in RekapSubsls.__table__.primary_key] == ["id"]
+    assert RekapSubsls.__table__.columns["wilayah_id"].nullable
+    assert not RekapSubsls.__table__.columns["dasar"].nullable
+
+    def batasan_unik(tabel: object, nama: str) -> set[tuple[str, ...]]:
+        return {
+            tuple(kolom.name for kolom in batasan.columns)
+            for batasan in tabel.__table__.constraints  # type: ignore[attr-defined]
+            if batasan.name == nama
+        }
+
+    assert batasan_unik(Wilayah, "uq_wilayah_idsubsls") == {("idsubsls",)}
+    assert batasan_unik(RekapSubsls, "uq_rekap_subsls_run_dasar_wilayah") == {
+        ("run_id", "dasar", "wilayah_id")
     }
-    assert {
-        tuple(kolom.name for kolom in batasan.columns)
-        for batasan in Wilayah.__table__.constraints
-        if batasan.name == "uq_wilayah_idsubsls"
-    } == {("idsubsls",)}
 
 
 def test_kolom_koordinat_pakai_double() -> None:
@@ -170,6 +180,12 @@ def test_sql_migrasi_untuk_mysql(capsys: pytest.CaptureFixture[str]) -> None:
     assert "FOREIGN KEY(wilayah_asal_id) REFERENCES wilayah (id)" in sql
     assert "FOREIGN KEY(run_id) REFERENCES runs (id) ON DELETE CASCADE" in sql
     assert "CREATE INDEX ix_titik_hasil_run_flag_repair ON titik_hasil (run_id, flag_repair)" in sql
+    # migrasi 0003: hitungan rekap dipisah dan wilayah_id boleh NULL
+    assert "sudah_posisi INTEGER NOT NULL" in sql
+    assert "sudah_manual INTEGER NOT NULL" in sql
+    assert "tanpa_wilayah INTEGER NOT NULL" in sql
+    assert "CONSTRAINT uq_rekap_subsls_run_dasar_wilayah UNIQUE (run_id, dasar, wilayah_id)" in sql
+    assert "PRIMARY KEY (id)" in sql
 
 
 def test_migrasi_alembic_sesuai_model(tmp_path: Path) -> None:

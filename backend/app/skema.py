@@ -63,8 +63,10 @@ class RekapBarisOut(BaseModel):
     kode: str | None = None
     nama: str | None = None
     jumlah: int
-    sudah: int
     belum: int
+    sudah_posisi: int
+    sudah_manual: int
+    tanpa_wilayah: int
     persen_belum: float
 
 
@@ -75,7 +77,9 @@ class RekapOut(BaseModel):
     tingkat: str
     dasar: str
     total: int
-    sudah: int
     belum: int
+    sudah_posisi: int
+    sudah_manual: int
+    tanpa_wilayah: int
     persen_belum: float
     baris: list[RekapBarisOut]

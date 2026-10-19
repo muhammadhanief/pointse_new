@@ -92,15 +92,35 @@ def kode_wilayah(sesi: Session, wilayah_id: int | None) -> str | None:
     return sesi.scalar(select(Wilayah.idsubsls).where(Wilayah.id == wilayah_id))
 
 
-def rekap(sesi: Session, run_id: int, dasar: str) -> dict[str, tuple[int, int, int]]:
-    """Rekap satu dasar: ``idsubsls -> (jumlah, sudah, belum)``."""
+def rekap(
+    sesi: Session, run_id: int, dasar: str
+) -> dict[str | None, tuple[int, int, int, int, int]]:
+    """Rekap satu dasar: ``idsubsls -> (jumlah, belum, sudah_posisi, sudah_manual, tanpa_wilayah)``.
+
+    Kunci ``None`` = baris kategori terpisah "(tanpa wilayah)" (``wilayah_id`` NULL).
+    """
     baris = sesi.execute(
-        select(Wilayah.idsubsls, RekapSubsls.jumlah, RekapSubsls.sudah, RekapSubsls.belum)
-        .join(Wilayah, Wilayah.id == RekapSubsls.wilayah_id)
+        select(
+            Wilayah.idsubsls,
+            RekapSubsls.jumlah,
+            RekapSubsls.belum,
+            RekapSubsls.sudah_posisi,
+            RekapSubsls.sudah_manual,
+            RekapSubsls.tanpa_wilayah,
+        )
+        .select_from(RekapSubsls)
+        .outerjoin(Wilayah, Wilayah.id == RekapSubsls.wilayah_id)
         .where(RekapSubsls.run_id == run_id, RekapSubsls.dasar == dasar)
-        .order_by(Wilayah.idsubsls)
     ).all()
-    return {kode: (jumlah, sudah, belum) for kode, jumlah, sudah, belum in baris}
+    return {
+        kode: (jumlah, belum, posisi, manual, tanpa)
+        for kode, jumlah, belum, posisi, manual, tanpa in baris
+    }
+
+
+def total_rekap(sesi: Session, run_id: int, dasar: str) -> int:
+    """Jumlah titik pada satu dasar rekap (termasuk baris "(tanpa wilayah)")."""
+    return sum(satu[0] for satu in rekap(sesi, run_id, dasar).values())
 
 
 def test_ukuran_batch_penyimpanan_sepuluh_ribu() -> None:
@@ -178,7 +198,9 @@ def test_rekap_subsls_diisi_dua_dasar(
     """Rekap per SubSLS disimpan untuk dasar ``tugas`` dan ``posisi``.
 
     Dasar ``tugas`` memakai ``level_6_full_code`` (ketiga titik ditugaskan di A1),
-    dasar ``posisi`` memakai hasil join peta (dua titik di A1, satu di A2).
+    dasar ``posisi`` memakai hasil join peta (dua titik di A1, satu di A2). Proses A
+    tidak punya ``flag_edit_atr_repair``, jadi titik yang sudah diperbaiki masuk
+    ``sudah_posisi`` (NULL dianggap 0).
     """
     job = buat_job(sesi, tmp_path)
     sesi.rollback()
@@ -186,28 +208,68 @@ def test_rekap_subsls_diisi_dua_dasar(
     assert proses_satu_job(sesi_pabrik) is True
     sesi.expire_all()
 
-    assert rekap(sesi, job.id, DASAR_TUGAS) == {"A1": (3, 2, 1)}
-    assert rekap(sesi, job.id, DASAR_POSISI) == {"A1": (2, 2, 0), "A2": (1, 0, 1)}
+    assert rekap(sesi, job.id, DASAR_TUGAS) == {"A1": (3, 1, 2, 0, 0)}
+    assert rekap(sesi, job.id, DASAR_POSISI) == {
+        "A1": (2, 0, 2, 0, 0),
+        "A2": (1, 1, 0, 0, 0),
+    }
+    # jumlah tiap dasar harus utuh (PRD §5: indikator progres per wilayah).
+    assert total_rekap(sesi, job.id, DASAR_TUGAS) == job.jumlah_baris == 3
+    assert total_rekap(sesi, job.id, DASAR_POSISI) == job.jumlah_baris == 3
 
 
 def test_rekap_basis_posisi_memakai_wilayah_hasil_edit(
     sesi: Session, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
-    """Proses B: dasar ``posisi`` mengikuti wilayah hasil edit, ``tugas`` tetap awal."""
+    """Proses B: dasar ``posisi`` mengikuti wilayah hasil edit, ``tugas`` tetap awal.
+
+    Tiga titik: satu apa adanya (``sudah_posisi``), satu digeser pindah SubSLS
+    (``belum``), satu ``flag_repair``-nya diubah manual (``sudah_manual``).
+    """
     job = buat_job(sesi, tmp_path, tipe=TIPE_B)
     sesi.rollback()
 
     assert proses_satu_job(sesi_pabrik) is True
     sesi.expire_all()
 
-    assert rekap(sesi, job.id, DASAR_TUGAS) == {"A1": (3, 2, 1)}
-    assert rekap(sesi, job.id, DASAR_POSISI) == {"A1": (2, 2, 0), "A2": (1, 0, 1)}
+    assert rekap(sesi, job.id, DASAR_TUGAS) == {"A1": (3, 1, 1, 1, 0)}
+    assert rekap(sesi, job.id, DASAR_POSISI) == {
+        "A1": (2, 0, 1, 1, 0),
+        "A2": (1, 1, 0, 0, 0),
+    }
+    assert total_rekap(sesi, job.id, DASAR_POSISI) == job.jumlah_baris == 3
+
+
+def test_rekap_memisahkan_sudah_posisi_dan_sudah_manual(
+    sesi: Session, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Kolom ``sudah_posisi`` dan ``sudah_manual`` dihitung terpisah (PRD §5)."""
+    job = buat_job(sesi, tmp_path, tipe=TIPE_B)
+    sesi.rollback()
+
+    assert proses_satu_job(sesi_pabrik) is True
+    sesi.expire_all()
+
+    jumlah, belum, sudah_posisi, sudah_manual, tanpa = rekap(
+        sesi, job.id, DASAR_TUGAS
+    )["A1"]
+    assert (jumlah, belum) == (3, 1)
+    # titik 1: flag_repair 0 & flag_edit_atr_repair 0; titik 3: flag_repair 0 &
+    # flag_edit_atr_repair 1 (atribut diperbaiki manual).
+    assert (sudah_posisi, sudah_manual) == (1, 1)
+    assert tanpa == 0
 
 
 def test_titik_di_luar_peta_dihitung_tanpa_wilayah(
     sesi: Session, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
-    """Titik di luar semua poligon: wilayah NULL, masuk ``runs.jumlah_tanpa_wilayah``."""
+    """Titik di luar semua poligon: wilayah NULL, masuk kategori "(tanpa wilayah)".
+
+    Titik itu tetap punya wilayah **tugas** (``level_6_full_code`` = A1), jadi pada
+    dasar ``tugas`` ia ikut baris A1 dan tercatat di kolom ``tanpa_wilayah``; pada
+    dasar ``posisi`` ia tidak punya wilayah sama sekali, jadi dihitung pada baris
+    kategori ``wilayah_id`` NULL. Jumlah tiap dasar tetap sama dengan jumlah baris.
+    """
     baris = (*BARIS_A, data_kecil.baris_titik_a("4", "A1", 5.0, 5.0))
     job = buat_job(sesi, tmp_path, baris=baris)
     sesi.rollback()
@@ -219,26 +281,48 @@ def test_titik_di_luar_peta_dihitung_tanpa_wilayah(
     assert job.jumlah_tanpa_wilayah == 1
     hasil = {satu.assignment_id: satu for satu in baris_hasil(sesi, job.id)}
     assert hasil["4"].wilayah_asal_id is None
-    # dasar posisi tidak memuat titik itu; dasar tugas tetap memuat (level_6 = A1)
-    assert rekap(sesi, job.id, DASAR_POSISI) == {"A1": (2, 2, 0), "A2": (1, 0, 1)}
-    assert rekap(sesi, job.id, DASAR_TUGAS) == {"A1": (4, 2, 2)}
+
+    # dasar tugas: titik 4 ada di A1 (penugasan), tetapi tanpa wilayah posisi
+    assert rekap(sesi, job.id, DASAR_TUGAS) == {"A1": (4, 2, 2, 0, 1)}
+    # dasar posisi: baris kategori "(tanpa wilayah)" (kunci None)
+    assert rekap(sesi, job.id, DASAR_POSISI) == {
+        "A1": (2, 0, 2, 0, 0),
+        "A2": (1, 1, 0, 0, 0),
+        None: (1, 1, 0, 0, 1),
+    }
+    assert total_rekap(sesi, job.id, DASAR_TUGAS) == job.jumlah_baris == 4
+    assert total_rekap(sesi, job.id, DASAR_POSISI) == job.jumlah_baris == 4
 
 
-def test_kode_subsls_di_luar_peta_dilengkapi_dimensi(
+def test_kode_subsls_tak_ada_di_peta_masuk_kategori_tanpa_wilayah(
     sesi: Session, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
-    """Kode SubSLS yang tak ada di peta tetap punya wilayah (baris minimal)."""
-    baris = (data_kecil.baris_titik_a("1", "A9", 0.2, 0.2),)
+    """``level_6_full_code`` di luar peta: tidak ada baris ``wilayah`` baru, FK aman.
+
+    SubSLS tugas yang tidak ada di peta tidak dibuatkan baris dimensi seadanya,
+    jadi titiknya dihitung pada kategori "(tanpa wilayah)" dasar ``tugas``
+    (``wilayah_id`` NULL) dan tidak menggagalkan penyimpanan.
+    """
+    baris = (
+        data_kecil.baris_titik_a("1", "A9", 0.2, 0.2),
+        data_kecil.baris_titik_a("2", None, 0.3, 0.3),
+    )
     job = buat_job(sesi, tmp_path, baris=baris)
     sesi.rollback()
 
     assert proses_satu_job(sesi_pabrik) is True
-    sesi.expire_all()
+    sesi.refresh(job)
+    assert job.status == STATUS_SUKSES, job.pesan
 
-    wilayah = {satu.idsubsls: satu for satu in sesi.scalars(select(Wilayah))}
-    assert {"A1", "A2", "A9"} <= set(wilayah)
-    assert wilayah["A9"].nmsls is None
-    assert rekap(sesi, job.id, DASAR_TUGAS) == {"A9": (1, 0, 1)}
+    wilayah = {satu.idsubsls for satu in sesi.scalars(select(Wilayah))}
+    assert wilayah == {"A1", "A2"}, "kode di luar peta tidak boleh dibuatkan baris"
+
+    # titik 1: level_6 "A9" (tak ada di peta), titik 2: level_6 kosong; keduanya
+    # jatuh di A1 dan flag_repair-nya 1 (A1 != level_6)
+    assert rekap(sesi, job.id, DASAR_TUGAS) == {None: (2, 2, 0, 0, 0)}
+    # dasar posisi: keduanya masuk poligon A1
+    assert rekap(sesi, job.id, DASAR_POSISI) == {"A1": (2, 2, 0, 0, 0)}
+    assert total_rekap(sesi, job.id, DASAR_TUGAS) == job.jumlah_baris == 2
 
 
 def test_proses_b_menghitung_flag_penggeseran(
@@ -353,7 +437,7 @@ def test_hasil_job_lama_digantikan_oleh_job_baru(
     assert proses_satu_job(sesi_pabrik) is True
     sesi.expire_all()
     rekap_lama = rekap(sesi, lama.id, DASAR_TUGAS)
-    assert rekap_lama == {"A1": (3, 2, 1)}
+    assert rekap_lama == {"A1": (3, 1, 2, 0, 0)}
 
     baru = buat_job(sesi, tmp_path, nama="baru")
     sesi.rollback()
@@ -366,7 +450,7 @@ def test_hasil_job_lama_digantikan_oleh_job_baru(
     assert baris_hasil(sesi, lama.id) == []
     assert len(baris_hasil(sesi, baru.id)) == 3
     assert rekap(sesi, lama.id, DASAR_TUGAS) == rekap_lama, "snapshot rekap job lama tetap ada"
-    assert rekap(sesi, baru.id, DASAR_TUGAS) == {"A1": (3, 2, 1)}
+    assert rekap(sesi, baru.id, DASAR_TUGAS) == {"A1": (3, 1, 2, 0, 0)}
 
 
 def test_klaim_melewati_job_yang_sedang_jalan(sesi: Session, tmp_path: Path) -> None:
