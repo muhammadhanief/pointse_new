@@ -1,12 +1,14 @@
 /**
  * Penyimpanan token Bearer di browser.
  *
- * Frontend statis tidak memakai cookie sesi. Token disimpan di memori dan
- * dicerminkan ke ``sessionStorage`` agar bertahan saat halaman dimuat ulang di
- * tab yang sama; token tidak pernah ditulis ke ``localStorage``.
+ * API dipanggil langsung dari browser ke backend lintas origin. Callback SSO
+ * menulis token ke cookie non-httpOnly ``pointse_api_token``; token juga
+ * dicerminkan ke memori/``sessionStorage`` untuk kompatibilitas. Token tidak
+ * pernah ditulis ke ``localStorage``.
  */
 
 const KUNCI_TOKEN = "pointse_access_token";
+const KUNCI_COOKIE = "pointse_api_token";
 
 let tokenMemori: string | null = null;
 
@@ -35,7 +37,30 @@ export function simpanToken(token: string): void {
   }
 }
 
+function bacaCookie(nama: string): string | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  const awalan = `${nama}=`;
+  for (const bagian of document.cookie.split(";")) {
+    const bersih = bagian.trim();
+    if (bersih.startsWith(awalan)) {
+      try {
+        return decodeURIComponent(bersih.slice(awalan.length)).trim() || null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 export function ambilToken(): string | null {
+  const dariCookie = bacaCookie(KUNCI_COOKIE);
+  if (dariCookie) {
+    tokenMemori = dariCookie;
+    return dariCookie;
+  }
   if (tokenMemori) {
     return tokenMemori;
   }
@@ -51,4 +76,7 @@ export function ambilToken(): string | null {
 export function hapusToken(): void {
   tokenMemori = null;
   penyimpanan()?.removeItem(KUNCI_TOKEN);
+  if (typeof document !== "undefined") {
+    document.cookie = `${KUNCI_COOKIE}=; Max-Age=0; Path=/; SameSite=Lax`;
+  }
 }

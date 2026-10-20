@@ -15,17 +15,18 @@ melihat data wilayahnya.
 
 ## 3. Arsitektur dan hosting
 
-- **Frontend**: Next.js 16 + React 19 + Tailwind 4, dibangun sebagai **static
-  export** (`output: 'export'`) dan dilayani sebagai berkas statis dari domain
-  aplikasi. Tidak ada Vercel. Di production tidak boleh ada `proxy.ts`, rewrites,
-  atau rute API Next.js.
+- **Frontend**: Next.js 16 + React 19 + Tailwind 4, dijalankan sebagai **Node.js
+  App cPanel** agar callback SSO dan penjagaan halaman berjalan di server. Tidak
+  ada Vercel dan tidak ada rute proxy API. Server cPanel tidak menjangkau domain
+  backend.
 - **Backend**: FastAPI Python **3.11+** dijalankan langsung sebagai ASGI dengan
   **uvicorn** (satu worker) pada server **AlmaLinux 8/aaPanel**, bukan Passenger.
   API mendengarkan loopback dan diproksikan nginx. Path API mengikuti
   `API_PREFIX` (default kosong, bukan `/backend`).
-- **Frontend ↔ API**: frontend statis di cPanel memanggil API lintas origin
+- **Frontend ↔ API**: browser memanggil API lintas origin secara **client-side**
   memakai `NEXT_PUBLIC_API_BASE` yang diisi saat build. Autentikasi hanya
-  `Authorization: Bearer`; tidak ada cookie, credentials, atau asumsi same-origin.
+  `Authorization: Bearer`; backend tidak menerima cookie atau credentials.
+  Token Bearer dibaca dari cookie non-httpOnly yang ditulis callback SSO.
 - **CORS**: hanya origin frontend (`CORS_ORIGINS`, default
   `https://pointse.web.bps.go.id`), metode `GET/POST/PUT/DELETE/OPTIONS`, dan
   header `Authorization`, `Content-Type`, `Accept`, `X-SHA256`. Preflight
@@ -266,9 +267,9 @@ dikerjakan berurutan sesuai urutan unggah, hanya satu job aktif per
   `fcntl.flock`, checkpoint, dan heartbeat tiap 15 detik. SIGTERM menyelesaikan
   batch berjalan. Job yang heartbeat-nya kedaluwarsa ditandai gagal agar tidak
   menghalangi antrean. `--once` tetap didukung untuk cron/manual.
-- **Hosting frontend**: static export di cPanel, tanpa server Next.js. Semua
-  panggilan API memakai `NEXT_PUBLIC_API_BASE`; tidak ada rewrite `/backend`,
-  `proxy.ts`, atau rute API Next.js di production.
+- **Hosting frontend**: Node.js App cPanel untuk halaman, callback SSO, dan
+  penjagaan sesi. Semua panggilan API memakai `NEXT_PUBLIC_API_BASE` langsung
+  dari browser; tidak ada route proxy API/rewrite ke backend.
 - **Database**: MariaDB 10.11/InnoDB, `FOR UPDATE SKIP LOCKED` untuk klaim job;
   tanpa PostGIS dan tanpa geometri di DB. Buffer pool 768M dan flush transaksi 2
   untuk HDD; pengguna aplikasi hanya boleh dari loopback dan satu database.
@@ -304,8 +305,8 @@ persis lulus uji.
 - **Protokol SSO production**: client id/secret, redirect URI, dan apakah callback
   ditangani API atau frontend. Pemetaan klaim `org` ke peran juga masih perlu
   diuji dengan akun provinsi dan kabupaten/kota nyata. Client uji lokal tidak
-  boleh dipakai di production; frontend statis perlu alur token Bearer tanpa
-  cookie.
+  boleh dipakai di production; frontend Node.js perlu alur token Bearer dari
+  cookie non-httpOnly tanpa mengirim cookie ke backend.
 - **Peta lama untuk Proses B**: kebijakan penyimpanan memangkas berkas mentah
   run lama. Perlu dipastikan peta sumber tetap tersedia (atau disalin saat job B
   dibuat) ketika pengguna memilih run A lama, dan berapa lama peta itu disimpan.

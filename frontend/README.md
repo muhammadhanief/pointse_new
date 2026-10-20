@@ -14,18 +14,20 @@ npm run build
 ```
 
 Backend FastAPI dijalankan terpisah di AlmaLinux (lihat `../deploy/README.md`).
-Di production cPanel, frontend berjalan sebagai Node.js App. Browser memanggil
-`/api/backend/...` pada origin frontend; route Next.js membaca cookie sesi lalu
-meneruskan `Authorization: Bearer` ke `BACKEND_URL`. Untuk lokal, isi
-`NEXT_PUBLIC_API_BASE=http://localhost:8000` di `.env.local` bila ingin memanggil
-backend langsung, atau `/api/backend` + `BACKEND_URL=http://localhost:8000`
-untuk menguji proxy. Nilai `NEXT_PUBLIC_API_BASE` dibaca saat build.
+Di production cPanel, frontend berjalan sebagai Node.js App. Server cPanel
+**tidak** menjangkau backend. Browser memanggil backend langsung memakai
+`NEXT_PUBLIC_API_BASE=https://backend-pointse.feinah.web.id` dan header
+`Authorization: Bearer`. Callback SSO menulis token ke cookie non-httpOnly
+`pointse_api_token` agar dapat dibaca JavaScript; cookie `pointse_session`
+tetap httpOnly untuk penjagaan halaman. Tidak ada route proxy API. Nilai
+`NEXT_PUBLIC_API_BASE` dibaca saat build, jadi build ulang setelah mengubahnya.
 
 ## Login SSO BPS (T4)
 
 Alur: browser -> `/login` -> `/api/auth/login` (state + nonce + PKCE S256) ->
 `accounts.bps.go.id` -> `/api/auth/callback` -> tukar kode, verifikasi ID token,
-ambil UserInfo, buat cookie sesi JWT httpOnly -> halaman `/`.
+ambil UserInfo, buat cookie sesi JWT httpOnly + cookie token API non-httpOnly
+(yang dibaca browser untuk memanggil backend) -> halaman `/`.
 
 Variabel wajib di `.env.local` (lihat `.env.example`):
 
@@ -85,9 +87,10 @@ memakai `PageHeader`, `Panel`, `EmptyState`, dan `TautanAksi` dari
 ## Unggah dan status job (T6)
 
 - Halaman 1. Identifikasi Titik dan 2. Pengecekan Titik memanggil
-  `POST {NEXT_PUBLIC_API_BASE}/runs` lewat `urlApi()`. Di cPanel, nilai ini
-  `/api/backend`; route Next.js menambahkan `Authorization: Bearer` dari cookie
-  sesi. Di lokal dapat diisi URL FastAPI langsung.
+  `POST {NEXT_PUBLIC_API_BASE}/runs` lewat `urlApi()` langsung dari browser.
+  Nilainya URL FastAPI absolut, mis. `https://backend-pointse.feinah.web.id`
+  di production atau `http://localhost:8000` di lokal. Request membawa
+  `Authorization: Bearer` dari `lib/api/token.ts`.
 - Berkas dikirim berpotongan: `POST /unggahan/mulai`, lalu
   `POST /unggahan/{id}/potongan/{n}` dengan body mentah
   (`Content-Type: application/octet-stream`) dan header `X-Sha256`, lalu
@@ -150,12 +153,11 @@ secret di repository atau membagikannya ke pengguna umum.
 - `lib/auth/oidc.ts` — discovery, PKCE, tukar kode, verifikasi ID token, UserInfo,
   fallback API Pegawai.
 - `lib/auth/jwt.ts` — token sesi HS256 + state OIDC.
-- `lib/auth/session.ts` — cookie httpOnly, `wajibSesi()`.
-- `app/api/auth/login|callback|logout|session/route.ts` — route OIDC.
-- `NEXT_PUBLIC_API_BASE` — `/api/backend` memakai route proxy Next.js; cookie
-  sesi `httpOnly` dibaca server lalu diteruskan sebagai Bearer. Nilai absolut
-  memakai Bearer dari `lib/api/token.ts` (memori/`sessionStorage`).
-- `app/api/backend/[...jalur]/route.ts` — proxy streaming ke `BACKEND_URL`,
-  menambahkan Bearer, dan menolak Origin asing untuk request yang mengubah data.
+- `lib/auth/session.ts` - cookie sesi httpOnly + cookie token API non-httpOnly,
+  `wajibSesi()`.
+- `app/api/auth/login|callback|logout|session/route.ts` - route OIDC.
+- `NEXT_PUBLIC_API_BASE` - URL backend absolut; browser memanggilnya langsung
+  dan mengirim Bearer dari `lib/api/token.ts` (cookie/memori/`sessionStorage`).
+- Tidak ada `app/api/backend`; server cPanel tidak boleh menjadi perantara API.
 - `proxy.ts` — redirect halaman terlindungi ke `/login` (Next.js 16 memakai Proxy,
   bukan Middleware).

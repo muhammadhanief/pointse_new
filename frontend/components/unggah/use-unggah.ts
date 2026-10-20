@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  API_SATU_ASAL,
   KesalahanApi,
   ambilJson,
   detailKesalahan,
@@ -318,7 +317,8 @@ function kirimSatuPotongan(
       urlApi(`/unggahan/${encodeURIComponent(idUnggah)}/potongan/${nomor}`),
     );
     xhr.timeout = BATAS_WAKTU_POTONGAN;
-    xhr.withCredentials = API_SATU_ASAL;
+    // API lintas origin memakai Bearer; jangan kirim cookie ke backend.
+    xhr.withCredentials = false;
     xhr.setRequestHeader("accept", "application/json");
     xhr.setRequestHeader("content-type", "application/octet-stream");
     xhr.setRequestHeader("x-sha256", sha256);

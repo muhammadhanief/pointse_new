@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { cache } from "react";
 
 import {
+  NAMA_COOKIE_API,
   NAMA_COOKIE_OIDC,
   NAMA_COOKIE_SESI,
   UMUR_OIDC,
@@ -18,9 +19,9 @@ import {
 } from "./jwt";
 import type { SesiPengguna, StateOidc } from "./types";
 
-function opsiCookie(umurDetik: number) {
+function opsiCookie(umurDetik: number, httpOnly = true) {
   return {
-    httpOnly: true,
+    httpOnly,
     sameSite: "lax" as const,
     secure: process.env.NODE_ENV === "production",
     path: "/",
@@ -43,15 +44,21 @@ export async function wajibSesi(): Promise<SesiPengguna> {
   return sesi;
 }
 
-/** Simpan sesi sebagai cookie httpOnly. */
+/** Simpan sesi sebagai cookie httpOnly dan token API yang bisa dibaca browser. */
 export async function simpanSesi(pengguna: SesiPengguna): Promise<void> {
   const token = await tandaTanganSesi(pengguna);
-  (await cookies()).set(NAMA_COOKIE_SESI, token, opsiCookie(UMUR_SESI));
+  const jar = await cookies();
+  jar.set(NAMA_COOKIE_SESI, token, opsiCookie(UMUR_SESI));
+  // Frontend memanggil API lintas origin langsung dari browser karena server
+  // cPanel tidak dapat menjangkau domain backend. Token ini harus terbaca JS.
+  jar.set(NAMA_COOKIE_API, token, opsiCookie(UMUR_SESI, false));
 }
 
-/** Hapus cookie sesi. */
+/** Hapus cookie sesi server dan token API browser. */
 export async function hapusSesi(): Promise<void> {
-  (await cookies()).set(NAMA_COOKIE_SESI, "", opsiCookie(0));
+  const jar = await cookies();
+  jar.set(NAMA_COOKIE_SESI, "", opsiCookie(0));
+  jar.set(NAMA_COOKIE_API, "", opsiCookie(0, false));
 }
 
 /** Simpan state OIDC (state, nonce, PKCE) di cookie berumur pendek. */

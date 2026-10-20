@@ -10,6 +10,7 @@ import type {
   SVGProps,
 } from "react";
 
+import { hapusToken } from "@/lib/api/token";
 import type { SesiPengguna } from "@/lib/auth/types";
 import {
   PERAN_ADMIN_PROVINSI,
@@ -190,7 +191,12 @@ function KartuPengguna({ sesi }: { sesi: SesiRingkas }) {
       <p className="mt-2 text-xs leading-5 text-muted">
         {labelWilayah(sesi.kdprov, sesi.kdkab)}
       </p>
-      <form action="/api/auth/logout" method="post" className="mt-2">
+      <form
+        action="/api/auth/logout"
+        method="post"
+        className="mt-2"
+        onSubmit={() => hapusToken()}
+      >
         <button
           type="submit"
           className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium text-danger transition-colors hover:bg-danger-soft"
