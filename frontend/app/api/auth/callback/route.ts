@@ -16,6 +16,7 @@ import {
   simpanSesi,
 } from "@/lib/auth/session";
 import { jalurAman } from "@/lib/auth/url";
+import { urlPublik } from "@/lib/http/origin";
 
 function samaAman(kiri: string, kanan: string): boolean {
   const a = Buffer.from(kiri);
@@ -28,7 +29,7 @@ async function kembaliGagal(
   kode: string,
 ): Promise<NextResponse> {
   await hapusStateOidc();
-  return NextResponse.redirect(new URL(`/login?error=${kode}`, request.url));
+  return NextResponse.redirect(urlPublik(request, `/login?error=${kode}`));
 }
 
 /** Callback OIDC: cocokkan state, tukar kode, verifikasi token, buat sesi. */
@@ -70,7 +71,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     await simpanSesi(pengguna);
     await hapusStateOidc();
     return NextResponse.redirect(
-      new URL(jalurAman(stateTersimpan.next), request.url),
+      urlPublik(request, jalurAman(stateTersimpan.next)),
     );
   } catch (galat) {
     const pesan = galat instanceof Error ? galat.message : "";

@@ -2,26 +2,30 @@
 
 Endpoint: ``/health``, ``/runs`` (unggah/antre + daftar), ``/runs/{id}`` (status),
 ``/runs/{id}/hasil``, ``/runs/{id}/rekap``, ``/runs/{id}/ekspor/*`` (CSV/GPKG),
-``/ekspor/rekap.csv``, ``/ringkasan``, ``/tren``, dan ``/perubahan``.
+``/ekspor/rekap.csv``, ``/ringkasan``, ``/tren``, ``/perubahan``, dan
+``/sistem/status`` (pemantauan worker untuk admin).
 
-Worker Proses A/B dinyalakan di lifespan kalau ``WORKER_ENABLED=true`` (default).
-Untuk produksi, worker bisa juga dijalankan sebagai proses terpisah::
-
-    .venv\\Scripts\\python.exe -m app.worker
+API dijalankan langsung sebagai ASGI dengan uvicorn. Path dapat diberi prefix
+lewat ``API_PREFIX`` (default kosong). Worker produksi dijalankan sebagai service
+terpisah (``python -m app.worker --loop``); set ``WORKER_ENABLED=false`` di proses
+API agar tidak ada worker tambahan di dalam uvicorn.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 from app.api import router
 from app.config import get_settings
+from app.sistem import router as router_sistem
+from app.unggahan import router as router_unggahan
 from app.worker import mulai_worker
 
 logger = logging.getLogger("pointse")
@@ -46,21 +50,46 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 satu.join(timeout=10)
 
 
-app = FastAPI(title=settings.app_name, version="0.4.0", lifespan=lifespan)
+prefix = settings.api_prefix
+app = FastAPI(
+    title=settings.app_name,
+    version="0.5.0",
+    lifespan=lifespan,
+    docs_url=f"{prefix}/docs" if prefix else "/docs",
+    redoc_url=f"{prefix}/redoc" if prefix else "/redoc",
+    openapi_url=f"{prefix}/openapi.json" if prefix else "/openapi.json",
+)
 
-# CORS dibatasi ke domain frontend saja (lihat CORS_ORIGINS di .env).
+# Frontend statis berada di origin lain; autentikasi memakai Bearer, bukan
+# cookie, sehingga credentials tidak boleh diaktifkan.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-SHA256"],
+    expose_headers=["Content-Disposition", "Retry-After"],
+    max_age=600,
 )
 
-app.include_router(router)
+
+@app.middleware("http")
+async def tanpa_cache(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """Cegah proxy/cache menyimpan balasan API yang berubah tiap saat."""
+    respons = await call_next(request)
+    respons.headers["Cache-Control"] = "no-store, max-age=0"
+    respons.headers["Pragma"] = "no-cache"
+    return respons
 
 
-@app.get("/health")
+app.include_router(router, prefix=prefix)
+app.include_router(router_sistem, prefix=prefix)
+app.include_router(router_unggahan, prefix=prefix)
+
+
+@app.get(f"{prefix}/health")
 def health() -> dict[str, str]:
     """Cek aplikasi hidup; dipakai monitoring dan tes."""
     return {"status": "ok", "app": settings.app_name}

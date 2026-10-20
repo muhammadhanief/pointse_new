@@ -13,8 +13,11 @@ npm run lint
 npm run build
 ```
 
-Backend FastAPI dijalankan terpisah di `http://127.0.0.1:8000`
-(`BACKEND_URL` di `.env.local`).
+Backend FastAPI dijalankan terpisah di AlmaLinux (lihat `../deploy/README.md`).
+Browser memanggil API langsung memakai `NEXT_PUBLIC_API_BASE`; **tidak ada rewrite
+`/backend` atau proxy same-origin**. Untuk lokal, isi
+`NEXT_PUBLIC_API_BASE=http://localhost:8000` di `.env.local`. Nilai ini dibaca
+saat build, jadi build production harus memakai URL API HTTPS yang final.
 
 ## Login SSO BPS (T4)
 
@@ -32,7 +35,7 @@ Variabel wajib di `.env.local` (lihat `.env.example`):
 | `KEYCLOAK_REDIRECT_URI` | harus **persis** sama dengan Valid Redirect URI, mis. `http://localhost:3000/api/auth/callback` |
 | `AUTH_SECRET` | minimal 32 karakter; **sama** dengan `backend/.env` |
 | `AUTH_ISSUER` / `AUTH_AUDIENCE` | `pointse` / `pointse-backend` |
-| `BACKEND_URL` | `http://127.0.0.1:8000` |
+| `APP_URL` | URL publik frontend, mis. `https://pointse.web.bps.go.id`; dipakai untuk redirect di balik cPanel |
 
 Catatan:
 
@@ -55,6 +58,90 @@ Catatan:
   `curl` tersedia di Windows 10+ dan hampir semua Linux. Bila `curl` tidak ada,
   kode jatuh ke `fetch` bawaan, tetapi Cloudflare bisa menolaknya.
 
+## Kerangka dashboard (T5)
+
+Route group `app/(dashboard)/` memakai satu layout: sidebar desktop, menu
+off-canvas di layar kecil, header wilayah kerja, dan kartu pengguna. Menu
+dibatasi per peran; `Master geotag` dan `Status sistem` hanya tampil untuk admin
+provinsi.
+
+| Route | Isi |
+|---|---|
+| `/` | Ringkasan, alur kerja, dan status data kosong |
+| `/proses` | Redirect ke `/proses/identifikasi` |
+| `/proses/identifikasi` | 1. Identifikasi Titik: unggah peta |
+| `/proses/pengecekan` | 2. Pengecekan Titik: pilih sumber dan unggah GPKG edit |
+| `/rekap` | Tabel contoh yang diberi label data tiruan |
+| `/ekspor` | Unduhan per job dan rekap CSV |
+| `/master-geotag` | Khusus admin provinsi: unggah dan daftar versi |
+| `/sistem` | Khusus admin provinsi: worker, antrean, RAM/CPU, dan disk |
+
+Token warna, tipografi, dan focus ring ada di `app/globals.css`. Halaman
+memakai `PageHeader`, `Panel`, `EmptyState`, dan `TautanAksi` dari
+`components/dashboard/ui.tsx` agar bentuknya konsisten.
+
+## Unggah dan status job (T6)
+
+- Halaman 1. Identifikasi Titik dan 2. Pengecekan Titik memanggil
+  `POST {NEXT_PUBLIC_API_BASE}/runs` langsung ke FastAPI dengan header
+  `Authorization: Bearer`. Tidak ada cookie sesi atau proxy Next.
+- Berkas dikirim berpotongan: `POST /unggahan/mulai`, lalu
+  `POST /unggahan/{id}/potongan/{n}` dengan body mentah
+  (`Content-Type: application/octet-stream`) dan header `X-Sha256`, lalu
+  `POST /unggahan/{id}/selesai`, dan akhirnya `POST /runs` atau
+  `/geotag-master` dengan `unggahan_id`. Semua lewat `urlApi()` yang menambahkan
+  `NEXT_PUBLIC_API_BASE`. Berkas tidak dibungkus `FormData`; WAF menolak biner
+  berlabel multipart.
+- Unggahan memakai `XMLHttpRequest` per potongan agar progres byte bisa
+  ditampilkan. Maksimal 2 potongan dikirim bersamaan (atur lewat
+  `NEXT_PUBLIC_UNGGAH_PARALEL`, 1-4). Ada tombol batal, batas waktu 30 menit
+  per potongan, peringatan sebelum menutup halaman, dan pesan khusus untuk
+  403, 413, 409, 422, 401, 502, serta koneksi putus.
+- Sesi unggahan disimpan di `localStorage` berdasarkan nama, ukuran, dan
+  `lastModified` berkas. Setelah koneksi putus atau halaman dimuat ulang,
+  pilih berkas yang sama; frontend memanggil `GET {NEXT_PUBLIC_API_BASE}/unggahan/{id}`
+  dan melanjutkan potongan yang belum diterima. Potongan yang sama aman
+  dikirim ulang (idempoten), dan galat jaringan/429/5xx dicoba ulang dengan
+  backoff.
+- Form 2. Pengecekan Titik memilih hasil 1. Identifikasi Titik dari
+  `GET /runs?tipe=A&status=sukses` dan mengirim `sumber_run_a_id`. Backend
+  memvalidasi tipe, status, dan wilayah run sumber sebelum menyalin petanya.
+  Jalankan ulang backend setelah perubahan `api.py` agar parameter ini aktif.
+- Nomor job di layar dihitung per (`kdprov`, `kdkab`, `tipe`), bukan memakai id
+  global. Master geotag diberi nomor versi per kabupaten/kota. Dropdown
+  kabupaten/kota memakai kode BPS Provinsi Jawa Tengah.
+- Riwayat job memanggil `GET /runs?limit=20` setiap 5 detik. Status `jalan`
+  ditampilkan sebagai "Diproses", heartbeat ditampilkan, dan pesan
+  "proses terhenti" dari worker ditandai terpisah.
+- Master geotag memanggil `POST /geotag-master` dan `GET /geotag-master`.
+  1. Identifikasi Titik memakai versi terbaru per kabupaten/kota.
+- Nama berkas unduhan diawali kode wilayah 4 digit, misalnya
+  `3307_hasil_identifikasi_titik_ke1.gpkg`. Setiap tombol unduh memunculkan
+  notifikasi di halaman, termasuk status saat rekap CSV sedang disiapkan.
+
+## Bypass login lokal
+
+Untuk pengujian lokal tanpa SSO, set di `.env.local`:
+
+```env
+AUTH_BYPASS_ENABLED=true
+```
+
+Halaman login menampilkan tombol masuk sebagai admin Provinsi 33 dan dropdown
+kabupaten/kota Jawa Tengah untuk masuk sebagai petugas.
+
+Untuk pengujian di production, wajib tambahkan kode rahasia:
+
+```env
+AUTH_BYPASS_ENABLED=true
+AUTH_BYPASS_SECRET=isi-dengan-rahasia-panjang-acak
+```
+
+Di production, form bypass meminta kode tersebut. Tanpa `AUTH_BYPASS_SECRET`,
+route bypass membalas 404 dan form tidak ditampilkan. Matikan
+`AUTH_BYPASS_ENABLED` segera setelah pengujian selesai. Jangan menaruh nilai
+secret di repository atau membagikannya ke pengguna umum.
+
 ## Struktur auth
 
 - `lib/auth/oidc.ts` — discovery, PKCE, tukar kode, verifikasi ID token, UserInfo,
@@ -62,7 +149,8 @@ Catatan:
 - `lib/auth/jwt.ts` — token sesi HS256 + state OIDC.
 - `lib/auth/session.ts` — cookie httpOnly, `wajibSesi()`.
 - `app/api/auth/login|callback|logout|session/route.ts` — route OIDC.
-- `app/api/backend/[...jalur]/route.ts` — BFF: meneruskan request ke FastAPI dengan
-  Bearer token sesi.
+- `NEXT_PUBLIC_API_BASE` — browser memanggil API lintas origin dengan Bearer dari
+  `lib/api/token.ts` (memori/`sessionStorage`); backend tidak membaca cookie atau
+  memeriksa Origin untuk CSRF.
 - `proxy.ts` — redirect halaman terlindungi ke `/login` (Next.js 16 memakai Proxy,
   bukan Middleware).

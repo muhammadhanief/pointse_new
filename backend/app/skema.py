@@ -7,7 +7,7 @@ berubah.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +22,8 @@ class RunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    #: Nomor urut untuk tampilan, dihitung per (kdprov, kdkab, tipe).
+    nomor_urut: int | None = None
     tipe: str
     kdprov: str
     kdkab: str
@@ -41,7 +43,57 @@ class RunOut(BaseModel):
     heartbeat_at: datetime | None = None
     finished_at: datetime | None = None
     geotag_master_id: int | None = None
+    #: Nomor versi master pada kdkab run ini.
+    geotag_master_nomor: int | None = None
     sumber_run_a_id: int | None = None
+    #: Nomor urut run A sumber pada (kdprov, kdkab, tipe A).
+    sumber_run_a_nomor: int | None = None
+
+
+class UnggahanOut(BaseModel):
+    """Hasil satu unggahan body mentah yang sudah selesai."""
+
+    unggahan_id: str
+    nama: str
+    ukuran: int
+    sha256: str
+    jenis: str
+
+
+class UnggahanMulaiIn(BaseModel):
+    """Permintaan memulai sesi unggahan berpotongan."""
+
+    nama: str
+    ukuran: int
+    jenis: Literal["master", "peta", "titik"]
+
+
+class UnggahanMulaiOut(BaseModel):
+    """Sesi unggahan baru beserta ukuran potongan yang harus dipakai."""
+
+    unggahan_id: str
+    nama: str
+    ukuran: int
+    jenis: str
+    ukuran_potongan: int
+    jumlah_potongan: int
+
+
+class UnggahanStatusOut(UnggahanMulaiOut):
+    """Status sesi untuk melanjutkan unggahan yang terputus."""
+
+    potongan_diterima: list[int]
+    selesai: bool = False
+    sha256: str | None = None
+
+
+class PotonganOut(BaseModel):
+    """Balasan setelah satu potongan diterima."""
+
+    unggahan_id: str
+    potongan: int
+    ukuran: int
+    diterima: bool = True
 
 
 class MasterGeotagOut(BaseModel):
@@ -50,6 +102,8 @@ class MasterGeotagOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    #: Nomor versi untuk tampilan, dihitung per kdkab.
+    nomor_versi: int | None = None
     kdprov: str
     kdkab: str
     tanggal_data: date
@@ -281,3 +335,107 @@ class PerubahanOut(BaseModel):
     desa: list[PerubahanDesaOut]
     titik: PerubahanTitikOut | None = None
     catatan: str | None = None
+
+
+class JobSistemOut(BaseModel):
+    """Ringkasan job untuk halaman status sistem (tanpa path berkas)."""
+
+    id: int
+    tipe: str
+    kdprov: str
+    kdkab: str
+    user: str | None = None
+    status: str
+    jumlah_baris: int | None = None
+    jumlah_tanpa_wilayah: int | None = None
+    pesan: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+    finished_at: datetime | None = None
+    #: Umur heartbeat dalam detik; ``None`` bila job tidak sedang berjalan.
+    umur_heartbeat_detik: int | None = None
+
+
+class AntreanOut(BaseModel):
+    """Hitungan job per status dan waktu tunggu paling lama."""
+
+    menunggu: int
+    jalan: int
+    sukses: int
+    gagal: int
+    total: int
+    tertua_menunggu: datetime | None = None
+
+
+class MemoriOut(BaseModel):
+    """Pemakaian memori server dan proses API/worker (satuan MB)."""
+
+    total_mb: float | None = None
+    tersedia_mb: float | None = None
+    terpakai_mb: float | None = None
+    persen_terpakai: float | None = None
+    swap_total_mb: float | None = None
+    swap_terpakai_mb: float | None = None
+    api_rss_mb: float | None = None
+    worker_rss_mb: float | None = None
+
+
+class DiskOut(BaseModel):
+    """Pemakaian disk tempat berkas unggahan (satuan MB)."""
+
+    total_mb: float | None = None
+    terpakai_mb: float | None = None
+    tersedia_mb: float | None = None
+    persen_terpakai: float | None = None
+
+
+class SistemOut(BaseModel):
+    """Metrik host yang tidak bergantung pada worker."""
+
+    hostname: str
+    cpu: int | None = None
+    load_1: float | None = None
+    load_5: float | None = None
+    load_15: float | None = None
+    memori: MemoriOut
+    disk: DiskOut
+
+
+class WorkerOut(BaseModel):
+    """Status proses worker dan batas memorinya."""
+
+    aktif: bool
+    pid: int | None = None
+    rss_mb: float | None = None
+    batas_memori_mb: int
+    jumlah_proses: int = 0
+
+
+class KonfigurasiWorkerOut(BaseModel):
+    """Nilai worker yang berguna untuk membaca status antrean."""
+
+    poll_detik: float
+    heartbeat_detik: float
+    timeout_menit: int
+    chunk_titik: int
+    max_workers: int
+
+
+class SistemStatusOut(BaseModel):
+    """Balasan halaman admin Status Sistem.
+
+    ``worker.aktif`` dibaca dari berkas flock, bukan dari heartbeat job, supaya
+    worker yang menganggur tetap terlihat hidup. ``job_aktif`` berisi job
+    berstatus ``jalan`` (biasanya satu); daftar dipakai agar job terhenti yang
+    tertinggal tetap terlihat.
+    """
+
+    waktu: datetime
+    sistem: SistemOut
+    worker: WorkerOut
+    konfigurasi: KonfigurasiWorkerOut
+    antrean: AntreanOut
+    job_aktif: list[JobSistemOut]
+    job_terakhir: JobSistemOut | None = None
+    peringatan: list[str]

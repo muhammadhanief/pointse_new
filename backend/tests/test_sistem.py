@@ -1,0 +1,109 @@
+"""Tes endpoint status sistem untuk halaman admin."""
+
+from __future__ import annotations
+
+import os
+from datetime import timedelta
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app import auth
+from app.kunci import KunciBerkas, baca_pid_kunci
+from app.main import app
+from app.models import (
+    STATUS_JALAN,
+    STATUS_MENUNGGU,
+    Run,
+    sekarang,
+)
+from app.peran import PERAN_PETUGAS_KABKOT, Peran
+
+
+def _buat_run(sesi: Session, *, status: str = STATUS_MENUNGGU) -> Run:
+    """Buat satu job minimal untuk mengisi hitungan antrean."""
+    run = Run(
+        tipe="A",
+        kdprov="33",
+        kdkab="3307",
+        status=status,
+        nama_file_input="titik.geojson",
+        nama_file_peta="peta.geojson",
+        berkas_input="/tmp/titik.geojson",
+        berkas_peta="/tmp/peta.geojson",
+    )
+    sesi.add(run)
+    sesi.commit()
+    return run
+
+
+def test_status_sistem_mengembalikan_metrik(klien: TestClient, sesi: Session) -> None:
+    """Endpoint membalas status worker, antrean, RAM, dan disk."""
+    _buat_run(sesi)
+
+    resp = klien.get("/sistem/status")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["worker"]["aktif"] is False
+    assert data["worker"]["batas_memori_mb"] >= 0
+    assert data["antrean"]["menunggu"] == 1
+    assert data["antrean"]["jalan"] == 0
+    assert data["antrean"]["total"] >= 1
+    assert len(data["job_aktif"]) == 0
+    assert data["sistem"]["memori"]["api_rss_mb"] is None or (
+        data["sistem"]["memori"]["api_rss_mb"] >= 0
+    )
+    assert isinstance(data["peringatan"], list)
+    assert any("worker tidak aktif" in pesan for pesan in data["peringatan"])
+
+
+def test_status_sistem_menampilkan_job_jalan_dan_heartbeat(
+    klien: TestClient, sesi: Session
+) -> None:
+    """Job jalan yang heartbeat-nya kedaluwarsa memunculkan peringatan."""
+    run = _buat_run(sesi, status=STATUS_JALAN)
+    run.started_at = sekarang() - timedelta(minutes=20)
+    run.heartbeat_at = run.started_at
+    sesi.commit()
+
+    resp = klien.get("/sistem/status")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["antrean"]["jalan"] == 1
+    assert data["job_aktif"][0]["id"] == run.id
+    assert data["job_aktif"][0]["umur_heartbeat_detik"] >= 60 * 19
+    assert any("melewati batas" in pesan for pesan in data["peringatan"])
+
+
+def test_status_sistem_hanya_untuk_admin(klien: TestClient) -> None:
+    """Petugas kabupaten/kota tidak boleh melihat status server."""
+    petugas = auth.Pengguna(
+        sub="petugas",
+        username="petugas",
+        nama="Petugas",
+        org="3307",
+        peran=Peran(
+            nama=PERAN_PETUGAS_KABKOT,
+            kdprov="33",
+            kdkab="3307",
+        ),
+    )
+    app.dependency_overrides[auth.pengguna_saat_ini] = lambda: petugas
+    try:
+        resp = klien.get("/sistem/status")
+    finally:
+        app.dependency_overrides.pop(auth.pengguna_saat_ini, None)
+
+    assert resp.status_code == 403
+
+
+def test_kunci_menyimpan_pid_untuk_pemantauan(tmp_path: Path) -> None:
+    """Isi berkas kunci memberi petunjuk PID tanpa mengubah sifat eksklusif."""
+    jalur = tmp_path / "worker.lock"
+    kunci = KunciBerkas(jalur)
+    assert kunci.ambil() is True
+    assert baca_pid_kunci(jalur) == os.getpid()
+    kunci.lepas()

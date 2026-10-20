@@ -8,6 +8,7 @@ import {
 } from "@/lib/auth/oidc";
 import { simpanStateOidc } from "@/lib/auth/session";
 import { jalurAman } from "@/lib/auth/url";
+import { urlPublik } from "@/lib/http/origin";
 
 /** Mulai login SSO BPS: buat state + PKCE, lalu redirect ke Keycloak. */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       galat instanceof Error ? galat.message : "kesalahan tidak dikenal",
     );
     return NextResponse.redirect(
-      new URL("/login?error=konfigurasi", request.url),
+      urlPublik(request, "/login?error=konfigurasi"),
     );
   }
 }

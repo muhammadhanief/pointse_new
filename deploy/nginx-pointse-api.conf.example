@@ -1,0 +1,55 @@
+# Contoh konfigurasi nginx aaPanel untuk API pointse.
+# Ganti server_name dan path sertifikat sesuai domain API. Jangan menaruh
+# token/kata sandi di file ini; aaPanel mengelola sertifikat TLS.
+#
+# limit_req_zone berada di konteks http{}. Jika file ini di-include langsung
+# oleh aaPanel di dalam http{}, baris ini valid. Jika panel hanya mengizinkan
+# server{}, pindahkan baris limit_req_zone ke nginx.conf (http{}) sekali saja.
+
+limit_req_zone $binary_remote_addr zone=pointse_api:10m rate=10r/s;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name _;
+
+    # Path sertifikat dikelola aaPanel.
+    ssl_certificate     /path/ke/fullchain.pem;
+    ssl_certificate_key /path/ke/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Berkas spasial besar; unggahan dikirim per potongan 16 MiB.
+    client_max_body_size 512m;
+    client_body_timeout 600s;
+    client_body_buffer_size 1m;
+
+    access_log /var/log/nginx/pointse-api.access.log;
+    error_log  /var/log/nginx/pointse-api.error.log warn;
+
+    location / {
+        limit_req zone=pointse_api burst=20 nodelay;
+
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Jangan menyangga body unggahan di nginx; teruskan langsung ke uvicorn.
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 600s;
+        proxy_read_timeout 600s;
+    }
+}

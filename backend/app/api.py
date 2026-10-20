@@ -18,12 +18,20 @@ from datetime import date
 from pathlib import Path
 from typing import BinaryIO
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+)
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from app import auth, ekspor, layanan
+from app import auth, ekspor, layanan, unggahan
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.layanan import (
@@ -33,7 +41,7 @@ from app.layanan import (
     KesalahanUnggahan,
     Tingkat,
 )
-from app.models import DASAR_TUGAS, TIPE_A, TIPE_B, Run
+from app.models import DASAR_TUGAS, STATUS_SUKSES, TIPE_A, TIPE_B, Run
 from app.peran import PERAN_ADMIN_PROVINSI
 from app.skema import (
     DaftarMasterOut,
@@ -50,7 +58,6 @@ from app.skema import (
 )
 
 router = APIRouter()
-
 
 def _simpan_unggahan(berkas: UploadFile, dir_run: Path, awalan: str) -> Path:
     """Tulis satu berkas unggahan ke folder job; kembalikan path-nya.
@@ -77,17 +84,24 @@ def _ambil_run(sesi: Session, run_id: int) -> Run:
 @router.post("/runs", response_model=RunOut, status_code=201)
 def unggah_run(
     tipe: str = Form(..., description=f"'{TIPE_A}' (identifikasi titik) atau '{TIPE_B}'"),
+    unggahan_id: str | None = Form(
+        None,
+        description=(
+            "Id unggahan body mentah yang sudah selesai. Proses A memakai unggahan "
+            "peta; Proses B memakai unggahan titik."
+        ),
+    ),
     titik: UploadFile | None = File(
         None,
         description=(
-            "Proses A: kosongkan (geotag master dipakai otomatis). "
-            "Proses B: berkas GPKG hasil edit Proses A."
+            "Mode pengembangan/berkas kecil. Proses A: kosongkan (geotag master "
+            "dipakai otomatis). Proses B: berkas GPKG hasil edit Proses A."
         ),
     ),
     peta: UploadFile | None = File(
         None,
         description=(
-            "Proses A: peta batas wilkerstat. "
+            "Mode pengembangan/berkas kecil. Proses A: peta batas wilkerstat. "
             "Proses B: kosongkan (peta diambil dari run A terakhir)."
         ),
     ),
@@ -95,6 +109,13 @@ def unggah_run(
     tanggal_data: date | None = Form(None, description="Tanggal data (default: tanggal unggah)"),
     layer_titik: str | None = Form(None, description="Nama layer berkas titik (wajib untuk GPKG banyak layer)"),
     layer_peta: str | None = Form(None, description="Nama layer berkas peta"),
+    sumber_run_a_id: int | None = Form(
+        None,
+        description=(
+            "Proses B: id run Proses A sukses yang petanya dipakai. "
+            "Kosongkan untuk memakai run A sukses terakhir."
+        ),
+    ),
     sesi: Session = Depends(get_session),
     setelan: Settings = Depends(get_settings),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
@@ -107,8 +128,9 @@ def unggah_run(
       untuk kabupaten/kota itu (ditolak 409 kalau belum ada), lalu membuat job A
       memakai master tersebut. Peta disimpan di folder job seperti biasa.
     - **B baru**: unggah ``titik`` saja (GPKG hasil edit A); backend memakai run A
-      sukses terakhir untuk kabupaten/kota itu, menyalin petanya ke folder job B,
-      lalu membuat job B.
+      sukses terakhir untuk kabupaten/kota itu, atau run A yang disebut
+      ``sumber_run_a_id`` bila diisi, menyalin petanya ke folder job B, lalu
+      membuat job B.
 
     Mengirim kedua berkas tetap didukung untuk kompatibilitas (mode manual/uji).
     Job lama untuk kabupaten/kota+tipe yang sama **tidak** dihapus/ditandai: semua
@@ -119,11 +141,16 @@ def unggah_run(
         raise HTTPException(
             status_code=422, detail=f"tipe harus '{TIPE_A}' atau '{TIPE_B}', bukan '{tipe}'"
         )
-    if tipe_bersih == TIPE_A and peta is None:
+    if unggahan_id and (peta is not None or titik is not None):
+        raise HTTPException(
+            status_code=422,
+            detail="pakai unggahan_id atau berkas multipart, jangan keduanya",
+        )
+    if tipe_bersih == TIPE_A and peta is None and not unggahan_id:
         raise HTTPException(
             status_code=422, detail="Proses A butuh berkas peta batas wilkerstat"
         )
-    if tipe_bersih == TIPE_B and titik is None:
+    if tipe_bersih == TIPE_B and titik is None and not unggahan_id:
         raise HTTPException(
             status_code=422, detail="Proses B butuh berkas titik hasil edit Proses A"
         )
@@ -133,12 +160,28 @@ def unggah_run(
     # (pengawasan/uji); unggah master tetap khusus admin provinsi.
     # Mode lama masih menerima nama pengunggah dari form; saat SSO aktif, identitas
     # selalu diambil dari token agar tidak bisa dipalsukan.
-    nama_user = pengguna.nama if setelan.auth_required else user
+    # Di mode dev, kolom form lama tetap dipakai agar tes/manual kompatibel.
+    # Di production identitas selalu berasal dari token Bearer.
+    nama_user = (
+        (user or pengguna.nama) if setelan.auth_mode == "dev" else pengguna.nama
+    )
 
     dir_run = Path(setelan.dir_unggahan) / uuid.uuid4().hex
+    unggahan_dipakai: str | None = None
     try:
         if tipe_bersih == TIPE_A:
-            berkas_peta = _simpan_unggahan(peta, dir_run, "peta")
+            if unggahan_id:
+                sumber_peta, meta_unggah = unggahan.ambil_berkas(
+                    unggahan_id, "peta", pengguna, setelan
+                )
+                nama_peta_asli = str(meta_unggah["nama"])
+                dir_run.mkdir(parents=True, exist_ok=True)
+                berkas_peta = dir_run / f"peta_{nama_peta_asli}"
+                shutil.copy2(sumber_peta, berkas_peta)
+                unggahan_dipakai = unggahan_id
+            else:
+                berkas_peta = _simpan_unggahan(peta, dir_run, "peta")
+                nama_peta_asli = Path(peta.filename or berkas_peta.name).name
             if titik is not None:
                 # Mode manual/uji: kedua berkas diunggah langsung.
                 berkas_input = _simpan_unggahan(titik, dir_run, "titik")
@@ -152,7 +195,7 @@ def unggah_run(
                     info=info,
                     user=nama_user,
                     nama_input=Path(titik.filename or berkas_input.name).name,
-                    nama_peta=Path(peta.filename or berkas_peta.name).name,
+                    nama_peta=nama_peta_asli,
                     berkas_input=berkas_input,
                     berkas_peta=berkas_peta,
                     tanggal_data=tanggal_data,
@@ -183,14 +226,25 @@ def unggah_run(
                     info=info,
                     user=nama_user,
                     nama_input=master.nama_file,
-                    nama_peta=Path(peta.filename or berkas_peta.name).name,
+                    nama_peta=nama_peta_asli,
                     berkas_input=Path(master.berkas),
                     berkas_peta=berkas_peta,
                     tanggal_data=tanggal_data or master.tanggal_data,
                     geotag_master_id=master.id,
                 )
         else:
-            berkas_input = _simpan_unggahan(titik, dir_run, "titik")
+            if unggahan_id:
+                sumber_titik, meta_unggah = unggahan.ambil_berkas(
+                    unggahan_id, "titik", pengguna, setelan
+                )
+                nama_input_asli = str(meta_unggah["nama"])
+                dir_run.mkdir(parents=True, exist_ok=True)
+                berkas_input = dir_run / f"titik_{nama_input_asli}"
+                shutil.copy2(sumber_titik, berkas_input)
+                unggahan_dipakai = unggahan_id
+            else:
+                berkas_input = _simpan_unggahan(titik, dir_run, "titik")
+                nama_input_asli = Path(titik.filename or berkas_input.name).name
             if peta is not None:
                 # Mode manual/uji: peta ikut diunggah.
                 berkas_peta = _simpan_unggahan(peta, dir_run, "peta")
@@ -203,7 +257,7 @@ def unggah_run(
                     tipe=tipe_bersih,
                     info=info,
                     user=nama_user,
-                    nama_input=Path(titik.filename or berkas_input.name).name,
+                    nama_input=nama_input_asli,
                     nama_peta=Path(peta.filename or berkas_peta.name).name,
                     berkas_input=berkas_input,
                     berkas_peta=berkas_peta,
@@ -213,9 +267,35 @@ def unggah_run(
                 # Alur baru: peta diambil dari run A terakhir, bukan diunggah ulang.
                 info_b = layanan.periksa_titik_b(berkas_input, layer_titik)
                 auth.pastikan_akses(pengguna, info_b.kdprov, info_b.kdkab)
-                sumber_a = layanan.run_a_terakhir(
-                    sesi, info_b.kdprov, info_b.kode_kabupaten
-                )
+                if sumber_run_a_id is not None:
+                    sumber_a = layanan.ambil_run(sesi, sumber_run_a_id)
+                    if sumber_a is None:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"run sumber A {sumber_run_a_id} tidak ditemukan",
+                        )
+                    if sumber_a.tipe != TIPE_A or sumber_a.status != STATUS_SUKSES:
+                        raise HTTPException(
+                            status_code=422,
+                            detail="sumber peta harus run Proses A yang sukses",
+                        )
+                    auth.pastikan_akses(pengguna, sumber_a.kdprov, sumber_a.kdkab)
+                    kode_sumber = layanan.kode_kabupaten(
+                        sumber_a.kdprov, sumber_a.kdkab
+                    )
+                    if kode_sumber != info_b.kode_kabupaten:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                f"run sumber A {sumber_a.id} berasal dari "
+                                f"kabupaten/kota {kode_sumber}, bukan "
+                                f"{info_b.kode_kabupaten}"
+                            ),
+                        )
+                else:
+                    sumber_a = layanan.run_a_terakhir(
+                        sesi, info_b.kdprov, info_b.kode_kabupaten
+                    )
                 if sumber_a is None:
                     raise HTTPException(
                         status_code=409,
@@ -233,7 +313,9 @@ def unggah_run(
                             "unggah ulang peta atau jalankan Proses A lagi"
                         ),
                     )
-                tujuan_peta = dir_run / f"peta_{sumber_peta.name}"
+                # Pertahankan nama berkas sumber: layer GeoJSON diturunkan dari
+                # nama berkas, jadi prefiks tambahan membuat layer tidak ketemu.
+                tujuan_peta = dir_run / sumber_peta.name
                 shutil.copy2(sumber_peta, tujuan_peta)
                 info = layanan.InfoUnggahan(
                     kdprov=sumber_a.kdprov,
@@ -246,7 +328,7 @@ def unggah_run(
                     tipe=tipe_bersih,
                     info=info,
                     user=nama_user,
-                    nama_input=Path(titik.filename or berkas_input.name).name,
+                    nama_input=nama_input_asli,
                     nama_peta=sumber_a.nama_file_peta,
                     berkas_input=berkas_input,
                     berkas_peta=tujuan_peta,
@@ -263,6 +345,9 @@ def unggah_run(
         shutil.rmtree(dir_run, ignore_errors=True)
         raise
 
+    if unggahan_dipakai:
+        unggahan.hapus_unggahan(unggahan_dipakai, setelan)
+    layanan.lengkapi_nomor_urut(sesi, [run])
     return run
 
 
@@ -270,7 +355,13 @@ def unggah_run(
 def unggah_master_geotag(
     kdprov: str = Form(..., description="Kode provinsi 2 digit, mis. 33"),
     kdkab: str = Form(..., description="Kode kabupaten/kota 4 digit, mis. 3307"),
-    titik: UploadFile = File(..., description="Berkas geotag asli kabupaten/kota (GPKG/GeoJSON)"),
+    titik: UploadFile | None = File(
+        None,
+        description="Mode pengembangan/berkas kecil: berkas geotag asli kabupaten/kota",
+    ),
+    unggahan_id: str | None = Form(
+        None, description="Id unggahan body mentah berjenis master yang sudah selesai"
+    ),
     tanggal_data: date | None = Form(None, description="Tanggal data geotag (default: hari ini)"),
     layer: str | None = Form(None, description="Nama layer berkas geotag"),
     user: str | None = Form(None, description="Nama pengguna (diabaikan saat SSO aktif)"),
@@ -291,17 +382,38 @@ def unggah_master_geotag(
 
     auth.pastikan_peran(pengguna, PERAN_ADMIN_PROVINSI)
     auth.pastikan_akses(pengguna, kode[:2], kode)
-    nama_user = pengguna.nama if setelan.auth_required else user
+    if bool(unggahan_id) == bool(titik):
+        raise HTTPException(
+            status_code=422,
+            detail="isi unggahan_id atau berkas multipart, tepat salah satu",
+        )
+    # Di mode dev, kolom form lama tetap dipakai agar tes/manual kompatibel.
+    # Di production identitas selalu berasal dari token Bearer.
+    nama_user = (
+        (user or pengguna.nama) if setelan.auth_mode == "dev" else pengguna.nama
+    )
     dir_master = Path(setelan.dir_master) / kode / uuid.uuid4().hex
+    unggahan_dipakai: str | None = None
     try:
-        berkas = _simpan_unggahan(titik, dir_master, "geotag")
+        if unggahan_id:
+            sumber, meta_unggah = unggahan.ambil_berkas(
+                unggahan_id, "master", pengguna, setelan
+            )
+            nama_berkas = str(meta_unggah["nama"])
+            dir_master.mkdir(parents=True, exist_ok=True)
+            berkas = dir_master / f"geotag_{nama_berkas}"
+            shutil.copy2(sumber, berkas)
+            unggahan_dipakai = unggahan_id
+        else:
+            berkas = _simpan_unggahan(titik, dir_master, "geotag")
+            nama_berkas = Path(titik.filename or berkas.name).name
         info = layanan.periksa_master_geotag(berkas, layer, kode)
         master = layanan.buat_master(
             sesi,
             kdprov=kode[:2],
             kdkab=kode,
             tanggal_data=tanggal_data,
-            nama_file=Path(titik.filename or berkas.name).name,
+            nama_file=nama_berkas,
             berkas=berkas,
             layer=info.layer,
             jumlah_baris=info.jumlah_baris,
@@ -314,6 +426,9 @@ def unggah_master_geotag(
         shutil.rmtree(dir_master, ignore_errors=True)
         raise
 
+    if unggahan_dipakai:
+        unggahan.hapus_unggahan(unggahan_dipakai, setelan)
+    layanan.lengkapi_nomor_versi(sesi, [master])
     return MasterGeotagOut.model_validate(master)
 
 
@@ -331,6 +446,7 @@ def daftar_master_geotag(
     total, baris = layanan.daftar_master(
         sesi, kdprov=kdprov, kdkab=kdkab, limit=limit, offset=offset
     )
+    layanan.lengkapi_nomor_versi(sesi, baris)
     return DaftarMasterOut(
         total=total, baris=[MasterGeotagOut.model_validate(satu) for satu in baris]
     )
@@ -349,7 +465,7 @@ def daftar_run(
 ) -> DaftarRunOut:
     """Daftar job terbaru lebih dulu (dengan penyaring dan paging), dibatasi wilayah."""
     kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
-    total, baris = layanan.daftar_run(
+    total, daftar = layanan.daftar_run(
         sesi,
         tipe=tipe.strip().upper() if tipe else None,
         status=status,
@@ -358,7 +474,10 @@ def daftar_run(
         limit=limit,
         offset=offset,
     )
-    return DaftarRunOut(total=total, baris=[RunOut.model_validate(baris) for baris in baris])
+    layanan.lengkapi_nomor_urut(sesi, daftar)
+    return DaftarRunOut(
+        total=total, baris=[RunOut.model_validate(satu) for satu in daftar]
+    )
 
 
 @router.get("/ringkasan", response_model=RingkasanOut)
@@ -426,6 +545,7 @@ def status_run(
     """
     run = _ambil_run(sesi, run_id)
     auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    layanan.lengkapi_nomor_urut(sesi, [run])
     return RunDetailOut(
         **RunOut.model_validate(run).model_dump(),
         jumlah_tersimpan=layanan.jumlah_tersimpan(sesi, run_id),
@@ -518,6 +638,16 @@ def perubahan(
 # --------------------------------------------------------------------- ekspor
 
 
+def _kode_unduh(kdprov: str | None, kdkab: str | None) -> str:
+    """Prefix 4 digit untuk nama berkas unduhan."""
+    if kdkab:
+        kode = layanan.kode_kabupaten(kdprov or "", kdkab)
+        return kode if len(kode) == 4 else "0000"
+    if kdprov:
+        return f"{str(kdprov)[:2]}00"
+    return "0000"
+
+
 def _unduhan_csv(spool: BinaryIO, nama: str) -> StreamingResponse:
     """Balas spool CSV sebagai unduhan."""
     return StreamingResponse(
@@ -557,7 +687,11 @@ def ekspor_hasil_a(
         berkas = ekspor.berkas_hasil_a(run, setelan)
     except ekspor.EksporTidakTersedia as galat:
         raise HTTPException(status_code=409, detail=str(galat)) from galat
-    return _unduhan_gpkg(berkas, f"hasil_identifikasi_titik_run{run.id}.gpkg")
+    kode = _kode_unduh(run.kdprov, run.kdkab)
+    nomor = layanan.nomor_urut_run(sesi, [run]).get(run.id, run.id)
+    return _unduhan_gpkg(
+        berkas, f"{kode}_hasil_identifikasi_titik_ke{nomor}.gpkg"
+    )
 
 
 @router.get("/runs/{run_id}/ekspor/titik.csv", response_class=StreamingResponse)
@@ -574,7 +708,11 @@ def ekspor_titik_csv(
         spool = ekspor.spool_titik_csv(sesi, run, setelan)
     except ekspor.EksporTidakTersedia as galat:
         raise HTTPException(status_code=409, detail=str(galat)) from galat
-    return _unduhan_csv(spool, f"titik_perlu_tindakan_run{run.id}.csv")
+    kode = _kode_unduh(run.kdprov, run.kdkab)
+    nomor = layanan.nomor_urut_run(sesi, [run]).get(run.id, run.id)
+    return _unduhan_csv(
+        spool, f"{kode}_titik_perlu_tindakan_ke{nomor}.csv"
+    )
 
 
 @router.get("/runs/{run_id}/ekspor/titik.gpkg", response_class=FileResponse)
@@ -591,7 +729,13 @@ def ekspor_titik_gpkg(
         berkas = ekspor.berkas_titik_gpkg(sesi, run, setelan)
     except ekspor.EksporTidakTersedia as galat:
         raise HTTPException(status_code=409, detail=str(galat)) from galat
-    return _unduhan_gpkg(berkas, f"titik_perlu_tindakan_run{run.id}.gpkg", hapus=True)
+    kode = _kode_unduh(run.kdprov, run.kdkab)
+    nomor = layanan.nomor_urut_run(sesi, [run]).get(run.id, run.id)
+    return _unduhan_gpkg(
+        berkas,
+        f"{kode}_titik_perlu_tindakan_ke{nomor}.gpkg",
+        hapus=True,
+    )
 
 
 @router.get("/ekspor/rekap.csv", response_class=StreamingResponse)
@@ -633,4 +777,5 @@ def ekspor_rekap(
         )
     except ekspor.KesalahanSaringan as galat:
         raise HTTPException(status_code=422, detail=str(galat)) from galat
-    return _unduhan_csv(spool, f"rekap_{tingkat}_{dasar}.csv")
+    kode = _kode_unduh(kdprov, kdkab)
+    return _unduhan_csv(spool, f"{kode}_rekap_{tingkat}_{dasar}.csv")

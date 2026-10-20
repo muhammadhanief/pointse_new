@@ -1,5 +1,7 @@
 /** Pemetaan kode unit SSO BPS (org) ke peran aplikasi. */
 
+import { kodeKabupaten, labelKabupaten } from "@/lib/wilayah/kabupaten";
+
 export const PERAN_ADMIN_PROVINSI = "admin_provinsi" as const;
 export const PERAN_PETUGAS_KABKOT = "petugas_kabkot" as const;
 
@@ -41,4 +43,16 @@ export function labelPeran(peran: NamaPeran): string {
   return peran === PERAN_ADMIN_PROVINSI
     ? "Admin Provinsi"
     : "Petugas Kabupaten/Kota";
+}
+
+/** Kode kabupaten/kota 4 digit dari kode peta yang mungkin 2 digit. */
+export function kodeWilayah(kdprov: string, kdkab: string | null): string {
+  return kodeKabupaten(kdprov, kdkab);
+}
+
+/** Label wilayah kerja tanpa mengarang nama jika kode belum dikenal. */
+export function labelWilayah(kdprov: string, kdkab: string | null): string {
+  return kdkab
+    ? `${labelKabupaten(kdprov, kdkab)}, Provinsi ${kdprov}`
+    : `Provinsi ${kdprov}`;
 }

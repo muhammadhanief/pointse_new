@@ -24,9 +24,9 @@ ISSUER = "pointse"
 AUDIENCE = "pointse-backend"
 
 
-def _setelan(auth_required: bool = True) -> Settings:
+def _setelan(auth_mode: str = "jwt") -> Settings:
     return Settings(
-        auth_required=auth_required,
+        auth_mode=auth_mode,
         auth_secret=SECRET,
         auth_issuer=ISSUER,
         auth_audience=AUDIENCE,
@@ -56,15 +56,22 @@ def _token(
     return jwt.encode(payload, rahasia, algorithm="HS256")
 
 
-def _request(token: str | None = None) -> Request:
+def _request(
+    token: str | None = None,
+    *,
+    method: str = "GET",
+    cookie: str | None = None,
+) -> Request:
     headers = []
     if token is not None:
         headers.append((b"authorization", f"Bearer {token}".encode()))
+    if cookie is not None:
+        headers.append((b"cookie", f"pointse_session={cookie}".encode()))
     return Request(
         {
             "type": "http",
             "http_version": "1.1",
-            "method": "GET",
+            "method": method,
             "scheme": "http",
             "path": "/",
             "raw_path": b"/",
@@ -81,6 +88,21 @@ def test_tanpa_token_ditolak() -> None:
         pengguna_saat_ini(_request(), _setelan())
     assert galat.value.status_code == 401
     assert galat.value.headers == {"WWW-Authenticate": "Bearer"}
+
+
+def test_cookie_sesi_tidak_diterima() -> None:
+    """Token hanya boleh lewat Bearer; cookie tidak lagi menjadi cadangan."""
+    with pytest.raises(HTTPException) as galat:
+        pengguna_saat_ini(_request(cookie=_token("33000")), _setelan())
+    assert galat.value.status_code == 401
+
+
+def test_bearer_tanpa_origin_diterima() -> None:
+    """Bearer tidak dikirim otomatis browser, jadi tidak perlu cek Origin."""
+    pengguna = pengguna_saat_ini(
+        _request(_token("33000"), method="POST"), _setelan()
+    )
+    assert pengguna.kdprov == "33"
 
 
 def test_token_admin_provinsi_5_digit() -> None:
@@ -114,10 +136,20 @@ def test_org_tidak_valid_ditolak() -> None:
     assert galat.value.status_code == 403
 
 
-def test_mode_tanpa_auth_memberi_pengguna_dev() -> None:
-    pengguna = pengguna_saat_ini(_request(), _setelan(auth_required=False))
+def test_mode_dev_memberi_pengguna_dev() -> None:
+    pengguna = pengguna_saat_ini(_request(), _setelan(auth_mode="dev"))
     assert pengguna.peran.nama == "dev"
     assert saring_akses(pengguna, "34", "3401") == ("34", "3401")
+
+
+def test_production_menolak_mode_dev() -> None:
+    with pytest.raises(ValueError, match="AUTH_MODE=dev"):
+        Settings(env="production", auth_mode="dev", auth_secret=SECRET)
+
+
+def test_production_mewajibkan_auth_secret() -> None:
+    with pytest.raises(ValueError, match="AUTH_SECRET"):
+        Settings(env="production", auth_mode="jwt", auth_secret="")
 
 
 def _pengguna(org: str) -> Pengguna:
@@ -153,14 +185,38 @@ def test_pastikan_peran() -> None:
         pastikan_peran(petugas, PERAN_ADMIN_PROVINSI)
 
 
+def test_api_tidak_menerima_cookie_sesi(klien, setelan: Settings) -> None:
+    """Endpoint tidak memakai cookie; frontend lintas origin harus Bearer."""
+    setelan.auth_mode = "jwt"
+    setelan.auth_secret = SECRET
+    setelan.auth_issuer = ISSUER
+    setelan.auth_audience = AUDIENCE
+
+    klien.cookies.set("pointse_session", _token("33000"))
+    assert klien.get("/runs").status_code == 401
+    resp = klien.get(
+        "/runs", headers={"Authorization": f"Bearer {_token('33000')}"}
+    )
+    assert resp.status_code == 200, resp.text
+
+
 def test_api_mewajibkan_token(klien, setelan: Settings) -> None:
     """Endpoint selain /health menolak permintaan tanpa token saat auth aktif."""
-    setelan.auth_required = True
+    setelan.auth_mode = "jwt"
     setelan.auth_secret = SECRET
     setelan.auth_issuer = ISSUER
     setelan.auth_audience = AUDIENCE
 
     assert klien.get("/runs").status_code == 401
+    assert (
+        klien.post(
+            "/unggahan",
+            params={"jenis": "master", "nama": "master.gpkg"},
+            content=b"isi",
+            headers={"content-type": "application/octet-stream"},
+        ).status_code
+        == 401
+    )
     resp = klien.get("/runs", headers={"Authorization": f"Bearer {_token('33000')}"})
     assert resp.status_code == 200, resp.text
 

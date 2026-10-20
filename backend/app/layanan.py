@@ -503,6 +503,109 @@ def daftar_run(
     return total, baris
 
 
+def nomor_urut_run(sesi: Session, baris: Sequence[Run]) -> dict[int, int]:
+    """Nomor urut job per (``kdprov``, ``kdkab``, ``tipe``), bukan id global."""
+    if not baris:
+        return {}
+
+    luar = aliased(Run)
+    nomor = (
+        select(func.count())
+        .select_from(Run)
+        .where(
+            Run.kdprov == luar.kdprov,
+            Run.kdkab == luar.kdkab,
+            Run.tipe == luar.tipe,
+            Run.id <= luar.id,
+        )
+        .correlate(luar)
+        .scalar_subquery()
+    )
+    ids = [satu.id for satu in baris]
+    hasil = sesi.execute(
+        select(luar.id, nomor.label("nomor")).where(luar.id.in_(ids))
+    ).all()
+    return {int(satu_id): int(satu_nomor) for satu_id, satu_nomor in hasil}
+
+
+def nomor_versi_master(
+    sesi: Session, baris: Sequence[GeotagMaster]
+) -> dict[int, int]:
+    """Nomor versi master per kabupaten/kota, bukan id global."""
+    if not baris:
+        return {}
+
+    luar = aliased(GeotagMaster)
+    nomor = (
+        select(func.count())
+        .select_from(GeotagMaster)
+        .where(
+            GeotagMaster.kdkab == luar.kdkab,
+            GeotagMaster.id <= luar.id,
+        )
+        .correlate(luar)
+        .scalar_subquery()
+    )
+    ids = [satu.id for satu in baris]
+    hasil = sesi.execute(
+        select(luar.id, nomor.label("nomor")).where(luar.id.in_(ids))
+    ).all()
+    return {int(satu_id): int(satu_nomor) for satu_id, satu_nomor in hasil}
+
+
+def lengkapi_nomor_versi(
+    sesi: Session, baris: Sequence[GeotagMaster]
+) -> None:
+    nomor = nomor_versi_master(sesi, baris)
+    for satu in baris:
+        satu.nomor_versi = nomor.get(satu.id)
+
+
+def lengkapi_nomor_urut(sesi: Session, baris: Sequence[Run]) -> None:
+    """Isi nomor urut job, sumber run A, dan versi master untuk tampilan."""
+    nomor = nomor_urut_run(sesi, baris)
+    for satu in baris:
+        satu.nomor_urut = nomor.get(satu.id)
+
+    sumber_ids = {
+        satu.sumber_run_a_id for satu in baris if satu.sumber_run_a_id is not None
+    }
+    if sumber_ids:
+        sumber = list(sesi.scalars(select(Run).where(Run.id.in_(sumber_ids))))
+        nomor_sumber = nomor_urut_run(sesi, sumber)
+        for satu in sumber:
+            satu.nomor_urut = nomor_sumber.get(satu.id)
+        peta = {satu.id: satu.nomor_urut for satu in sumber}
+    else:
+        peta = {}
+    for satu in baris:
+        satu.sumber_run_a_nomor = (
+            peta.get(satu.sumber_run_a_id) if satu.sumber_run_a_id else None
+        )
+
+    master_ids = {
+        satu.geotag_master_id
+        for satu in baris
+        if satu.geotag_master_id is not None
+    }
+    if master_ids:
+        master = list(
+            sesi.scalars(select(GeotagMaster).where(GeotagMaster.id.in_(master_ids)))
+        )
+        nomor_master = nomor_versi_master(sesi, master)
+        for satu in master:
+            satu.nomor_versi = nomor_master.get(satu.id)
+        peta_master = {satu.id: satu.nomor_versi for satu in master}
+    else:
+        peta_master = {}
+    for satu in baris:
+        satu.geotag_master_nomor = (
+            peta_master.get(satu.geotag_master_id)
+            if satu.geotag_master_id
+            else None
+        )
+
+
 def _wilayah_dict(baris: Mapping[str, Any], awalan: str) -> dict[str, Any] | None:
     """Susun dict wilayah dari kolom berawalan (``tugas_``/``asal_``/``edit_``)."""
     if baris.get(f"{awalan}_idsubsls") is None:

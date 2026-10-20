@@ -151,6 +151,14 @@ def test_setelan_default() -> None:
     assert Settings.model_fields["worker_enabled"].default is True
     assert Settings.model_fields["dir_unggahan"].default == "data/unggahan"
     assert Settings.model_fields["dir_master"].default == "data/master"
+    assert Settings.model_fields["api_prefix"].default == ""
+    assert Settings.model_fields["worker_poll_detik"].default == 5.0
+    assert Settings.model_fields["worker_heartbeat_detik"].default == 15.0
+    assert Settings(api_prefix="api/").api_prefix == "/api"
+    assert Settings(api_prefix="/").api_prefix == ""
+    assert Settings(_env_file=None).cors_origins == [
+        "https://pointse.web.bps.go.id"
+    ]
 
 
 def test_assignment_id_unik_per_job(sesi: Session) -> None:

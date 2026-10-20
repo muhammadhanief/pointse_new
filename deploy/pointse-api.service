@@ -1,0 +1,25 @@
+[Unit]
+Description=pointse API (FastAPI/uvicorn)
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pointse
+Group=pointse
+WorkingDirectory=/opt/pointse/backend
+EnvironmentFile=/etc/pointse/pointse.env
+Environment=WORKER_ENABLED=false
+# Satu worker uvicorn; job berat dijalankan service worker terpisah.
+ExecStart=/opt/pointse/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --no-server-header
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+KillSignal=SIGTERM
+MemoryMax=1G
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

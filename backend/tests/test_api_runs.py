@@ -573,3 +573,37 @@ def test_hasil_menambah_kolom_proses_b_kosong(
         assert nama in baris
         assert baris[nama] is None
     assert baris["wilayah_edit"] is None
+
+
+def test_proses_b_memakai_peta_run_a_tanpa_mengubah_nama_berkas(
+    klien: TestClient,
+    sesi: Session,
+    sesi_pabrik: sessionmaker[Session],
+    tmp_path: Path,
+) -> None:
+    """Peta GeoJSON dari run A disalin dengan nama yang sama agar layer tetap ketemu."""
+    titik, peta = berkas_uji(tmp_path)
+    id_a = unggah(klien, titik, peta).json()["id"]
+    jalankan(sesi_pabrik)
+
+    run_a = sesi.get(Run, id_a)
+    assert run_a is not None
+    # level_6_full_code harus berawalan kode kabupaten/kota agar sumber B terbaca.
+    titik_b, _ = berkas_uji_b(
+        tmp_path, (data_kecil.baris_titik_b("1", "3307A1"),)
+    )
+    with titik_b.open("rb") as berkas:
+        resp = klien.post(
+            "/runs",
+            data={"tipe": "B", "sumber_run_a_id": str(id_a)},
+            files={"titik": ("titik_b.geojson", berkas, "application/geo+json")},
+        )
+
+    assert resp.status_code == 201, resp.text
+    run_b = sesi.get(Run, resp.json()["id"])
+    assert run_b is not None
+    assert Path(run_b.berkas_peta).name == Path(run_a.berkas_peta).name
+
+    jalankan(sesi_pabrik)
+    sesi.refresh(run_b)
+    assert run_b.status == "sukses"

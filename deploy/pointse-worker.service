@@ -1,0 +1,26 @@
+[Unit]
+Description=pointse worker Proses A/B
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pointse
+Group=pointse
+WorkingDirectory=/opt/pointse/backend
+EnvironmentFile=/etc/pointse/pointse.env
+Environment=WORKER_MEM_BUDGET_MB=800
+# SIGTERM: selesaikan batch yang sedang berjalan, lalu keluar.
+ExecStart=/opt/pointse/backend/.venv/bin/python -m app.worker --loop
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=600
+MemoryMax=1500M
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

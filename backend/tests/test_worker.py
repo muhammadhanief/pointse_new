@@ -669,7 +669,9 @@ def test_mulai_worker_membuat_thread_sesuai_max_workers(
 ) -> None:
     """MAX_WORKERS menentukan jumlah thread worker yang dinyalakan."""
     monkeypatch.setattr(modul_worker, "get_sessionmaker", lambda: sesi_pabrik)
-    setelan = setelan.model_copy(update={"max_workers": 2, "interval_polling": 0.05})
+    setelan = setelan.model_copy(
+        update={"max_workers": 2, "worker_poll_detik": 0.05}
+    )
 
     benang, penghenti = mulai_worker(setelan)
     try:

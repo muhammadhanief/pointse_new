@@ -1,55 +1,38 @@
 # AGENTS.md
 
-Web app monitoring progres editing batas Wilkerstat BPS. Baca `PRD.md` sebelum
-mengerjakan task apa pun, terutama bagian "Proses" untuk logika spasial.
+## Konteks
+- Aplikasi monitoring progres editing batas Wilkerstat BPS; baca `PRD.md` sebelum task, terutama bagian Proses dan Keputusan.
+- Backend: AlmaLinux 8/aaPanel, 4 core (i5), RAM 7,6 GB (~2,8 GB tersedia), HDD, swap 8 GB; systemd 239, Python 3.11+ (bawaan 3.6 tidak dipakai), MariaDB 10.11.
+- API: FastAPI/uvicorn langsung (bukan Passenger), satu worker uvicorn, service `pointse-api`, `MemoryMax=1G`.
+- Worker: service `pointse-worker` menjalankan `--loop`, `MemoryMax=1500M`, `Nice=10`, `WORKER_MEM_BUDGET_MB=800`, `fcntl.flock`.
+- Frontend: Next.js static export di cPanel; batas akun cPanel tetap 1 GB TOTAL (idle ±366 MB). Frontend memanggil API lintas origin dengan `NEXT_PUBLIC_API_BASE` dan Bearer; tanpa cookie, rewrite, atau rute API Next.js di production.
+- File spasial di disk; MariaDB InnoDB tanpa PostGIS dan tanpa geometri di DB.
 
-## Struktur
-- `backend/`  FastAPI (Python), geopandas, SQLAlchemy + PyMySQL, Alembic
-- `frontend/` Next.js 16 + React 19 + Tailwind 4 (scaffold `create-next-app`).
-  Deploy di server BPS (domain `*.bps.go.id`), bukan Vercel — syarat SSO BPS.
-- Acuan tampilan (sidebar dan gaya) = aplikasi lokal SE2026:
-  `D:\2026\SID\SPBE\Sistem Informasi\se2026\assignse2026\assignse2026`
-  (Next.js, sidebar di `app/(dashboard)/layout.tsx`, halaman contoh di
-  `app/(dashboard)/**/page.tsx`, komponen di `components/`). Folder itu punya
-  `AGENTS.md` sendiri: baca `node_modules/next/dist/docs/` sebelum menulis kode Next.js.
-- `docs/` = data uji + model QGIS asli (bukan kode, JANGAN di-commit; total ~370 MB):
-  - `docs/Titik Bangunan dan SLS/3307/Landmark Bangunan/landmark_202523307.gpkg`
-    input Proses A/B, layer `geotag`, 397.443 titik, CRS 4326
-  - `docs/Titik Bangunan dan SLS/3307/Peta SLS SubSLS/Final_SLS_202513307.geojson`
-    peta wilkerstat baru, 7.966 poligon SubSLS, CRS 4326
-  - `docs/hasil_identifikasi_titik_model1.gpkg` = OUTPUT QGIS Proses A (pembanding tes T1),
-    layer `hasil_identifikasi_titik`, 397.364 baris
-  - `docs/hasil_pengecekan_posisi_model2.gpkg` = OUTPUT QGIS Proses B (pembanding tes T2),
-    layer `hasil_pengecekan_titik_hasil_penggeseran`, 397.364 baris.
-    CATATAN: di file ini semua `flag_position`=0 dan `flag_edit_atr_repair`=0, jadi hanya
-    menguji kasus "tidak ada titik digeser".
-  - `docs/Model Olah Titik Bangunan dan Peta/.../Model/*.model3` = model QGIS asli
-    (format XML, bukan JSON). Ini sumber kebenaran logika Proses A dan B.
-  - `docs/Panduan SSO Client.pdf` = panduan SSO BPS (Keycloak 26.7.0,
-    https://accounts.bps.go.id, realm `pegawai`/`public`, OIDC Authorization Code + PKCE).
-    PENTING: SSO BPS hanya boleh dipakai aplikasi berdomain `*.bps.go.id` (di-hosting di
-    layanan BPS) — hosting di luar BPS (mis. Vercel) tidak boleh memakai SSO BPS.
+## Perintah
+- Venv: `cd backend; python -m venv .venv`
+- Install: `backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt`
+- API lokal: `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --reload`
+- Tes: `cd backend; .venv\Scripts\python.exe -m pytest -q`
+- Worker sekali: `cd backend; python -m app.worker --once`
+- Worker service lokal: `cd backend; python -m app.worker --loop`
+- Frontend: `cd frontend; npm run dev`; build: `npm run build` dengan `NEXT_PUBLIC_API_BASE`.
+- Migrasi: `cd backend; alembic upgrade head`
+- Deploy/backup: `deploy/deploy.sh`, `deploy/backup.sh`; panduan `deploy/README.md`.
+- Pantau worker: `cd backend; python scripts/pantau_worker.py`
 
-## Perintah (venv di `backend/.venv`, Windows)
-- Buat venv: `cd backend; python -m venv .venv`
-- Install dependensi: `backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt`
-- Backend jalan: `cd backend; .venv\Scripts\python.exe -m uvicorn app.main:app --reload`
-- Backend tes: `cd backend; .venv\Scripts\python.exe -m pytest -q`
-- Frontend jalan: `cd frontend; npm run dev`
-- Migrasi DB: `cd backend; .venv\Scripts\python.exe -m alembic upgrade head` (menyusul di T3)
-
-## Aturan teknis
-- Database hanya MySQL. Jangan pakai PostgreSQL/PostGIS. Jangan simpan geometri di DB.
-- Jangan pakai QGIS/PyQGIS. Hitungan spasial pakai geopandas/pyogrio/shapely.
-- Replikasi logika model QGIS PERSIS seperti di PRD.md. Jangan "memperbaiki" logikanya
-  kecuali diminta.
-- Hanya backend yang boleh mengakses MySQL. Frontend selalu lewat API.
-- Jangan commit data mentah, file `.env`, atau kredensial.
-- Beri type hints di Python. Komentar kode singkat, dalam Bahasa Indonesia.
-
-## Cara kerja
-- Kerjakan SATU task per sesi, sesuai daftar di PRD.md bagian 12. Jangan melebar ke task lain.
-- Ubah file seperlunya saja. Jangan refactor di luar yang diminta.
-- Tambahkan tes untuk logika baru. Jalankan tes sebelum menyatakan selesai.
-- Kalau ada hal yang ambigu atau ada di "Pertanyaan terbuka" PRD, tanya dulu, jangan menebak.
-- Jawab ringkas dalam Bahasa Indonesia. Tidak perlu penjelasan panjang kecuali diminta.
+## Aturan keras
+- Jangan ubah `proses_a.py`/`proses_b.py` kecuali diminta; replikasi logika model QGIS PERSIS.
+- API tidak boleh mengimpor pandas/geopandas/pyogrio/shapely saat startup; impor berat hanya di modul worker.
+- Anggaran memori worker `WORKER_MEM_BUDGET_MB=800`; hormati batas RAM server dan jangan menjalankan proses paralel di luar systemd/cron.
+- Unggahan: body mentah `application/octet-stream`; dilarang FormData/multipart (WAF: isi biner berlabel form 403, body form di atas ±1 MB 413). Batas body 128 MiB/request; berkas besar lewat potongan 16 MiB, resume, dan hash per potongan.
+- CORS hanya origin frontend; `Authorization: Bearer` saja, tanpa cookie/credentials. `ENV=production` menolak `AUTH_MODE=dev` dan mewajibkan `AUTH_SECRET`.
+- `API_PREFIX` menentukan path API (default kosong); frontend memakai `NEXT_PUBLIC_API_BASE` yang sama.
+- Nginx: HTTPS saja, `client_max_body_size 512m`, `client_body_timeout 600s`, `proxy_read_timeout 600s`, `proxy_request_buffering off`, `limit_req` 10 r/s per IP.
+- MariaDB hanya dari `127.0.0.1`, satu database, satu pengguna aplikasi; `innodb_buffer_pool_size=768M`, `innodb_flush_log_at_trx_commit=2`.
+- Jangan pakai QGIS/PyQGIS; hitungan spasial di Python.
+- Hanya backend yang mengakses MariaDB; frontend selalu lewat API.
+- Jangan mencetak atau menyimpan token, cookie, atau kata sandi di log, dokumen, atau commit.
+- Jangan commit data mentah `docs/`, `.env`, atau kredensial.
+- Satu task per sesi; jangan refactor di luar permintaan; tanya bila ambigu.
+- Tambahkan tes untuk logika baru dan jalankan tes sebelum menyatakan selesai.
+- Jawab ringkas dalam Bahasa Indonesia.

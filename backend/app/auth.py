@@ -1,9 +1,9 @@
-"""Autentikasi token sesi dari frontend dan otorisasi per wilayah.
+"""Autentikasi token Bearer dan otorisasi per wilayah.
 
-Alur SSO BPS dijalankan di frontend (OIDC Authorization Code + PKCE). Setelah
-callback, frontend menyimpan sesi sebagai JWT HS256 di cookie httpOnly dan
-meneruskannya ke backend sebagai ``Authorization: Bearer <token>``. Backend hanya
-memverifikasi tanda tangan token itu; token tidak pernah dibuat di browser.
+Token sesi dibuat oleh alur login frontend dan dikirim backend sebagai
+``Authorization: Bearer <token>``. Backend tidak membaca cookie dan tidak
+membuat token sendiri; token diverifikasi dengan kunci HS256 dari
+``AUTH_SECRET``.
 
 ``org`` dari SSO dipetakan ke peran oleh :func:`app.peran.peran_dari_org`:
 
@@ -11,8 +11,9 @@ memverifikasi tanda tangan token itu; token tidak pernah dibuat di browser.
   di provinsinya;
 - petugas kabupaten/kota: boleh menjalankan Proses A/B dan melihat datanya sendiri.
 
-``AUTH_REQUIRED=false`` hanya untuk tes/mode lokal: semua permintaan dianggap
-pengguna pengembang yang boleh mengakses semua wilayah.
+``AUTH_MODE=dev`` hanya untuk tes/mode lokal: semua permintaan dianggap pengguna
+pengembang yang boleh mengakses semua wilayah. Mode ini ditolak saat
+``ENV=production``.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from fastapi import Depends, HTTPException, Request
 from app.config import Settings, get_settings
 from app.peran import PERAN_ADMIN_PROVINSI, Peran, peran_dari_org
 
-#: Peran khusus saat ``AUTH_REQUIRED=false`` (tes/mode lokal).
+#: Peran khusus saat ``AUTH_MODE=dev`` (tes/mode lokal).
 PERAN_DEV = "dev"
 
 
@@ -82,11 +83,12 @@ def pengguna_saat_ini(
     request: Request,
     setelan: Settings = Depends(get_settings),
 ) -> Pengguna:
-    """Dependency FastAPI: verifikasi token sesi dan kembalikan identitas pengguna."""
-    if not setelan.auth_required:
+    """Dependency FastAPI: verifikasi token Bearer dan kembalikan identitas."""
+    if setelan.auth_mode == "dev":
         return _pengguna_dev()
 
-    if not setelan.auth_secret:
+    rahasia = setelan.auth_secret.strip()
+    if not rahasia:
         raise HTTPException(
             status_code=503,
             detail="autentikasi backend belum dikonfigurasi (AUTH_SECRET kosong)",
@@ -103,7 +105,7 @@ def pengguna_saat_ini(
     try:
         klaim = jwt.decode(
             token,
-            setelan.auth_secret,
+            rahasia,
             algorithms=["HS256"],
             audience=setelan.auth_audience,
             issuer=setelan.auth_issuer,

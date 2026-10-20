@@ -53,7 +53,10 @@ def test_ekspor_hasil_a_sama_dengan_keluaran_proses(
     respons = klien.get(f"/runs/{run_id}/ekspor/hasil-a.gpkg")
     assert respons.status_code == 200, respons.text
     assert respons.headers["content-type"] == "application/geopackage+sqlite3"
-    assert f"hasil_identifikasi_titik_run{run_id}.gpkg" in respons.headers["content-disposition"]
+    assert (
+        "3307_hasil_identifikasi_titik_ke1.gpkg"
+        in respons.headers["content-disposition"]
+    )
 
     berkas = simpan_unduhan(respons, tmp_path / "hasil_a.gpkg")
     assert pyogrio.list_layers(berkas)[0, 0] == ekspor.LAYER_HASIL_A

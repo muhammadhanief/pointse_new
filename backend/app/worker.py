@@ -22,7 +22,14 @@ Aturan yang dipenuhi modul ini:
 
 Jalankan sebagai proses terpisah::
 
-    .venv\\Scripts\\python.exe -m app.worker
+    .venv/bin/python -m app.worker --once
+    .venv/bin/python -m app.worker --loop
+
+``--loop`` mem-poll setiap ``WORKER_POLL_DETIK`` detik dan berhenti rapi saat
+menerima SIGTERM/SIGINT: batch yang sedang disimpan diselesaikan lebih dulu, job
+dikembalikan ke ``menunggu``, lalu proses keluar. Satu proses worker memegang
+``fcntl.flock`` pada ``WORKER_LOCK_FILE`` sehingga ``--once`` dari cron tidak
+berjalan bersamaan dengan service.
 
 Jumlah worker bersamaan diatur ``MAX_WORKERS`` (default 1, lihat ``.env``).
 Dengan lebih dari satu worker, dua job berbeda kabupaten/tipe jalan paralel; kalau
@@ -36,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import shutil
 import signal
 import threading
@@ -59,12 +67,14 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from app import rekap as modul_rekap
 from app import wilayah
 from app.config import Settings, get_settings
 from app.db import get_sessionmaker
+from app.kunci import KunciBerkas, jalur_kunci
 from app.models import (
     STATUS_GAGAL,
     STATUS_JALAN,
@@ -99,11 +109,49 @@ GESER_URUT = 10**16
 #: Nama tabel sementara pemetaan urut (per koneksi basis data).
 TABEL_URUT = "_pointse_urut_sementara"
 
-#: Nama kunci advisory worker ``--once`` (MariaDB ``GET_LOCK``).
-NAMA_KUNCI_WORKER = "pointse_worker_once"
-
 #: Pesan untuk job ``jalan`` yang heartbeat-nya kedaluwarsa (server mati).
 PESAN_TERHENTI = "proses terhenti, kemungkinan dimatikan server"
+
+#: Pesan saat worker berhenti rapi di tengah job.
+PESAN_DIHENTIKAN = "worker dihentikan, job dikembalikan ke antrean"
+
+#: Pesan saat RSS worker melewati ``WORKER_MEM_BUDGET_MB``.
+PESAN_ANGGARAN_MEMORI = (
+    "worker melewati anggaran memori; job dihentikan agar server tidak OOM"
+)
+
+
+class WorkerDihentikan(RuntimeError):
+    """Sinyal SIGTERM diterima; berhenti setelah batch yang sedang berjalan."""
+
+
+class AnggaranMemori(RuntimeError):
+    """RSS worker melewati batas yang dikonfigurasi."""
+
+
+def baca_rss_mb() -> float | None:
+    """Baca RSS proses dari ``/proc/self/statm`` (Linux); ``None`` bila tak ada."""
+    try:
+        with open("/proc/self/statm", encoding="ascii") as berkas:
+            halaman = int(berkas.read().split()[1])
+        return halaman * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
+
+
+def cek_berhenti(
+    penghenti: threading.Event | None,
+    setelan: Settings | None = None,
+) -> None:
+    """Hentikan job setelah batch bila diminta, atau bila memori melewati batas."""
+    if penghenti is not None and penghenti.is_set():
+        raise WorkerDihentikan
+    if setelan is not None and setelan.worker_mem_budget_mb > 0:
+        rss = baca_rss_mb()
+        if rss is not None and rss > setelan.worker_mem_budget_mb:
+            raise AnggaranMemori(
+                f"RSS {rss:.0f} MiB > {setelan.worker_mem_budget_mb} MiB"
+            )
 
 
 def baca_masukan(run: Run) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
@@ -182,7 +230,12 @@ def siapkan_baris(
 
 
 def simpan_hasil(
-    sesi: Session, run: Run, hasil: gpd.GeoDataFrame, id_wilayah: dict[str, int]
+    sesi: Session,
+    run: Run,
+    hasil: gpd.GeoDataFrame,
+    id_wilayah: dict[str, int],
+    setelan: Settings | None = None,
+    penghenti: threading.Event | None = None,
 ) -> int:
     """Simpan hasil ke ``titik_hasil`` per batch; kembalikan jumlah baris."""
     siap = tambah_kolom_wilayah(hasil, id_wilayah)
@@ -195,6 +248,8 @@ def simpan_hasil(
         run.jumlah_baris = jumlah
         run.heartbeat_at = sekarang()
         sesi.commit()
+        # SIGTERM/anggaran memori baru dihormati setelah batch ini utuh.
+        cek_berhenti(penghenti, setelan)
 
     if len(siap) == 0:
         run.jumlah_baris = 0
@@ -253,7 +308,12 @@ def jumlah_tersimpan(sesi: Session, run_id: int) -> int:
 
 
 def simpan_potongan(
-    sesi: Session, run: Run, hasil: gpd.GeoDataFrame, id_wilayah: dict[str, int]
+    sesi: Session,
+    run: Run,
+    hasil: gpd.GeoDataFrame,
+    id_wilayah: dict[str, int],
+    setelan: Settings | None = None,
+    penghenti: threading.Event | None = None,
 ) -> None:
     """Simpan hasil satu potongan langsung ke ``titik_hasil`` per batch.
 
@@ -319,6 +379,8 @@ def simpan_potongan(
         run.heartbeat_at = sekarang()
         run.jumlah_baris = jumlah_tersimpan(sesi, run.id)
         sesi.commit()
+        # SIGTERM/anggaran memori baru dihormati setelah batch ini utuh.
+        cek_berhenti(penghenti, setelan)
 
 
 def hitung_tanpa_wilayah(sesi: Session, run_id: int) -> int:
@@ -362,7 +424,12 @@ def pangkas_berkas(sesi: Session, run_ids: list[int], akar: Path) -> list[str]:
     return terhapus
 
 
-def proses_potongan(sesi: Session, run: Run, setelan: Settings) -> int:
+def proses_potongan(
+    sesi: Session,
+    run: Run,
+    setelan: Settings,
+    penghenti: threading.Event | None = None,
+) -> int:
     """Jalankan Proses A/B dengan titik dibaca per potongan (hemat memori).
 
     Peta tetap dibaca utuh (dipakai semua potongan), sedangkan titik dibaca
@@ -378,11 +445,13 @@ def proses_potongan(sesi: Session, run: Run, setelan: Settings) -> int:
     wilayah.upsert(sesi, wilayah.baris_dari_peta(peta))
     run.heartbeat_at = sekarang()
     sesi.commit()
+    cek_berhenti(penghenti, setelan)
 
     id_wilayah: dict[str, int] = {}
     for urut_awal, titik_potongan in baca_potongan(
         run.berkas_input, run.layer_input, setelan.proses_chunk_titik
     ):
+        cek_berhenti(penghenti, setelan)
         if run.tipe == TIPE_A:
             hasil = proses_a_potongan(titik_potongan, peta, urut_awal)
         else:
@@ -395,7 +464,7 @@ def proses_potongan(sesi: Session, run: Run, setelan: Settings) -> int:
         if kode_baru:
             id_wilayah.update(wilayah.peta_id(sesi, kode_baru))
 
-        simpan_potongan(sesi, run, hasil, id_wilayah)
+        simpan_potongan(sesi, run, hasil, id_wilayah, setelan, penghenti)
 
     if run.jumlah_baris is None:
         run.jumlah_baris = 0
@@ -547,10 +616,50 @@ def terapkan_urut_penuh(sesi: Session, run_id: int) -> None:
         sesi.execute(text(f"DROP TEMPORARY TABLE {TABEL_URUT}"))
 
 
+def _jaga_heartbeat(
+    run_id: int,
+    sesi_pabrik: sessionmaker[Session],
+    berhenti: threading.Event,
+    interval: float,
+) -> None:
+    """Perbarui ``runs.heartbeat_at`` selama job berjalan, tiap ``interval`` detik."""
+    while not berhenti.wait(interval):
+        try:
+            with sesi_pabrik() as sesi:
+                # Jangan menunggu 50 detik bila baris ``runs`` sedang dikunci oleh
+                # transaksi batch utama; heartbeat hanya informasi, bukan data hasil.
+                if sesi.get_bind().dialect.name in ("mysql", "mariadb"):
+                    sesi.execute(text("SET SESSION innodb_lock_wait_timeout = 2"))
+                hasil = sesi.execute(
+                    update(Run)
+                    .where(Run.id == run_id, Run.status == STATUS_JALAN)
+                    .values(heartbeat_at=sekarang())
+                )
+                sesi.commit()
+                if not hasil.rowcount:
+                    return
+        except OperationalError as galat:
+            # 1205 = lock wait timeout; wajar saat batch besar masih memegang
+            # lock baris runs. Jangan banjiri log service tiap 15 detik.
+            kode = getattr(getattr(galat, "orig", None), "args", (None,))[0]
+            if kode == 1205:
+                logger.debug("heartbeat job %s tertunda: %s", run_id, galat)
+            else:
+                logger.warning("heartbeat job %s gagal: %s", run_id, galat)
+        except Exception:  # noqa: BLE001 - heartbeat tidak boleh mematikan job
+            logger.exception("gagal memperbarui heartbeat job %s", run_id)
+
+
 def proses_satu_job(
-    sesi_pabrik: sessionmaker[Session] | None = None, setelan: Settings | None = None
+    sesi_pabrik: sessionmaker[Session] | None = None,
+    setelan: Settings | None = None,
+    penghenti: threading.Event | None = None,
 ) -> bool:
-    """Ambil lalu jalankan satu job; ``False`` kalau tidak ada job antre."""
+    """Ambil lalu jalankan satu job; ``False`` kalau tidak ada job antre.
+
+    ``penghenti`` dipakai mode service: setelah batch yang sedang berjalan
+    selesai, job dikembalikan ke ``menunggu`` lalu proses boleh keluar.
+    """
     sesi_pabrik = sesi_pabrik or get_sessionmaker()
     setelan = setelan or get_settings()
 
@@ -566,6 +675,14 @@ def proses_satu_job(
     logger.info("job %s (%s, %s/%s) mulai dikerjakan", run_id, tipe, kdprov, kdkab)
     potongan = setelan.proses_chunk_titik > 0
     buang: list[int] = []
+    berhenti_heartbeat = threading.Event()
+    heartbeat = threading.Thread(
+        target=_jaga_heartbeat,
+        args=(run_id, sesi_pabrik, berhenti_heartbeat, setelan.worker_heartbeat_detik),
+        name=f"pointse-heartbeat-{run_id}",
+        daemon=True,
+    )
+    heartbeat.start()
     try:
         with sesi_pabrik() as sesi:
             run = sesi.get(Run, run_id)
@@ -578,20 +695,24 @@ def proses_satu_job(
             sesi.commit()
 
             if potongan:
-                jumlah = proses_potongan(sesi, run, setelan)
+                jumlah = proses_potongan(sesi, run, setelan, penghenti)
             else:
                 titik, peta = baca_masukan(run)
                 # Dimensi wilayah di-upsert dari peta (nama wilayah hanya di sini).
                 wilayah.upsert(sesi, wilayah.baris_dari_peta(peta))
                 sesi.commit()
+                cek_berhenti(penghenti, setelan)
 
                 hasil = jalankan_proses(run, titik, peta)
                 id_wilayah = wilayah.peta_id(sesi, kode_hasil(hasil))
                 sesi.commit()
+                cek_berhenti(penghenti, setelan)
 
                 # Semua titik disimpan dulu supaya rekap bisa dihitung lewat query
                 # GROUP BY; sisanya dirampingkan di akhir (satu transaksi).
-                jumlah = simpan_hasil(sesi, run, hasil, id_wilayah)
+                jumlah = simpan_hasil(
+                    sesi, run, hasil, id_wilayah, setelan, penghenti
+                )
 
             # Peringkat urut penuh dihitung sebelum titik tidak perlu perhatian
             # dibuang, supaya celah urut sama dengan mode tanpa potongan.
@@ -620,6 +741,40 @@ def proses_satu_job(
             with sesi_pabrik() as sesi:
                 terhapus = pangkas_berkas(sesi, buang, Path(setelan.dir_unggahan))
             logger.info("berkas mentah dihapus: %s", terhapus)
+    except WorkerDihentikan:
+        logger.info("job %s dihentikan setelah batch; dikembalikan ke antrean", run_id)
+        with sesi_pabrik() as sesi:
+            bersihkan_hasil(sesi, run_id)
+            sesi.execute(
+                update(Run)
+                .where(Run.id == run_id)
+                .values(
+                    status=STATUS_MENUNGGU,
+                    started_at=None,
+                    heartbeat_at=None,
+                    finished_at=None,
+                    detail_tersedia=0,
+                    jumlah_baris=0,
+                    jumlah_tanpa_wilayah=0,
+                    pesan=PESAN_DIHENTIKAN,
+                )
+            )
+            sesi.commit()
+    except AnggaranMemori as galat:
+        logger.error("job %s melewati anggaran memori: %s", run_id, galat)
+        with sesi_pabrik() as sesi:
+            bersihkan_hasil(sesi, run_id)
+            sesi.execute(
+                update(Run)
+                .where(Run.id == run_id)
+                .values(
+                    status=STATUS_GAGAL,
+                    detail_tersedia=0,
+                    pesan=PESAN_ANGGARAN_MEMORI,
+                    finished_at=sekarang(),
+                )
+            )
+            sesi.commit()
     except Exception as galat:  # noqa: BLE001 - pesan apa pun dicatat di runs.pesan
         logger.exception("job %s gagal", run_id)
         with sesi_pabrik() as sesi:
@@ -635,50 +790,34 @@ def proses_satu_job(
                 )
             )
             sesi.commit()
+    finally:
+        berhenti_heartbeat.set()
+        heartbeat.join(timeout=5)
     return True
 
 
-def ambil_kunci(sesi: Session, nama: str = NAMA_KUNCI_WORKER) -> bool:
-    """Ambil advisory lock worker ``--once`` (MariaDB ``GET_LOCK``).
-
-    Di SQLite/tes tidak ada ``GET_LOCK``; fungsi mengembalikan ``True`` (tidak
-    ada dua proses cron yang perlu dijaga di lingkungan tes).
-    """
-    if sesi.get_bind().dialect.name not in ("mysql", "mariadb"):
-        return True
-    return bool(
-        sesi.execute(text("SELECT GET_LOCK(:nama, 0)"), {"nama": nama}).scalar()
-    )
-
-
-def lepas_kunci(sesi: Session, nama: str = NAMA_KUNCI_WORKER) -> None:
-    """Lepas advisory lock worker (koneksi sama dengan :func:`ambil_kunci`)."""
-    if sesi.get_bind().dialect.name in ("mysql", "mariadb"):
-        sesi.execute(text("SELECT RELEASE_LOCK(:nama)"), {"nama": nama})
-        sesi.commit()
-
-
 def jalankan_sekali(
-    sesi_pabrik: sessionmaker[Session] | None = None, setelan: Settings | None = None
+    sesi_pabrik: sessionmaker[Session] | None = None,
+    setelan: Settings | None = None,
+    penghenti: threading.Event | None = None,
 ) -> bool:
     """Mode cron: ambil **paling banyak satu** job, proses, lalu keluar.
 
-    Kunci advisory dipasang di koneksi terpisah selama job berjalan, sehingga
-    dua pemanggilan cron (``python -m app.worker --once``) tidak memproses job
-    bersamaan. Kembalian ``False`` kalau tidak ada job atau kunci dipegang
-    proses lain.
+    ``fcntl.flock`` dipasang selama job berjalan, sehingga dua pemanggilan cron
+    (``python -m app.worker --once``) tidak memproses job bersamaan. Kembalian
+    ``False`` kalau tidak ada job atau kunci dipegang proses lain.
     """
     sesi_pabrik = sesi_pabrik or get_sessionmaker()
     setelan = setelan or get_settings()
 
-    with sesi_pabrik() as sesi:
-        if not ambil_kunci(sesi):
-            logger.info("worker --once lain sedang berjalan; keluar")
-            return False
-        try:
-            return proses_satu_job(sesi_pabrik, setelan)
-        finally:
-            lepas_kunci(sesi)
+    kunci = KunciBerkas(jalur_kunci(setelan))
+    if not kunci.ambil():
+        logger.info("worker lain sedang berjalan; keluar")
+        return False
+    try:
+        return proses_satu_job(sesi_pabrik, setelan, penghenti)
+    finally:
+        kunci.lepas()
 
 
 def jalankan_worker(
@@ -690,12 +829,12 @@ def jalankan_worker(
     setelan = setelan or get_settings()
     while not penghenti.is_set():
         try:
-            ada_job = proses_satu_job(sesi_pabrik, setelan)
+            ada_job = proses_satu_job(sesi_pabrik, setelan, penghenti)
         except Exception:  # noqa: BLE001 - worker jangan mati karena satu galat
             logger.exception("worker gagal mengambil job")
             ada_job = False
         if not ada_job:
-            penghenti.wait(setelan.interval_polling)
+            penghenti.wait(setelan.worker_poll_detik)
     logger.info("worker berhenti")
 
 
@@ -723,7 +862,7 @@ def mulai_worker(
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Titik masuk worker terpisah: ``python -m app.worker [--once]``."""
+    """Titik masuk worker terpisah: ``python -m app.worker --once|--loop``."""
     parser = argparse.ArgumentParser(
         prog="python -m app.worker",
         description="Worker pemroses job Proses A/B.",
@@ -733,33 +872,48 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="ambil paling banyak satu job menunggu, proses, lalu keluar (untuk cron)",
     )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="polling terus-menerus (default bila --once tidak diberikan)",
+    )
     argumen = parser.parse_args(argv)
+    if argumen.once and argumen.loop:
+        parser.error("--once dan --loop tidak boleh dipakai bersamaan")
 
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     setelan = get_settings()
+    penghenti = threading.Event()
+
+    def berhenti(_nomor: int, _frame: object) -> None:
+        logger.info(
+            "sinyal berhenti diterima; menyelesaikan batch lalu keluar"
+        )
+        penghenti.set()
+
+    signal.signal(signal.SIGINT, berhenti)
+    signal.signal(signal.SIGTERM, berhenti)
 
     if argumen.once:
-        diproses = jalankan_sekali(setelan=setelan)
+        diproses = jalankan_sekali(setelan=setelan, penghenti=penghenti)
         logger.info(
             "mode --once selesai: %s",
             "satu job diproses" if diproses else "tidak ada job (atau worker lain berjalan)",
         )
         return
 
-    penghenti = threading.Event()
-
-    def berhenti(_nomor: int, _frame: object) -> None:
-        logger.info("sinyal berhenti diterima; menunggu job selesai")
-        penghenti.set()
-
-    signal.signal(signal.SIGINT, berhenti)
-    signal.signal(signal.SIGTERM, berhenti)
-
-    benang, _ = mulai_worker(setelan, penghenti)
-    for satu in benang:
-        satu.join()
+    # Satu service/loop memegang flock selama hidupnya; --once dari cron akan
+    # langsung keluar bila service sedang berjalan (dan sebaliknya).
+    kunci = KunciBerkas(jalur_kunci(setelan))
+    if not kunci.ambil():
+        logger.info("worker --loop lain sedang berjalan; keluar")
+        return
+    try:
+        jalankan_worker(penghenti, setelan=setelan)
+    finally:
+        kunci.lepas()
 
 
 if __name__ == "__main__":

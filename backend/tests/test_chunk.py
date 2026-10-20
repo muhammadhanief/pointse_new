@@ -8,6 +8,7 @@ di potongan berbeda.
 
 from __future__ import annotations
 
+import threading
 from datetime import timedelta
 from pathlib import Path
 
@@ -28,11 +29,11 @@ from app.models import (
     TitikHasil,
     sekarang,
 )
+from app.kunci import KunciBerkas, jalur_kunci
 from app.worker import (
+    PESAN_DIHENTIKAN,
     PESAN_TERHENTI,
-    ambil_kunci,
     jalankan_sekali,
-    lepas_kunci,
     proses_satu_job,
     tandai_job_terhenti,
 )
@@ -222,7 +223,10 @@ def test_jalankan_sekali_memproses_satu_job_per_panggilan(
     """``--once`` mengambil satu job per pemanggilan lalu keluar."""
     satu = buat_job(sesi, tmp_path, nama="sekali1")
     dua = buat_job(sesi, tmp_path, nama="sekali2")
-    setelan = Settings(proses_chunk_titik=0)
+    setelan = Settings(
+        proses_chunk_titik=0,
+        worker_lock_file=str(tmp_path / "worker.lock"),
+    )
 
     assert jalankan_sekali(sesi_pabrik, setelan) is True
     sesi.expire_all()
@@ -236,7 +240,43 @@ def test_jalankan_sekali_memproses_satu_job_per_panggilan(
     assert jalankan_sekali(sesi_pabrik, setelan) is False
 
 
-def test_kunci_worker_no_op_di_sqlite(sesi: Session) -> None:
-    """Kunci ``GET_LOCK`` tidak berlaku di SQLite; tes tetap bisa memanggilnya."""
-    assert ambil_kunci(sesi) is True
-    lepas_kunci(sesi)  # tidak boleh melempar galat
+def test_kunci_berkas_eksklusif_dan_mudah_dilepas(tmp_path: Path) -> None:
+    """Dua worker tidak boleh memegang berkas kunci yang sama."""
+    setelan = Settings(worker_lock_file=str(tmp_path / "worker.lock"))
+    assert jalur_kunci(setelan) == tmp_path / "worker.lock"
+
+    pertama = KunciBerkas(jalur_kunci(setelan))
+    kedua = KunciBerkas(jalur_kunci(setelan))
+    assert pertama.ambil() is True
+    assert kedua.ambil() is False
+    pertama.lepas()
+    assert kedua.ambil() is True
+    kedua.lepas()
+
+
+def test_sigterm_mengembalikan_job_ke_antrean(
+    sesi: Session, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """SIGTERM saat job jalan tidak menandai gagal; job bisa diulang."""
+    run = buat_job(sesi, tmp_path, nama="dihentikan")
+    setelan = Settings(proses_chunk_titik=2)
+    penghenti = threading.Event()
+    penghenti.set()
+
+    assert proses_satu_job(sesi_pabrik, setelan, penghenti) is True
+    sesi.expire_all()
+    ulang = sesi.get(Run, run.id)
+    assert ulang is not None
+    assert ulang.status == STATUS_MENUNGGU
+    assert ulang.pesan == PESAN_DIHENTIKAN
+    assert ulang.started_at is None
+    assert ulang.heartbeat_at is None
+    assert ulang.jumlah_baris == 0
+    assert (
+        sesi.scalar(
+            select(func.count())
+            .select_from(TitikHasil)
+            .where(TitikHasil.run_id == run.id)
+        )
+        == 0
+    )

@@ -33,7 +33,9 @@ Lalu isi `backend/.env` dengan `DB_HOST=127.0.0.1`, `DB_PORT=3306`, `DB_USER=roo
 .venv\Scripts\python.exe -m uvicorn app.main:app --reload      # http://127.0.0.1:8000/docs
 
 # Worker terpisah (mis. di server lain / proses sendiri)
-.venv\Scripts\python.exe -m app.worker
+.venv\Scripts\python.exe -m app.worker --loop
+# atau sekali jalan (cron/manual):
+.venv\Scripts\python.exe -m app.worker --once
 
 # Tes (tanpa MySQL: tes memakai SQLite sementara)
 .venv\Scripts\python.exe -m pytest -q
@@ -41,14 +43,31 @@ Lalu isi `backend/.env` dengan `DB_HOST=127.0.0.1`, `DB_PORT=3306`, `DB_USER=roo
 .venv\Scripts\python.exe -m pytest -q -m "slow"               # ±2,5 menit: baca GPKG 397.443 titik
 ```
 
+Jangan memakai `--reload` saat job besar sedang berjalan. Reload membunuh worker dan
+job yang ditinggalkan akan ditandai gagal "proses terhenti" setelah heartbeat melewati
+`JOB_TIMEOUT_MENIT` (default 10 menit). Untuk pemrosesan stabil, set
+`WORKER_ENABLED=false`, jalankan uvicorn tanpa `--reload`, lalu worker terpisah:
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+# terminal lain:
+.venv\Scripts\python.exe -m app.worker --loop
+```
+
 ## Endpoint API (T3)
 
 | Method | Alamat | Keterangan |
 |---|---|---|
 | GET | `/health` | Cek aplikasi hidup |
-| POST | `/geotag-master` | Unggah **geotag master** per kabupaten/kota (multipart: `kdprov`, `kdkab` 4 digit, `titik`, `user`, `layer`, `tanggal_data`). Berkas disimpan permanen di `DIR_MASTER`; semua `level_6_full_code` yang terisi harus berawalan `kdprov`+`kdkab` |
+| GET | `/sistem/status` | Status worker (flock, PID, RSS), antrean job, RAM/CPU/disk server, dan peringatan; hanya admin provinsi |
+| POST | `/unggahan/mulai` | Mulai sesi unggahan berpotongan. Body JSON `nama`, `ukuran`, `jenis` (`master`/`peta`/`titik`). Balasan 201: `unggahan_id`, `ukuran_potongan` (dari `UNGGAH_POTONGAN_BYTES`, maksimal 100 MiB), dan `jumlah_potongan` |
+| POST | `/unggahan/{id}/potongan/{n}` | Kirim potongan ke-`n` sebagai body mentah `application/octet-stream` dengan header `X-Sha256`. Body dibaca streaming, hash dicek, dan potongan yang sama boleh dikirim ulang. Balasan 200: `unggahan_id`, `potongan`, `ukuran` |
+| GET | `/unggahan/{id}` | Status sesi: `potongan_diterima` untuk melanjutkan setelah koneksi putus/page reload; `selesai=true` bila berkas final sudah ada |
+| POST | `/unggahan/{id}/selesai` | Susun potongan berurutan, hapus tiap potongan setelah disalin, pindahkan hasil ke `DIR_UNGGAHAN/_unggahan`, dan kembalikan `unggahan_id`, `nama`, `ukuran`, `sha256`, `jenis` |
+| POST | `/unggahan?jenis=&nama=` | Endpoint lama satu body untuk berkas kecil/kompatibilitas. `Content-Type` harus `application/octet-stream`; body dibaca streaming dan hash dihitung sambil menulis |
+| POST | `/geotag-master` | Buat **geotag master** per kabupaten/kota. Cara utama: kirim `kdprov`, `kdkab` 4 digit, `unggahan_id`, `layer`, `tanggal_data`. Multipart `titik` hanya untuk berkas kecil/mode pengembangan. Berkas disimpan permanen di `DIR_MASTER`; semua `level_6_full_code` yang terisi harus berawalan `kdprov`+`kdkab` |
 | GET | `/geotag-master` | Daftar versi geotag master (saring `kdprov`/`kdkab`, paging), terbaru lebih dulu |
-| POST | `/runs` | Unggah berkas (multipart: `tipe`, `titik`, `peta`, `user`, `layer_titik`, `layer_peta`, `tanggal_data`) -> baris `runs` berstatus `menunggu`. **Proses A:** kirim `peta` saja; master dicari otomatis (409 kalau belum ada). **Proses B:** kirim `titik` saja (GPKG hasil edit A); peta diambil dari run A sukses terakhir. Mengirim kedua berkas tetap didukung untuk mode manual/uji |
+| POST | `/runs` | Buat job dari `tipe`, `unggahan_id`, `layer_titik`, `layer_peta`, `tanggal_data`, `sumber_run_a_id` -> baris `runs` berstatus `menunggu`. **Proses A:** unggahan berjenis `peta`; master dicari otomatis (409 kalau belum ada). **Proses B:** unggahan berjenis `titik` (GPKG hasil edit A) dan opsional `sumber_run_a_id`; tanpa id, peta diambil dari run A sukses terakhir. Run sumber harus Proses A sukses dan berasal dari kabupaten/kota yang sama. Multipart `peta`/`titik` tetap ada hanya untuk berkas kecil/mode manual/uji; jangan mengirim `unggahan_id` bersama berkas |
 | GET | `/runs` | Daftar job (saring `tipe`, `status`, `kdprov`, `kdkab`; paging `limit`/`offset`), terbaru lebih dulu |
 | GET | `/ringkasan` | Ringkasan provinsi: satu baris per kabupaten/kota dari run terakhir, dibaca dari `rekap_kabupaten` (saring `tipe`/`kdprov`/`kdkab`, `dasar`); menyertakan `persen_progres` dan `belum_ada_upload_tipe_b` |
 | GET | `/tren` | Tren progres per `tanggal_data` (run sukses terakhir pada tanggal itu); `tingkat` = `kabupaten` (bawaan) atau `provinsi` |
@@ -61,16 +80,18 @@ Lalu isi `backend/.env` dengan `DB_HOST=127.0.0.1`, `DB_PORT=3306`, `DB_USER=roo
 | GET | `/runs/{id}/ekspor/titik.gpkg` | Unduh titik perlu tindakan sebagai GPKG (titik EPSG:4326; pakai koordinat edited kalau ada, kalau tidak origin) |
 | GET | `/ekspor/rekap.csv?tingkat=&tipe=&kdprov=&kdkab=&dasar=&tanggal_awal=&tanggal_akhir=` | Unduh rekap **kabupaten** atau **desa** sebagai CSV; satu baris per run per wilayah, rentang `tanggal_data` inklusif |
 
-Semua endpoint selain `/health` membutuhkan header `Authorization: Bearer <token sesi>`.
-Token dibuat frontend setelah login SSO BPS (lihat `frontend/README.md`) dan diverifikasi
-backend memakai `AUTH_SECRET` yang sama. Isi `user` dari form diabaikan saat SSO aktif.
-CSV memakai UTF-8 tanpa BOM dan pemisah koma.
+Semua endpoint selain `/health` membutuhkan token **Bearer**. Backend tidak membaca
+cookie; frontend lintas origin mengirim `Authorization: Bearer <token sesi>`.
+Token dibuat alur login frontend dan diverifikasi backend memakai `AUTH_SECRET`
+yang sama. Isi `user` dari form diabaikan. CSV memakai UTF-8 tanpa BOM dan
+pemisah koma.
 
 ### Autentikasi dan peran (T4)
 
-- `AUTH_REQUIRED=true` (bawaan) mewajibkan token. `AUTH_REQUIRED=false` hanya untuk tes/mode
-  lokal tanpa SSO.
-- `AUTH_SECRET` minimal 32 karakter dan harus sama dengan `AUTH_SECRET` frontend.
+- `AUTH_MODE=jwt` (bawaan) mewajibkan Bearer. `AUTH_MODE=dev` hanya untuk tes/mode
+  lokal dan ditolak saat `ENV=production`.
+- `ENV=production` mewajibkan `AUTH_SECRET` minimal 32 karakter; tidak ada nilai
+  bawaan. Nilainya harus sama dengan kunci penanda tangan frontend.
 - `org` SSO 4/5 digit dipetakan ke peran oleh `app/peran.py`: `3300`/`33000` = admin provinsi
   `33`; `3307`/`33070` = petugas kabupaten/kota `3307`.
 - Admin provinsi hanya boleh mengunggah geotag master, tetapi boleh menjalankan Proses A/B
@@ -93,8 +114,10 @@ CSV memakai UTF-8 tanpa BOM dan pemisah koma.
    mencatat `geotag_master_id`, sehingga master baru hanya memengaruhi run A baru.
 3. **Proses B (kabupaten/kota).** `POST /runs` dengan `tipe=B` cukup mengirim `titik`
    (GPKG keluaran Proses A yang sudah diedit). Kabupaten/kota ditentukan dari 4 digit
-   pertama `level_6_full_code`; backend memakai run A sukses terakhir, menyalin peta
-   run A ke folder job B, dan mencatat `sumber_run_a_id`. Tidak perlu unggah peta lagi.
+   pertama `level_6_full_code`. Backend memakai run A sukses terakhir, atau run A
+   yang disebut `sumber_run_a_id` bila diisi; run sumber harus sukses dan berasal
+   dari kabupaten/kota yang sama. Peta disalin ke folder job B dan `sumber_run_a_id`
+   dicatat. Tidak perlu unggah peta lagi.
 4. `POST /runs` dengan kedua berkas tetap didukung untuk mode manual/uji (dan data lama).
 5. Worker mengambil job dengan `SELECT ... FOR UPDATE SKIP LOCKED` (MySQL 8), jadi aman
    dijalankan beberapa worker sekaligus (`MAX_WORKERS`). Job dikerjakan **sesuai urutan
@@ -126,16 +149,44 @@ rekap dihitung, urut dirapikan menjadi peringkat `0..n-1` sebelum pemangkasan,
 jadi hasil akhir (termasuk celah `urut` setelah pemangkasan) identik dengan mode
 biasa. Nilai `0` (default) memakai mode lama (seluruh titik sekaligus).
 
-### Worker cron dan job menggantung
+### Worker service, cron, dan job menggantung
 
+- Produksi memakai `python -m app.worker --loop` dengan polling
+  `WORKER_POLL_DETIK` (default 5 detik) dan `MemoryMax=1500M`.
+  `WORKER_MEM_BUDGET_MB` (default 800) menghentikan job dengan status jelas bila
+  RSS melewati anggaran.
 - `python -m app.worker --once` mengambil **paling banyak satu** job, memproses,
-  lalu keluar. Kunci `GET_LOCK` MariaDB mencegah dua pemanggilan cron berjalan
-  bersamaan (di SQLite/tes kunci ini no-op).
-- Worker memperbarui `runs.heartbeat_at` tiap batch. Job `jalan` yang heartbeat-nya
-  lebih lama dari `JOB_TIMEOUT_MENIT` (default 10) dianggap terhenti: statusnya
-  `gagal`, pesannya "proses terhenti, kemungkinan dimatikan server", hasil
-  separuhnya dibersihkan, dan aturan satu job aktif tidak lagi menghalangi unggahan
-  baru untuk kabupaten/tipe itu.
+  lalu keluar. Baik `--loop` maupun `--once` memakai `fcntl.flock`
+  (`WORKER_LOCK_FILE`), sehingga cron tidak berjalan bersamaan dengan service.
+- Worker memperbarui `runs.heartbeat_at` tiap 15 detik dan tiap batch. SIGTERM
+  menyelesaikan batch berjalan, menghapus hasil separuh, dan mengembalikan job ke
+  `menunggu` agar bisa diulang. Job `jalan` yang heartbeat-nya lebih lama dari
+  `JOB_TIMEOUT_MENIT` (default 10) ditandai `gagal` dengan pesan "proses terhenti,
+  kemungkinan dimatikan server".
+
+### Memantau worker
+
+`scripts/pantau_worker.py` menampilkan status job, umur heartbeat, proses
+`app.worker`, berkas `flock`, dan ekor log dalam satu layar yang diperbarui tiap
+5 detik. Skrip ini hanya membaca, tidak mengubah data.
+
+```bash
+cd /opt/pointse/backend
+.venv/bin/python scripts/pantau_worker.py
+```
+
+Tekan `Ctrl-C` untuk berhenti. Opsi berguna:
+
+```bash
+python scripts/pantau_worker.py --sekali          # cetak sekali
+python scripts/pantau_worker.py --job 7           # fokus satu job
+python scripts/pantau_worker.py --log /home/USER/pointse-data/worker.log
+python scripts/pantau_worker.py --interval 10     # refresh tiap 10 detik
+```
+
+Tanpa `--log`, lokasi log ditebak dari folder induk `DIR_UNGGAHAN`. Di server
+AlmaLinux, log utama service ada di `journalctl -u pointse-worker`; set
+`--log` bila juga menulis berkas log.
 
 ### Alat ukur
 
@@ -200,6 +251,9 @@ sebagai masukan Proses B**.
   perhatian), termasuk kode wilayah tugas/asal/edit dan koordinat origin/edited.
 - `rekap.csv` berisi snapshot `rekap_kabupaten`/`rekap_desa` per run, dengan nama wilayah
   dari tabel `wilayah`; baris "(tanpa wilayah)" diberi nama `(tanpa wilayah)` dan kode kosong.
+- Semua nama berkas unduhan diawali kode wilayah 4 digit dan garis bawah, misalnya
+  `3307_hasil_identifikasi_titik_ke1.gpkg` atau `3307_titik_perlu_tindakan_ke1.csv`.
+  Ekspor rekap provinsi memakai `3300_...`.
 - Tes `tests/test_ekspor.py` memuat tes pulang-pergi: GPKG hasil ekspor A diunggah sebagai
   masukan B tanpa edit, lalu rekap B harus sama dengan rekap A (tidak ada titik tergeser,
   `flag_edit_atr_repair` = 0).
@@ -208,7 +262,8 @@ sebagai masukan Proses B**.
 
 - `app/config.py` — setelan dari `.env` (MySQL, CORS, auth, folder unggahan, worker)
 - `app/db.py` — engine + sesi SQLAlchemy (MySQL lewat PyMySQL)
-- `app/auth.py` — verifikasi token sesi HS256 + pembatasan wilayah per peran
+- `app/auth.py` — verifikasi Bearer HS256 (tanpa cookie) + pembatasan wilayah per peran
+- `app/kunci.py` — `fcntl.flock` / `msvcrt.locking` untuk satu proses worker
 - `app/peran.py` — pemetaan `org` SSO 4/5 digit ke peran
 - `app/models.py` — tabel `runs`, `wilayah`, `titik_hasil`, `rekap_desa`, `rekap_kabupaten` (PRD §7)
 - `app/wilayah.py` — dimensi wilayah (baris dari peta, upsert, pemetaan kode → id; kode di
@@ -219,8 +274,9 @@ sebagai masukan Proses B**.
 - `app/layanan.py` — pemeriksaan unggahan, pembuatan job, query hasil, rekap, ringkasan, tren, perubahan
 - `app/ekspor.py` — ekspor GPKG keluaran Proses A (dengan cache LRU), titik perlu tindakan
   (CSV/GPKG), dan rekap kabupaten/desa (CSV)
-- `app/worker.py` — worker Proses A/B (klaim job FIFO, batch simpan, dimensi wilayah, rekap, pemangkasan)
-- `app/api.py` — endpoint FastAPI
+- `app/worker.py` - worker Proses A/B (klaim job FIFO, batch simpan, dimensi wilayah, rekap, pemangkasan)
+- `app/api.py` - endpoint FastAPI
+- `app/sistem.py` - status worker/server untuk halaman admin (flock, PID, RAM, disk)
 - `migrations/` — migrasi Alembic (`alembic upgrade head`; `0002` normalisasi skema, `0003`
   baris "(tanpa wilayah)" untuk rekap, `0004` kolom hitungan rekap dipisah, `0005` rekap
   desa/kabupaten + `runs.tanggal_data`/`kdprov`/`detail_tersedia` + pemangkasan `titik_hasil`
