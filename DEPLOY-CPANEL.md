@@ -40,6 +40,20 @@ nilainya, jalankan ulang `npm run build`, lalu restart aplikasi. Browser
 memanggil backend langsung, jadi server cPanel tidak perlu akses ke domain luar.
 Tidak ada `BACKEND_URL` dan tidak ada route proxy API.
 
+**Penting:** Next.js memprioritaskan nilai dari `frontend/.env.local` (dan
+`.env.production`) di atas environment cPanel saat build. Periksa isinya:
+
+```bash
+grep NEXT_PUBLIC_API_BASE .env.local
+```
+
+Nilainya harus `https://backend-pointse.feinah.web.id`, bukan
+`http://localhost:8000`. Setelah build, pastikan tidak ada localhost di bundel:
+
+```bash
+grep -R "localhost:8000" .next/static/chunks || echo "OK"
+```
+
 ## 3. Build dan restart
 
 Dari terminal cPanel, di application root:
