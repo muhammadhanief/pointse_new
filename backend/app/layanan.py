@@ -953,6 +953,109 @@ def ringkasan(
     return {"baris": list(per_kab.values())}
 
 
+def progres_b(
+    sesi: Session,
+    *,
+    kdprov: str,
+    kdkab: str,
+    dasar: str = DASAR_TUGAS,
+) -> dict[str, object]:
+    """Perjalanan Proses B satu kabupaten/kota terhadap target Proses A pertama.
+
+    Target = ``belum`` (flag 1) pada run Proses A sukses paling awal. Setiap run
+    B sukses menjadi satu titik waktu. ``beres`` = target - sisa flag 1; nilai
+    dapat turun bila muncul flag baru, dan UI wajib menjelaskannya.
+    """
+    run_a = sesi.scalars(
+        select(Run)
+        .where(
+            Run.tipe == TIPE_A,
+            Run.status == STATUS_SUKSES,
+            Run.kdprov == kdprov,
+            Run.kdkab == kdkab,
+        )
+        .order_by(Run.id)
+        .limit(1)
+    ).first()
+
+    target: dict[str, object] | None = None
+    target_flag = 0
+    if run_a is not None:
+        rekap_a = sesi.scalars(
+            select(RekapKabupaten).where(
+                RekapKabupaten.run_id == run_a.id,
+                RekapKabupaten.dasar == dasar,
+            )
+        ).first()
+        if rekap_a is not None:
+            target_flag = int(rekap_a.belum)
+            target = {
+                "run_a_id": run_a.id,
+                "nomor_urut": None,
+                "tanggal_data": run_a.tanggal_data,
+                "total": int(rekap_a.jumlah),
+                "flag_1": target_flag,
+            }
+
+    baris: list[dict[str, object]] = []
+    hasil_b = sesi.execute(
+        select(Run, RekapKabupaten)
+        .join(
+            RekapKabupaten,
+            and_(RekapKabupaten.run_id == Run.id, RekapKabupaten.dasar == dasar),
+        )
+        .where(
+            Run.tipe == TIPE_B,
+            Run.status == STATUS_SUKSES,
+            Run.kdprov == kdprov,
+            Run.kdkab == kdkab,
+        )
+        .order_by(Run.id)
+    ).all()
+    semua_run = ([run_a] if run_a is not None else []) + [satu[0] for satu in hasil_b]
+    nomor = nomor_urut_run(sesi, semua_run)
+    if target is not None:
+        target["nomor_urut"] = nomor.get(run_a.id) if run_a is not None else None
+
+    sebelumnya: int | None = target_flag if target is not None else None
+    for run, rekap in hasil_b:
+        sisa = int(rekap.belum)
+        if target is None:
+            beres = 0
+            persen = None
+            perubahan = 0
+        else:
+            beres = max(target_flag - sisa, 0)
+            persen = round(beres / target_flag * 100, 1) if target_flag else None
+            perubahan = (sebelumnya - sisa) if sebelumnya is not None else 0
+            sebelumnya = sisa
+        baris.append(
+            {
+                "run_id": run.id,
+                "nomor_urut": nomor.get(run.id),
+                "tanggal_data": run.tanggal_data,
+                "selesai_pada": run.finished_at,
+                "total": int(rekap.jumlah),
+                "sisa_flag_1": sisa,
+                "beres": beres,
+                "persen": persen,
+                "perubahan": perubahan,
+            }
+        )
+
+    saring = [Wilayah.kdprov == kdprov, Wilayah.kdkab == kdkab]
+    nmprov = _peta_nama(sesi, "nmprov", ("kdprov",), saring[:1]).get((kdprov,))
+    nmkab = _peta_nama(sesi, "nmkab", ("kdprov", "kdkab"), saring).get((kdprov, kdkab))
+    return {
+        "kdprov": kdprov,
+        "kdkab": kdkab,
+        "nmprov": nmprov,
+        "nmkab": nmkab,
+        "target": target,
+        "baris": baris,
+    }
+
+
 def tren(
     sesi: Session,
     *,

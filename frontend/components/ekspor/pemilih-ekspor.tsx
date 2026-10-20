@@ -129,6 +129,9 @@ export function PemilihEkspor({
   const namaHasilA = run
     ? `${kodeUnduh}_hasil_identifikasi_titik_ke${nomorUnduh}.gpkg`
     : "";
+  const namaHasilB = run
+    ? `${kodeUnduh}_hasil_pengecekan_titik_ke${nomorUnduh}.gpkg`
+    : "";
   const namaTitikCsv = run
     ? `${kodeUnduh}_titik_perlu_tindakan_ke${nomorUnduh}.csv`
     : "";
@@ -251,6 +254,18 @@ export function PemilihEkspor({
                 onGagal={setGalat}
               >
                 Hasil 1. Identifikasi Titik (GPKG)
+              </TautanUnduh>
+            ) : null}
+
+            {run.tipe === "B" ? (
+              <TautanUnduh
+                jalur={`/runs/${run.id}/ekspor/hasil-b.gpkg`}
+                nama={namaHasilB}
+                varian="utama"
+                onMulai={() => onUnduh?.(namaHasilB)}
+                onGagal={setGalat}
+              >
+                Hasil 2. Pengecekan Titik lengkap (GPKG)
               </TautanUnduh>
             ) : null}
 

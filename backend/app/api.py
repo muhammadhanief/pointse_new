@@ -49,6 +49,7 @@ from app.skema import (
     HasilOut,
     MasterGeotagOut,
     PerubahanOut,
+    ProgresBOut,
     RekapDetailOut,
     RekapOut,
     RingkasanOut,
@@ -506,6 +507,25 @@ def ringkasan(
     )
 
 
+@router.get("/progres-b", response_model=ProgresBOut)
+def progres_b(
+    kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
+    kdkab: str | None = Query(None, description="Kode kabupaten/kota, mis. 3307"),
+    dasar: Dasar = Query(DASAR_TUGAS, description="'tugas' atau 'posisi'"),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> ProgresBOut:
+    """Perjalanan Proses B satu kabupaten/kota terhadap target Proses A pertama."""
+    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
+    if kdkab is None:
+        raise HTTPException(status_code=422, detail="pilih kabupaten/kota untuk melihat progres")
+    if kdprov is None:
+        kdprov = kdkab[:2]
+    return ProgresBOut.model_validate(
+        layanan.progres_b(sesi, kdprov=kdprov, kdkab=kdkab, dasar=dasar)
+    )
+
+
 @router.get("/tren", response_model=TrenOut)
 def tren(
     tingkat: str = Query("kabupaten", description="'kabupaten' atau 'provinsi'"),
@@ -691,6 +711,27 @@ def ekspor_hasil_a(
     nomor = layanan.nomor_urut_run(sesi, [run]).get(run.id, run.id)
     return _unduhan_gpkg(
         berkas, f"{kode}_hasil_identifikasi_titik_ke{nomor}.gpkg"
+    )
+
+
+@router.get("/runs/{run_id}/ekspor/hasil-b.gpkg", response_class=FileResponse)
+def ekspor_hasil_b(
+    run_id: int,
+    sesi: Session = Depends(get_session),
+    setelan: Settings = Depends(get_settings),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> FileResponse:
+    """Unduh keluaran Proses B penuh sebagai GPKG, sama dengan layer QGIS."""
+    run = _ambil_run(sesi, run_id)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    try:
+        berkas = ekspor.berkas_hasil_b(run, setelan)
+    except ekspor.EksporTidakTersedia as galat:
+        raise HTTPException(status_code=409, detail=str(galat)) from galat
+    kode = _kode_unduh(run.kdprov, run.kdkab)
+    nomor = layanan.nomor_urut_run(sesi, [run]).get(run.id, run.id)
+    return _unduhan_gpkg(
+        berkas, f"{kode}_hasil_pengecekan_titik_ke{nomor}.gpkg"
     )
 
 

@@ -250,6 +250,41 @@ class RingkasanOut(BaseModel):
     baris: list[RingkasanBarisOut]
 
 
+class ProgresBTargetOut(BaseModel):
+    """Target Proses B dari run Proses A pertama."""
+
+    run_a_id: int
+    nomor_urut: int | None = None
+    tanggal_data: date
+    total: int
+    flag_1: int
+
+
+class ProgresBBarisOut(BaseModel):
+    """Satu upload Proses B dan posisinya terhadap target awal."""
+
+    run_id: int
+    nomor_urut: int | None = None
+    tanggal_data: date
+    selesai_pada: datetime | None = None
+    total: int
+    sisa_flag_1: int
+    beres: int
+    persen: float | None = None
+    perubahan: int
+
+
+class ProgresBOut(BaseModel):
+    """Perjalanan Proses B satu kabupaten/kota."""
+
+    kdprov: str
+    kdkab: str
+    nmprov: str | None = None
+    nmkab: str | None = None
+    target: ProgresBTargetOut | None = None
+    baris: list[ProgresBBarisOut] = Field(default_factory=list)
+
+
 class TrenBarisOut(BaseModel):
     """Satu titik tren: per (kabupaten/kota atau provinsi, tipe, tanggal data)."""
 

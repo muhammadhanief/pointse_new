@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from app import ekspor
 from app.config import Settings
 from app.models import DASAR_POSISI, DASAR_TUGAS, Run, TitikHasil
-from app.proses_a import KOLOM_HASIL, proses_a
+from app.proses_a import KOLOM_HASIL, pastikan_crs4326, proses_a
+from app.proses_b import KOLOM_HASIL_B, proses_b
 from app.worker import proses_satu_job
 from test_api_runs import (
     BARIS_A,
@@ -82,6 +83,50 @@ def test_ekspor_hasil_a_sama_dengan_keluaran_proses(
     ulang = klien.get(f"/runs/{run_id}/ekspor/hasil-a.gpkg")
     assert ulang.status_code == 200
     assert ulang.content == respons.content
+
+
+def test_ekspor_hasil_b_penuh_sama_dengan_keluaran_proses(
+    klien: TestClient,
+    sesi_pabrik: sessionmaker[Session],
+    setelan: Settings,
+    tmp_path: Path,
+) -> None:
+    """GPKG ekspor B memakai layer dan 35 field yang sama dengan QGIS."""
+    titik, peta = berkas_uji_b(tmp_path)
+    run_id = unggah(klien, titik, peta, tipe="B").json()["id"]
+    jalankan(sesi_pabrik)
+
+    respons = klien.get(f"/runs/{run_id}/ekspor/hasil-b.gpkg")
+    assert respons.status_code == 200, respons.text
+    assert respons.headers["content-type"] == "application/geopackage+sqlite3"
+    assert (
+        "3307_hasil_pengecekan_titik_ke1.gpkg"
+        in respons.headers["content-disposition"]
+    )
+
+    berkas = simpan_unduhan(respons, tmp_path / "hasil_b.gpkg")
+    assert pyogrio.list_layers(berkas)[0, 0] == ekspor.LAYER_HASIL_B
+    hasil = gpd.read_file(berkas)
+    langsung = proses_b(
+        pastikan_crs4326(gpd.read_file(titik), "titik"),
+        pastikan_crs4326(gpd.read_file(peta), "peta"),
+    )
+    assert list(hasil.columns) == list(KOLOM_HASIL_B) + ["geometry"]
+    kanan = langsung[list(KOLOM_HASIL_B)].reset_index(drop=True).copy()
+    for kolom in ekspor._KOLOM_TEKS_B:  # noqa: SLF001 - uji tipe skema QGIS
+        kanan[kolom] = kanan[kolom].astype("string").fillna("")
+        hasil[kolom] = hasil[kolom].astype("string").fillna("")
+    pd.testing.assert_frame_equal(
+        hasil[list(KOLOM_HASIL_B)],
+        kanan,
+        check_dtype=False,
+    )
+    assert hasil.geometry.geom_equals(langsung.geometry.reset_index(drop=True)).all()
+    assert (
+        Path(setelan.dir_unggahan)
+        / ekspor.NAMA_FOLDER_CACHE
+        / f"{ekspor.AWALAN_CACHE_HASIL_B}{run_id}.gpkg"
+    ).is_file()
 
 
 def test_cache_hasil_a_dibatasi(tmp_path: Path, setelan: Settings) -> None:

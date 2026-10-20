@@ -491,6 +491,37 @@ def test_ringkasan_dan_tren(
     ] == [("2026-01-01", "33", None, 1), ("2026-01-02", "33", None, 0)]
 
 
+def test_progres_b_memakai_target_proses_a_pertama(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Target dari run A pertama; setiap upload B menjadi satu titik progres."""
+    titik, peta = berkas_uji(tmp_path)
+    id_a = unggah(klien, titik, peta, tanggal_data="2026-01-01").json()["id"]
+    jalankan(sesi_pabrik)
+
+    titik_b, peta_b = berkas_uji_b(tmp_path)
+    id_b1 = unggah(klien, titik_b, peta_b, tipe="B", tanggal_data="2026-01-03").json()["id"]
+    jalankan(sesi_pabrik)
+    baris_b_bebas = tuple(
+        data_kecil.baris_titik_b(
+            str(nomor), "A1", lat, lon, flag_repair_initial=0, flag_repair=0
+        )
+        for nomor, (lat, lon) in enumerate(((0.2, 0.2), (0.3, 0.3), (0.4, 0.4)), 1)
+    )
+    titik_b2, peta_b2 = berkas_uji_b(tmp_path, baris_b_bebas)
+    id_b2 = unggah(klien, titik_b2, peta_b2, tipe="B", tanggal_data="2026-01-04").json()["id"]
+    jalankan(sesi_pabrik)
+
+    data = klien.get("/progres-b", params={"kdkab": "3307"}).json()
+    assert data["target"]["run_a_id"] == id_a
+    assert data["target"]["flag_1"] == 1
+    assert data["target"]["total"] == 3
+    assert [(baris["run_id"], baris["sisa_flag_1"], baris["beres"]) for baris in data["baris"]] == [
+        (id_b1, 1, 0),
+        (id_b2, 0, 1),
+    ]
+
+
 def test_perubahan_selisih_rekap_dan_per_titik(
     klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:

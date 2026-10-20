@@ -136,6 +136,35 @@ export type RekapDetail = {
   baris: RekapDetailBaris[];
 };
 
+export type ProgresBTarget = {
+  run_a_id: number;
+  nomor_urut: number | null;
+  tanggal_data: string;
+  total: number;
+  flag_1: number;
+};
+
+export type ProgresBBaris = {
+  run_id: number;
+  nomor_urut: number | null;
+  tanggal_data: string;
+  selesai_pada: string | null;
+  total: number;
+  sisa_flag_1: number;
+  beres: number;
+  persen: number | null;
+  perubahan: number;
+};
+
+export type ProgresB = {
+  kdprov: string;
+  kdkab: string;
+  nmprov: string | null;
+  nmkab: string | null;
+  target: ProgresBTarget | null;
+  baris: ProgresBBaris[];
+};
+
 export type WorkerHeartbeat = {
   worker_id: string;
   pid: number | null;

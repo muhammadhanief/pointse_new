@@ -46,17 +46,21 @@ from app.models import (
     KOLOM_HITUNGAN,
     STATUS_SUKSES,
     TIPE_A,
+    TIPE_B,
     RekapDesa,
     RekapKabupaten,
     Run,
     TitikHasil,
     Wilayah,
 )
-from app.proses_a import proses_a
+from app.proses_a import pastikan_crs4326, proses_a
+from app.proses_b import KOLOM_HASIL_B, proses_b
 from app.worker import baca_masukan
 
 #: Nama layer GPKG keluaran Proses A (sama dengan model QGIS).
 LAYER_HASIL_A = "hasil_identifikasi_titik"
+#: Nama layer GPKG keluaran Proses B (sama dengan model QGIS).
+LAYER_HASIL_B = "hasil_pengecekan_titik_hasil_penggeseran"
 #: Nama layer GPKG titik perlu tindakan.
 LAYER_TITIK = "titik_perlu_tindakan"
 #: CRS ekspor titik.
@@ -67,6 +71,9 @@ NAMA_FOLDER_CACHE = "_ekspor"
 MAKS_CACHE_HASIL_A = 2
 #: Awalan nama berkas cache keluaran Proses A.
 AWALAN_CACHE_HASIL_A = "hasil_a_run"
+#: Cache GPKG Proses B penuh; satu berkas besar, simpan satu versi terbaru.
+MAKS_CACHE_HASIL_B = 1
+AWALAN_CACHE_HASIL_B = "hasil_b_run"
 #: Jumlah baris per potongan saat menulis GPKG titik.
 UKURAN_POTONGAN = 20_000
 #: Batas spool CSV di memori; lebih dari ini otomatis pindah ke berkas sementara.
@@ -328,6 +335,129 @@ def berkas_hasil_a(run: Run, setelan: Settings) -> Path:
     finally:
         sementara.unlink(missing_ok=True)
     _rapikan_cache(setelan, tujuan)
+    return tujuan
+
+
+def _berkas_cache_b(run: Run, setelan: Settings) -> Path:
+    """Path cache GPKG keluaran Proses B penuh untuk satu run."""
+    return _folder_cache(setelan) / f"{AWALAN_CACHE_HASIL_B}{run.id}.gpkg"
+
+
+def _rapikan_cache_b(setelan: Settings, terbaru: Path) -> None:
+    """Sisakan ``MAKS_CACHE_HASIL_B`` berkas cache Proses B terbaru."""
+    try:
+        berkas = sorted(
+            _folder_cache(setelan).glob(f"{AWALAN_CACHE_HASIL_B}*.gpkg"),
+            key=lambda satu: satu.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return
+    for lama in berkas[MAKS_CACHE_HASIL_B:]:
+        if lama == terbaru:
+            continue
+        try:
+            lama.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+#: Field QGIS yang disimpan sebagai teks pada GPKG keluaran Proses B.
+_KOLOM_TEKS_B = (
+    "assignment_id",
+    "unique_bang",
+    "flag_psls",
+    "flag_edit_atr_repair",
+    "level_6_full_code",
+    "idsubsls_origin",
+    "idsubsls_edited",
+    "latitude_origin",
+    "longitude_origin",
+    "no_bang",
+    "kode_bang_value",
+    "ada_keluarga_value",
+    "ada_bang_usaha_value",
+    "jumlah_usaha_ditemukan",
+    "kk",
+    "btt",
+    "bku",
+    "bttk",
+    "bbtt",
+    "usaha",
+    "kdprov",
+    "nmprov",
+    "kdkab",
+    "nmkab",
+    "kdkec",
+    "nmkec",
+    "kddesa",
+    "nmdesa",
+    "nmsls",
+    "nama_usaha_bang",
+)
+_KOLOM_ANGKA_B = ("flag_position", "flag_repair_initial", "flag_repair")
+_KOLOM_DESIMAL_B = ("latitude_edited", "longitude_edited")
+
+
+def _siapkan_hasil_b(hasil: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Samakan urutan dan tipe field GPKG Proses B dengan keluaran QGIS."""
+    data = hasil.copy()
+    for nama in _KOLOM_TEKS_B:
+        if nama in data.columns:
+            data[nama] = data[nama].astype("string")
+    for nama in _KOLOM_ANGKA_B:
+        if nama in data.columns:
+            data[nama] = pd.to_numeric(data[nama], errors="coerce").astype("Int32")
+    for nama in _KOLOM_DESIMAL_B:
+        if nama in data.columns:
+            data[nama] = pd.to_numeric(data[nama], errors="coerce").astype("float64")
+    return data[list(KOLOM_HASIL_B) + ["geometry"]]
+
+
+def berkas_hasil_b(run: Run, setelan: Settings) -> Path:
+    """Path GPKG keluaran Proses B penuh, dihitung ulang dari berkas mentah.
+
+    Layer, urutan field, dan tipe field mengikuti model QGIS. Hasil di-cache
+    satu berkas terbaru agar unduhan berulang tidak memproses ulang.
+    """
+    if run.tipe != TIPE_B:
+        raise EksporTidakTersedia(
+            "ekspor hasil Proses B hanya untuk run tipe B, bukan tipe " + run.tipe
+        )
+    if run.status != STATUS_SUKSES:
+        raise EksporTidakTersedia(
+            f"run {run.id} belum sukses (status '{run.status}'), hasilnya belum bisa diekspor"
+        )
+    berkas_input = Path(run.berkas_input)
+    berkas_peta = Path(run.berkas_peta)
+    if not berkas_input.is_file() or not berkas_peta.is_file():
+        raise EksporTidakTersedia(
+            f"berkas mentah run {run.id} sudah dipangkas; ekspor penuh hanya tersedia "
+            "untuk run baseline dan sukses terakhir per kabupaten/kota dan tipe"
+        )
+
+    tujuan = _berkas_cache_b(run, setelan)
+    if tujuan.is_file():
+        os.utime(tujuan)
+        return tujuan
+
+    titik, peta = baca_masukan(run)
+    hasil = proses_b(
+        pastikan_crs4326(titik, "titik"), pastikan_crs4326(peta, "peta")
+    )
+    hasil = _siapkan_hasil_b(hasil)
+
+    sementara = tujuan.with_name(f".{tujuan.name}.{uuid.uuid4().hex}.tmp.gpkg")
+    try:
+        hasil.to_file(sementara, driver="GPKG", layer=LAYER_HASIL_B)
+        try:
+            os.replace(sementara, tujuan)
+        except OSError:
+            if not tujuan.is_file():
+                raise
+    finally:
+        sementara.unlink(missing_ok=True)
+    _rapikan_cache_b(setelan, tujuan)
     return tujuan
 
 
