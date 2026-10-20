@@ -1,5 +1,5 @@
 import { istilahProses } from "@/lib/istilah";
-import { ambilToken } from "@/lib/api/token";
+import { pastikanToken } from "@/lib/api/token";
 
 //: URL backend diisi saat build. Browser memanggilnya langsung karena server
 //: cPanel tidak dapat menjangkau domain luar.
@@ -10,9 +10,12 @@ export function urlApi(jalur: string): string {
   return API_BASE ? `${API_BASE}${bersih}` : bersih;
 }
 
-function pasangBearer(headers: Headers): void {
-  const token = ambilToken();
-  if (token && !headers.has("authorization")) {
+async function pasangBearer(headers: Headers): Promise<void> {
+  if (headers.has("authorization")) {
+    return;
+  }
+  const token = await pastikanToken();
+  if (token) {
     headers.set("authorization", `Bearer ${token}`);
   }
 }
@@ -85,7 +88,7 @@ export async function unduhBerkas(
   namaCadangan = "unduhan",
 ): Promise<string> {
   const headers = new Headers({ accept: "*/*" });
-  pasangBearer(headers);
+  await pasangBearer(headers);
   const resp = await fetch(urlApi(jalur), {
     cache: "no-store",
     credentials: "omit",
@@ -144,7 +147,7 @@ export async function ambilJson<T>(
   if (!headers.has("accept")) {
     headers.set("accept", "application/json");
   }
-  pasangBearer(headers);
+  await pasangBearer(headers);
   // Parameter unik untuk GET: cegah cache perantara pada respons status job.
   const metode = (init?.method ?? "GET").toUpperCase();
   const alamatAkhir =

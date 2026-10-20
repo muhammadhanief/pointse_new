@@ -73,6 +73,47 @@ export function ambilToken(): string | null {
   return tokenMemori;
 }
 
+/**
+ * Pastikan token tersedia untuk request API.
+ *
+ * Beberapa hosting cPanel menambahkan atribut ``HttpOnly`` ke semua cookie,
+ * termasuk cookie token. Bila cookie tidak terbaca JavaScript, ambil token
+ * dari route same-origin ``/api/auth/token`` yang membaca cookie sesi di server.
+ */
+let janjiToken: Promise<string | null> | null = null;
+
+export async function pastikanToken(): Promise<string | null> {
+  const langsung = ambilToken();
+  if (langsung) {
+    return langsung;
+  }
+  if (janjiToken) {
+    return janjiToken;
+  }
+  janjiToken = fetch("/api/auth/token", {
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: { accept: "application/json" },
+  })
+    .then(async (resp) => {
+      if (!resp.ok) {
+        return null;
+      }
+      const data = (await resp.json()) as { token?: unknown };
+      const token = typeof data.token === "string" ? data.token.trim() : "";
+      if (!token) {
+        return null;
+      }
+      simpanToken(token);
+      return token;
+    })
+    .catch(() => null)
+    .finally(() => {
+      janjiToken = null;
+    });
+  return janjiToken;
+}
+
 export function hapusToken(): void {
   tokenMemori = null;
   penyimpanan()?.removeItem(KUNCI_TOKEN);

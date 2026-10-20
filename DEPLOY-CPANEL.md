@@ -78,6 +78,11 @@ cPanel. Callback SSO tetap di server Next.js dan menulis token ke cookie
 non-httpOnly `pointse_api_token`; cookie `pointse_session` tetap httpOnly untuk
 penjaga halaman. Backend hanya menerima Bearer, tanpa cookie/credentials.
 
+Bila hosting memaksa semua cookie menjadi `HttpOnly`, browser mengambil token
+lewat route same-origin `/api/auth/token`; route ini hanya membalas setelah
+cookie sesi server diverifikasi. Frontend menyimpannya di memori/`sessionStorage`
+lalu mengirimnya langsung ke backend.
+
 Backend wajib mengizinkan origin frontend di `CORS_ORIGINS` dan mengizinkan
 header `Authorization`, `Content-Type`, `Accept`, dan `X-SHA256`. Pengaturan ini
 sudah ada di `backend/app/main.py`.

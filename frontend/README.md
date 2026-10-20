@@ -19,7 +19,9 @@ Di production cPanel, frontend berjalan sebagai Node.js App. Server cPanel
 `NEXT_PUBLIC_API_BASE=https://backend-pointse.feinah.web.id` dan header
 `Authorization: Bearer`. Callback SSO menulis token ke cookie non-httpOnly
 `pointse_api_token` agar dapat dibaca JavaScript; cookie `pointse_session`
-tetap httpOnly untuk penjagaan halaman. Tidak ada route proxy API. Nilai
+tetap httpOnly untuk penjagaan halaman. Jika hosting memaksa cookie token
+menjadi HttpOnly, browser mengambilnya lewat route same-origin `/api/auth/token`
+lalu menyimpannya di memori/`sessionStorage`. Tidak ada route proxy API. Nilai
 `NEXT_PUBLIC_API_BASE` dibaca saat build, jadi build ulang setelah mengubahnya.
 
 ## Login SSO BPS (T4)

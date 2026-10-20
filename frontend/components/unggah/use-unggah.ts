@@ -9,7 +9,7 @@ import {
   pesanKesalahan,
   urlApi,
 } from "@/lib/api/klien";
-import { ambilToken } from "@/lib/api/token";
+import { ambilToken, pastikanToken } from "@/lib/api/token";
 import { istilahProses } from "@/lib/istilah";
 
 export type StatusUnggah =
@@ -562,6 +562,9 @@ export function useUnggah<T>() {
       }
 
       try {
+        // Hosting tertentu memaksa cookie token menjadi HttpOnly; ambil token
+        // lewat route same-origin sebelum potongan dikirim dengan XHR.
+        await pastikanToken();
         const tersimpan = bacaSesiTersimpan(kunci);
         if (tersimpan) {
           if (
