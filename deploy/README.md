@@ -17,8 +17,16 @@ memanggil API lintas origin memakai `NEXT_PUBLIC_API_BASE`.
 useradd --system --home-dir /opt/pointse --shell /sbin/nologin pointse
 install -d -o pointse -g pointse /opt/pointse
 install -d -o root -g pointse -m 0750 /etc/pointse
-install -d -o pointse -g pointse /opt/pointse/data/unggahan /opt/pointse/data/master
+install -d -o pointse -g pointse -m 0750 /home/pointse-data
+install -d -o pointse -g pointse \
+  /home/pointse-data/unggahan \
+  /home/pointse-data/master
 ```
+
+`/opt/pointse` hanya untuk kode dan virtualenv. Berkas besar (GPKG/GeoJSON,
+potongan unggahan, cache ekspor, dan geotag master) disimpan di
+`/home/pointse-data` karena partisi `/home` lebih besar. Jangan menaruh data di
+`/www/wwwroot` karena dapat diakses langsung dari browser.
 
 Letakkan checkout proyek di `/opt/pointse`, lalu:
 
@@ -56,7 +64,9 @@ innodb_flush_log_at_trx_commit = 2
 trade-off-nya transaksi terakhir bisa hilang saat listrik mati, tetapi tidak
 korup. Ukuran buffer pool 768M menyisakan RAM untuk API dan worker.
 
-Buat satu database dan satu pengguna yang hanya boleh dari loopback:
+Database boleh dibuat lewat menu **Database** aaPanel. Isi nama `pointse`,
+pengguna `pointse_app`, dan kata sandi dari pengelola rahasia. Cara terminal yang
+setara:
 
 ```sql
 CREATE DATABASE pointse CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -66,6 +76,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP,
   ON pointse.* TO 'pointse_app'@'127.0.0.1';
 FLUSH PRIVILEGES;
 ```
+
+aaPanel sering membuat pengguna sebagai `pointse_app@localhost`. Backend
+menghubungi `127.0.0.1`, jadi bila muncul `Access denied`, tambahkan pengguna
+untuk host `127.0.0.1` seperti SQL di atas atau samakan `DB_HOST` dengan host
+pengguna yang dibuat aaPanel.
 
 Jangan membuka port 3306 ke internet dan jangan memberi akses ke database lain.
 Untuk backup, buat `~/.my.cnf` milik root dengan mode 600 berisi kredensial
@@ -80,10 +95,22 @@ systemctl enable --now pointse-api.service pointse-worker.service
 systemctl status pointse-api pointse-worker
 ```
 
-API mendengarkan `127.0.0.1:8000`; worker memakai `--loop` dan `fcntl.flock`.
+Jika unit lama sudah terpasang dengan port 8000, salin ulang
+`deploy/pointse-api.service`, jalankan `systemctl daemon-reload`, lalu
+`systemctl restart pointse-api`.
+
+API mendengarkan `127.0.0.1:8001`; port **8000 dipakai aplikasi pilar** yang sudah
+ada di server. Worker memakai `--loop` dan `fcntl.flock`.
 `pointse-worker.service` mengeset `WORKER_MEM_BUDGET_MB=800`, `MemoryMax=1500M`,
 dan `Nice=10`. SIGTERM menyelesaikan batch berjalan lalu job dikembalikan ke
 antrean.
+
+Pastikan port 8001 belum dipakai:
+
+```bash
+ss -lntp 'sport = :8001'
+curl http://127.0.0.1:8001/health
+```
 
 Admin provinsi dapat memantau worker, antrean, RAM/CPU, dan disk dari menu
 **Administrasi → Status sistem**. Endpoint `GET /sistem/status` membaca kunci
@@ -94,9 +121,10 @@ membaca, tidak mengubah job atau konfigurasi.
 ## 5. nginx aaPanel
 
 Gunakan `deploy/nginx-pointse-api.conf.example`. Ganti `server_name` dan path
-sertifikat sesuai domain API yang dikelola aaPanel. Konfigurasi hanya membuka
-HTTPS, membatasi 10 request/detik per IP, meneruskan body tanpa buffer, dan
-memakai timeout 600 detik untuk unggahan/ekspor besar.
+sertifikat sesuai domain API yang dikelola aaPanel. Reverse proxy harus menunjuk
+ke `http://127.0.0.1:8001`, bukan 8000. Konfigurasi hanya membuka HTTPS,
+membatasi 10 request/detik per IP, meneruskan body tanpa buffer, dan memakai
+timeout 600 detik untuk unggahan/ekspor besar.
 
 ## 6. Migrasi dan deploy berikutnya
 

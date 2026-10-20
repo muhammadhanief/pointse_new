@@ -11,7 +11,8 @@ WorkingDirectory=/opt/pointse/backend
 EnvironmentFile=/etc/pointse/pointse.env
 Environment=WORKER_ENABLED=false
 # Satu worker uvicorn; job berat dijalankan service worker terpisah.
-ExecStart=/opt/pointse/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --no-server-header
+# Port 8001 karena 8000 dipakai aplikasi pilar di server ini.
+ExecStart=/opt/pointse/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --workers 1 --no-server-header
 Restart=always
 RestartSec=5
 TimeoutStopSec=60

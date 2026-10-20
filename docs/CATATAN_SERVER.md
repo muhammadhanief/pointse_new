@@ -16,7 +16,8 @@ batasan; tidak memuat kredensial, cookie, token, atau alamat internal.
   - `bind-address=127.0.0.1`, `skip-name-resolve`;
   - satu database dan satu pengguna aplikasi yang hanya boleh dari `127.0.0.1`.
 - **API**: FastAPI/uvicorn langsung (ASGI, bukan Passenger), satu worker,
-  mendengarkan loopback dan diproksikan nginx. `MemoryMax=1G`.
+  mendengarkan `127.0.0.1:8001` (port 8000 dipakai aplikasi pilar) dan
+  diproksikan nginx. `MemoryMax=1G`.
 - **Worker**: service systemd `python -m app.worker --loop`, polling **5 detik**,
   `fcntl.flock` (bukan `GET_LOCK`), heartbeat tiap **15 detik** dan tiap batch.
   `MemoryMax=1500M`, `Nice=10`, `WORKER_MEM_BUDGET_MB=800`. SIGTERM menyelesaikan
