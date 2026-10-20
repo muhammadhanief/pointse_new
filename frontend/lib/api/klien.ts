@@ -1,8 +1,12 @@
 import { istilahProses } from "@/lib/istilah";
 import { ambilToken } from "@/lib/api/token";
 
-//: URL backend diisi saat build; kosong berarti API satu origin (mode dev).
+//: URL backend diisi saat build. Relatif (mis. /api/backend) berarti lewat
+//: proxy Next.js; kosong juga dianggap satu origin.
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE ?? "").trim().replace(/\/+$/, "");
+
+/** True bila API dipanggil ke origin yang sama (cookie sesi ikut dikirim). */
+export const API_SATU_ASAL = !/^https?:\/\//i.test(API_BASE);
 
 export function urlApi(jalur: string): string {
   const bersih = jalur.startsWith("/") ? jalur : `/${jalur}`;
@@ -87,7 +91,7 @@ export async function unduhBerkas(
   pasangBearer(headers);
   const resp = await fetch(urlApi(jalur), {
     cache: "no-store",
-    credentials: "omit",
+    credentials: "same-origin",
     headers,
   });
   if (!resp.ok) {
@@ -154,7 +158,7 @@ export async function ambilJson<T>(
   const resp = await fetch(urlApi(alamatAkhir), {
     ...init,
     cache: "no-store",
-    credentials: "omit",
+    credentials: "same-origin",
     headers,
   });
 

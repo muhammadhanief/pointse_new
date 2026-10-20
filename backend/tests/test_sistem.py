@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -15,7 +16,10 @@ from app.main import app
 from app.models import (
     STATUS_JALAN,
     STATUS_MENUNGGU,
+    WORKER_JALAN,
     Run,
+    WorkerEvent,
+    WorkerHeartbeat,
     sekarang,
 )
 from app.peran import PERAN_PETUGAS_KABKOT, Peran
@@ -76,6 +80,60 @@ def test_status_sistem_menampilkan_job_jalan_dan_heartbeat(
     assert data["job_aktif"][0]["id"] == run.id
     assert data["job_aktif"][0]["umur_heartbeat_detik"] >= 60 * 19
     assert any("melewati batas" in pesan for pesan in data["peringatan"])
+
+
+def test_status_sistem_menampilkan_heartbeat_event_dan_backup(
+    klien: TestClient, sesi: Session, setelan: object, tmp_path: Path
+) -> None:
+    """Heartbeat, riwayat kejadian, dan status backup ikut dibalas."""
+    waktu = sekarang()
+    sesi.add(
+        WorkerHeartbeat(
+            worker_id="uji:1:worker-1",
+            pid=1234,
+            hostname="uji",
+            status=WORKER_JALAN,
+            started_at=waktu,
+            heartbeat_at=waktu,
+        )
+    )
+    sesi.add(
+        WorkerEvent(
+            worker_id="uji:1:worker-1",
+            level="info",
+            jenis="job_klaim",
+            pesan="Job 7 mulai",
+            created_at=waktu,
+        )
+    )
+    sesi.commit()
+
+    berkas = tmp_path / "status-backup.json"
+    berkas.write_text(
+        json.dumps(
+            {
+                "status": "sukses",
+                "waktu_mulai": (waktu - timedelta(minutes=5)).isoformat() + "Z",
+                "waktu_selesai": waktu.isoformat() + "Z",
+                "berkas": "/home/backup/pointse-uji.sql.gz",
+                "ukuran_bytes": 2048,
+                "pesan": "Backup selesai",
+            }
+        ),
+        encoding="utf-8",
+    )
+    setelan.backup_status_file = str(berkas)
+
+    resp = klien.get("/sistem/status")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["heartbeats"][0]["worker_id"] == "uji:1:worker-1"
+    assert data["heartbeats"][0]["aktif"] is True
+    assert data["kejadian"][0]["jenis"] == "job_klaim"
+    assert data["backup"]["status"] == "sukses"
+    assert data["backup"]["berkas"] == "pointse-uji.sql.gz"
+    assert data["backup"]["ukuran_bytes"] == 2048
 
 
 def test_status_sistem_hanya_untuk_admin(klien: TestClient) -> None:

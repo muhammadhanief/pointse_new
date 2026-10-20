@@ -334,10 +334,11 @@ persis lulus uji.
 - **T6 — Halaman upload dan jalankan proses**: selesai (Proses A/B terpisah,
   polling status, pemilihan sumber, master geotag, ekspor per job, unggahan
   berpotongan dengan resume dan hash); click-through production belum.
-- **T7 — Dashboard rekap progres dan Status Sistem**: sebagian; halaman rekap masih
-  mock. Status Sistem versi baca-saja sudah ada (worker flock/PID, antrean, RAM/
-  CPU/disk), tetapi tabel operasional `worker_event`/`worker_heartbeat`, riwayat
-  kejadian, dan status backup belum.
+- **T7 — Dashboard rekap progres dan Status Sistem**: selesai di kode. Halaman
+  rekap memakai `/ringkasan` dan `/runs/{id}/rekap` (kabupaten/kecamatan/desa/
+  SLS/SubSLS, dasar tugas/posisi, ekspor CSV). Status Sistem menampilkan
+  `worker_event`/`worker_heartbeat`, riwayat kejadian, dan status backup dari
+  `deploy/backup.sh`. Uji klik-through di server production belum.
 - **T8 — Deploy AlmaLinux/aaPanel**: sebagian. Berkas `deploy/` (systemd API dan
   worker, nginx, env contoh, deploy, backup) serta dokumentasi server sudah
   disiapkan. Frontend statis tetap di cPanel. Migrasi database, SSL/domain API,

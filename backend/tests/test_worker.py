@@ -23,11 +23,14 @@ from app.models import (
     STATUS_SUKSES,
     TIPE_A,
     TIPE_B,
+    WORKER_MENANGGUR,
     RekapDesa,
     RekapKabupaten,
     Run,
     TitikHasil,
     Wilayah,
+    WorkerEvent,
+    WorkerHeartbeat,
 )
 from app.worker import UKURAN_BATCH, klaim_job, kueri_klaim, mulai_worker, proses_satu_job
 
@@ -215,6 +218,18 @@ def test_proses_a_menyimpan_hasil_dan_status_sukses(
     assert job.jumlah_tanpa_wilayah == 0
     assert job.detail_tersedia == 1
     assert job.started_at is not None and job.finished_at is not None
+
+    worker_id = modul_worker.worker_id_untuk()
+    heartbeat = sesi.get(WorkerHeartbeat, worker_id)
+    assert heartbeat is not None
+    assert heartbeat.status == WORKER_MENANGGUR
+    assert heartbeat.run_id is None
+    jenis_event = sesi.scalars(
+        select(WorkerEvent.jenis)
+        .where(WorkerEvent.run_id == job.id)
+        .order_by(WorkerEvent.id)
+    ).all()
+    assert jenis_event == ["job_klaim", "job_sukses"]
 
     hasil = baris_hasil(sesi, job.id)
     assert [baris.assignment_id for baris in hasil] == ["3"]

@@ -14,7 +14,7 @@ import {
   pesanKesalahan,
 } from "@/lib/api/klien";
 import type { JobSistem, StatusSistem } from "@/lib/api/types";
-import { formatAngka, formatWaktu } from "@/lib/format";
+import { formatAngka, formatBytes, formatWaktu } from "@/lib/format";
 import { labelTipe } from "@/lib/istilah";
 
 function nilaiMb(nilai: number | null | undefined): string {
@@ -389,6 +389,155 @@ export function StatusSistem() {
             </div>
           </div>
         ) : null}
+      </Panel>
+
+      <Panel
+        judul="Heartbeat worker"
+        deskripsi="Satu baris per proses worker. Worker yang heartbeat-nya lebih lama dari batas dianggap tidak aktif."
+      >
+        {status.heartbeats.length === 0 ? (
+          <EmptyState judul="Belum ada heartbeat worker">
+            Jalankan service worker setelah migrasi 0009 agar heartbeat tercatat.
+          </EmptyState>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[760px] border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
+                  <th className="py-2 pr-4 font-semibold">Worker</th>
+                  <th className="py-2 pr-4 font-semibold">PID</th>
+                  <th className="py-2 pr-4 font-semibold">Status</th>
+                  <th className="py-2 pr-4 font-semibold">Job</th>
+                  <th className="py-2 pr-4 font-semibold">Heartbeat</th>
+                  <th className="py-2 text-right font-semibold">Umur</th>
+                </tr>
+              </thead>
+              <tbody>
+                {status.heartbeats.map((heartbeat) => (
+                  <tr
+                    key={heartbeat.worker_id}
+                    className="border-b border-line/70 last:border-0"
+                  >
+                    <td className="break-all py-3 pr-4 font-medium text-ink">
+                      {heartbeat.worker_id}
+                      {heartbeat.hostname ? (
+                        <span className="block text-xs font-normal text-muted">
+                          {heartbeat.hostname}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="py-3 pr-4 tabular-nums text-muted">
+                      {heartbeat.pid ?? "-"}
+                    </td>
+                    <td className="py-3 pr-4">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          heartbeat.aktif
+                            ? "bg-brand-soft text-brand-strong"
+                            : "bg-paper text-muted"
+                        }`}
+                      >
+                        {heartbeat.status}
+                        {heartbeat.aktif ? "" : " · tidak aktif"}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4 text-muted">
+                      {heartbeat.run_id ? `Job ${heartbeat.run_id}` : "-"}
+                    </td>
+                    <td className="py-3 pr-4 text-muted">
+                      {formatWaktu(heartbeat.heartbeat_at)}
+                    </td>
+                    <td className="py-3 text-right tabular-nums text-muted">
+                      {nilaiDurasi(heartbeat.umur_heartbeat_detik)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+
+      <Panel
+        judul="Backup harian"
+        deskripsi="Status dibaca dari berkas yang ditulis deploy/backup.sh. Backup berjalan di server backend, bukan di cPanel."
+      >
+        {!status.backup.dikonfigurasi ? (
+          <EmptyState judul="Status backup belum dikonfigurasi">
+            Isi BACKUP_STATUS_FILE pada environment backend agar hasil backup
+            harian terlihat di sini.
+          </EmptyState>
+        ) : (
+          <dl className="mt-4 grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            <div>
+              <dt className="text-muted">Status terakhir</dt>
+              <dd className="mt-0.5 font-medium text-ink">
+                {status.backup.status}
+                {status.backup.umur_jam != null
+                  ? ` · ${formatAngka(status.backup.umur_jam)} jam lalu`
+                  : ""}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted">Berkas</dt>
+              <dd className="mt-0.5 break-all font-medium text-ink">
+                {status.backup.berkas ?? "-"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted">Ukuran</dt>
+              <dd className="mt-0.5 font-medium text-ink">
+                {formatBytes(status.backup.ukuran_bytes)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted">Selesai</dt>
+              <dd className="mt-0.5 font-medium text-ink">
+                {formatWaktu(status.backup.waktu_selesai)}
+              </dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-muted">Pesan</dt>
+              <dd className="mt-0.5 font-medium text-ink">
+                {status.backup.pesan ?? "-"}
+              </dd>
+            </div>
+          </dl>
+        )}
+      </Panel>
+
+      <Panel
+        judul="Riwayat kejadian worker"
+        deskripsi="Kejadian terbaru (maksimal 50): mulai/berhenti, klaim job, sukses, gagal, job terhenti, dan anggaran memori."
+      >
+        {status.kejadian.length === 0 ? (
+          <EmptyState judul="Belum ada kejadian">
+            Kejadian akan tercatat saat worker mulai atau memproses job.
+          </EmptyState>
+        ) : (
+          <ul className="mt-4 divide-y divide-line">
+            {status.kejadian.map((kejadian) => (
+              <li key={kejadian.id} className="py-3 first:pt-0 last:pb-0">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-sm font-medium text-ink">
+                    {kejadian.jenis}
+                    {kejadian.run_id ? ` · Job ${kejadian.run_id}` : ""}
+                  </p>
+                  <time className="text-xs text-muted">
+                    {formatWaktu(kejadian.created_at)}
+                  </time>
+                </div>
+                <p className="mt-1 break-words text-sm leading-6 text-muted">
+                  {kejadian.pesan}
+                </p>
+                <p className="mt-1 text-xs text-muted">
+                  {kejadian.level}
+                  {kejadian.worker_id ? ` · ${kejadian.worker_id}` : ""}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
       </Panel>
 
       <Panel

@@ -144,4 +144,8 @@ Tambahkan cron harian:
 15 2 * * * /opt/pointse/deploy/backup.sh >> /var/log/pointse-backup.log 2>&1
 ```
 
-Backup disimpan di `/home/backup` dan diputar setelah 14 hari.
+Backup disimpan di `/home/backup` dan diputar setelah 14 hari. Script juga
+menulis status JSON ke `BACKUP_STATUS_FILE` (contoh di `.env.example`:
+`/home/pointse-data/backup-status.json`) agar halaman Status Sistem dapat
+menampilkan hasil backup terakhir. Pastikan folder tujuan dapat ditembus
+pengguna `pointse`; berkas status ditulis dengan mode 0644 tanpa kredensial.

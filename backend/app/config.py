@@ -74,6 +74,15 @@ class Settings(BaseSettings):
     worker_mem_budget_mb: int = Field(800, ge=0)
     #: Berkas flock worker; kosong = ``<induk DIR_UNGGAHAN>/worker.lock``.
     worker_lock_file: str = ""
+    #: Worker dianggap mati bila heartbeat lebih lama dari ini (detik).
+    worker_heartbeat_timeout_detik: int = Field(60, ge=15)
+    #: Retensi dan jumlah maksimum baris ``worker_event``.
+    worker_event_retensi_hari: int = Field(7, ge=1)
+    worker_event_maks: int = Field(5000, ge=100)
+
+    #: Berkas JSON status backup yang ditulis ``deploy/backup.sh``. Kosong =
+    #: status backup tidak dibaca (halaman menampilkan "belum dikonfigurasi").
+    backup_status_file: str = ""
 
     @field_validator("api_prefix")
     @classmethod

@@ -10,10 +10,11 @@ dikembalikan ``None`` agar UI bisa menampilkan tanda "-".
 from __future__ import annotations
 
 import ctypes
+import json
 import os
 import shutil
 import socket
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -29,18 +30,24 @@ from app.models import (
     STATUS_JALAN,
     STATUS_MENUNGGU,
     STATUS_SUKSES,
+    WORKER_BERHENTI,
     Run,
+    WorkerEvent,
+    WorkerHeartbeat,
     sekarang,
 )
 from app.peran import PERAN_ADMIN_PROVINSI
 from app.skema import (
     AntreanOut,
+    BackupOut,
     DiskOut,
     JobSistemOut,
     KonfigurasiWorkerOut,
     MemoriOut,
     SistemOut,
     SistemStatusOut,
+    WorkerEventOut,
+    WorkerHeartbeatOut,
     WorkerOut,
 )
 
@@ -369,6 +376,118 @@ def _ambil_antrean(
     return antrean, job_aktif, (_job_out(terakhir, waktu) if terakhir else None)
 
 
+def _baca_heartbeat(
+    sesi: Session, waktu: datetime, setelan: Settings
+) -> list[WorkerHeartbeatOut]:
+    """Ambil heartbeat worker terbaru dan hitung status hidupnya."""
+    hasil: list[WorkerHeartbeatOut] = []
+    for baris in sesi.scalars(
+        select(WorkerHeartbeat)
+        .order_by(WorkerHeartbeat.heartbeat_at.desc())
+        .limit(20)
+    ):
+        umur = max(0, int((waktu - baris.heartbeat_at).total_seconds()))
+        aktif = (
+            baris.status != WORKER_BERHENTI
+            and umur <= setelan.worker_heartbeat_timeout_detik
+        )
+        hasil.append(
+            WorkerHeartbeatOut(
+                worker_id=baris.worker_id,
+                pid=baris.pid,
+                run_id=baris.run_id,
+                hostname=baris.hostname,
+                status=baris.status,
+                started_at=baris.started_at,
+                heartbeat_at=baris.heartbeat_at,
+                umur_heartbeat_detik=umur,
+                aktif=aktif,
+            )
+        )
+    return hasil
+
+
+def _baca_kejadian(sesi: Session, batas: int = 50) -> list[WorkerEventOut]:
+    """Ambil riwayat kejadian worker terbaru (terbaru lebih dulu)."""
+    return [
+        WorkerEventOut(
+            id=baris.id,
+            worker_id=baris.worker_id,
+            run_id=baris.run_id,
+            level=baris.level,
+            jenis=baris.jenis,
+            pesan=baris.pesan,
+            created_at=baris.created_at,
+        )
+        for baris in sesi.scalars(
+            select(WorkerEvent).order_by(WorkerEvent.id.desc()).limit(batas)
+        )
+    ]
+
+
+def _waktu_status(nilai: object) -> datetime | None:
+    """Ubah timestamp ISO-8601 UTC dari status backup menjadi datetime naive."""
+    if not isinstance(nilai, str) or not nilai.strip():
+        return None
+    try:
+        hasil = datetime.fromisoformat(nilai.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if hasil.tzinfo is not None:
+        hasil = hasil.astimezone(UTC).replace(tzinfo=None)
+    return hasil
+
+
+def _baca_backup(setelan: Settings, waktu: datetime) -> BackupOut:
+    """Baca berkas status backup; tidak pernah membocorkan path lengkap."""
+    if not setelan.backup_status_file:
+        return BackupOut()
+    jalur = Path(setelan.backup_status_file).expanduser()
+    if not jalur.is_file():
+        return BackupOut(dikonfigurasi=True, status="belum_ada")
+    try:
+        data = json.loads(jalur.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as galat:
+        return BackupOut(
+            dikonfigurasi=True,
+            file_ada=True,
+            status="tidak_valid",
+            pesan=f"Berkas status backup tidak dapat dibaca: {galat}",
+        )
+    if not isinstance(data, dict):
+        return BackupOut(
+            dikonfigurasi=True,
+            file_ada=True,
+            status="tidak_valid",
+            pesan="Isi berkas status backup bukan objek JSON.",
+        )
+    nama = data.get("berkas")
+    if isinstance(nama, str) and nama:
+        nama = Path(nama).name
+    else:
+        nama = None
+    mulai = _waktu_status(data.get("waktu_mulai"))
+    selesai = _waktu_status(data.get("waktu_selesai"))
+    acuan = selesai or mulai
+    ukuran = data.get("ukuran_bytes")
+    if not isinstance(ukuran, int) or isinstance(ukuran, bool) or ukuran < 0:
+        ukuran = None
+    pesan = data.get("pesan")
+    return BackupOut(
+        dikonfigurasi=True,
+        file_ada=True,
+        status=str(data.get("status") or "tidak_valid"),
+        waktu_mulai=mulai,
+        waktu_selesai=selesai,
+        berkas=nama,
+        ukuran_bytes=ukuran,
+        pesan=str(pesan)[:1000] if pesan else None,
+        umur_jam=round((waktu - acuan).total_seconds() / 3600, 1)
+        if acuan is not None
+        else None,
+    )
+
+
 def _susun_peringatan(
     *,
     worker: WorkerOut,
@@ -377,6 +496,8 @@ def _susun_peringatan(
     memori: MemoriOut,
     disk: DiskOut,
     setelan: Settings,
+    heartbeats: list[WorkerHeartbeatOut],
+    backup: BackupOut,
 ) -> list[str]:
     """Buat peringatan yang langsung bisa ditindaklanjuti admin."""
     peringatan: list[str] = []
@@ -424,6 +545,44 @@ def _susun_peringatan(
         peringatan.append(
             f"Disk tersedia {disk.tersedia_mb:.0f} MB; unggahan baru bisa gagal."
         )
+
+    aktif_heartbeat = [baris for baris in heartbeats if baris.aktif]
+    if worker.aktif and not aktif_heartbeat:
+        peringatan.append(
+            "Kunci worker dipegang, tetapi belum ada heartbeat worker. "
+            "Jalankan ulang service setelah migrasi 0009."
+        )
+    if not worker.aktif and aktif_heartbeat:
+        peringatan.append(
+            "Heartbeat worker masih aktif, tetapi kunci worker tidak dipegang; "
+            "periksa proses worker yang mungkin menggantung."
+        )
+
+    if backup.dikonfigurasi:
+        if not backup.file_ada:
+            peringatan.append(
+                "Status backup belum tersedia. Pastikan cron backup berjalan."
+            )
+        elif backup.status == "gagal":
+            peringatan.append(
+                f"Backup terakhir gagal: {backup.pesan or 'tanpa pesan'}."
+            )
+        elif backup.status == "mulai" and (
+            backup.umur_jam is None or backup.umur_jam > 2
+        ):
+            peringatan.append(
+                "Backup berstatus mulai lebih dari 2 jam; proses mungkin macet."
+            )
+        elif backup.status == "sukses" and (
+            backup.umur_jam is None or backup.umur_jam > 26
+        ):
+            peringatan.append(
+                "Backup sukses terakhir lebih dari 26 jam lalu; periksa cron."
+            )
+        elif backup.status not in ("sukses", "mulai", "belum_ada"):
+            peringatan.append(
+                f"Status backup tidak dikenali: {backup.status}."
+            )
     return peringatan
 
 
@@ -446,6 +605,11 @@ def status_sistem(
         jumlah_proses=1 if aktif else 0,
     )
     antrean, job_aktif, job_terakhir = _ambil_antrean(sesi, waktu)
+    heartbeats = _baca_heartbeat(sesi, waktu, setelan)
+    kejadian = _baca_kejadian(sesi)
+    backup = _baca_backup(setelan, waktu)
+    if aktif:
+        worker.jumlah_proses = max(1, sum(1 for baris in heartbeats if baris.aktif))
     memori = _baca_memori()
     memori.api_rss_mb = _rss_proses(os.getpid())
     memori.worker_rss_mb = worker.rss_mb
@@ -467,6 +631,8 @@ def status_sistem(
         memori=memori,
         disk=disk,
         setelan=setelan,
+        heartbeats=heartbeats,
+        backup=backup,
     )
     return SistemStatusOut(
         waktu=waktu,
@@ -482,5 +648,8 @@ def status_sistem(
         antrean=antrean,
         job_aktif=job_aktif,
         job_terakhir=job_terakhir,
+        heartbeats=heartbeats,
+        kejadian=kejadian,
+        backup=backup,
         peringatan=peringatan,
     )

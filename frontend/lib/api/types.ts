@@ -68,6 +68,108 @@ export type JobSistem = {
   umur_heartbeat_detik: number | null;
 };
 
+export type RingkasanTipe = {
+  tipe: TipeRun;
+  run_id: number;
+  tanggal_data: string;
+  belum: number;
+  ditindak: number;
+  persen_progres: number | null;
+};
+
+export type RingkasanBaris = {
+  kdprov: string;
+  kdkab: string;
+  nmprov: string | null;
+  nmkab: string | null;
+  belum_ada_upload_tipe_b: boolean;
+  terakhir: RingkasanTipe[];
+};
+
+export type Ringkasan = {
+  baris: RingkasanBaris[];
+};
+
+export type RekapBaris = {
+  kode: string | null;
+  nama: string | null;
+  jumlah: number;
+  belum: number;
+  ditindak_posisi_benar: number;
+  ditindak_posisi_salah: number;
+  benar_awal: number;
+  digeser: number;
+  tanpa_wilayah: number;
+  persen_progres: number | null;
+};
+
+export type Rekap = {
+  run_id: number;
+  tingkat: string;
+  dasar: string;
+  total: number;
+  belum: number;
+  ditindak_posisi_benar: number;
+  ditindak_posisi_salah: number;
+  benar_awal: number;
+  digeser: number;
+  tanpa_wilayah: number;
+  persen_progres: number | null;
+  baris: RekapBaris[];
+};
+
+export type RekapDetailBaris = {
+  kode: string | null;
+  nama: string | null;
+  belum: number;
+  ditindak: number;
+  persen_progres: number | null;
+};
+
+export type RekapDetail = {
+  run_id: number;
+  tingkat: string;
+  dasar: string;
+  belum: number;
+  ditindak: number;
+  persen_progres: number | null;
+  baris: RekapDetailBaris[];
+};
+
+export type WorkerHeartbeat = {
+  worker_id: string;
+  pid: number | null;
+  run_id: number | null;
+  hostname: string | null;
+  status: string;
+  started_at: string;
+  heartbeat_at: string;
+  umur_heartbeat_detik: number;
+  aktif: boolean;
+};
+
+export type WorkerEvent = {
+  id: number;
+  worker_id: string | null;
+  run_id: number | null;
+  level: string;
+  jenis: string;
+  pesan: string;
+  created_at: string;
+};
+
+export type Backup = {
+  dikonfigurasi: boolean;
+  file_ada: boolean;
+  status: string;
+  waktu_mulai: string | null;
+  waktu_selesai: string | null;
+  berkas: string | null;
+  ukuran_bytes: number | null;
+  pesan: string | null;
+  umur_jam: number | null;
+};
+
 export type StatusSistem = {
   waktu: string;
   sistem: {
@@ -117,5 +219,8 @@ export type StatusSistem = {
   };
   job_aktif: JobSistem[];
   job_terakhir: JobSistem | null;
+  heartbeats: WorkerHeartbeat[];
+  kejadian: WorkerEvent[];
+  backup: Backup;
   peringatan: string[];
 };

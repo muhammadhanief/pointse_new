@@ -1,6 +1,6 @@
 """Model ORM untuk skema MySQL di PRD §7.
 
-Lima tabel:
+Tujuh tabel:
 
 - ``runs``         : satu baris per job (unggahan berkas + pemrosesan Proses A/B);
   kunci kabupaten/kota adalah (**kdprov**, **kdkab**) dan ``tanggal_data`` (tanggal
@@ -79,6 +79,11 @@ STATUS_GAGAL = "gagal"
 DASAR_TUGAS = "tugas"
 DASAR_POSISI = "posisi"
 
+# Nilai kolom ``worker_heartbeat.status``.
+WORKER_MENANGGUR = "menganggur"
+WORKER_JALAN = "jalan"
+WORKER_BERHENTI = "berhenti"
+
 #: Kolom hitungan kedua tabel rekap (selain kunci dan kode wilayah).
 KOLOM_HITUNGAN: tuple[str, ...] = (
     "jumlah",
@@ -92,6 +97,9 @@ KOLOM_HITUNGAN: tuple[str, ...] = (
 
 # TINYINT di MySQL, SMALLINT di SQLite (SQLite hanya punya tipe INTEGER).
 AngkaKecil = SmallInteger().with_variant(TINYINT(), "mysql")
+
+# id event operasional: BIGINT di MySQL, INTEGER di SQLite agar autoincrement.
+IdBesar = BigInteger().with_variant(Integer, "sqlite")
 
 
 def sekarang() -> datetime:
@@ -366,3 +374,56 @@ class RekapKabupaten(Base):
     ditindak_posisi_salah: Mapped[int] = mapped_column(Integer)
     digeser: Mapped[int] = mapped_column(Integer)
     tanpa_wilayah: Mapped[int] = mapped_column(Integer)
+
+
+class WorkerHeartbeat(Base):
+    """Denyut satu proses worker; satu baris per ``worker_id``.
+
+    Baris ini diperbarui worker saat menganggur maupun saat mengerjakan job,
+    sehingga Status Sistem dapat membedakan worker hidup tetapi menganggur dari
+    worker yang mati tanpa pesan. Baris lama tidak dihapus agar riwayat singkat
+    tetap terlihat; ``heartbeat_at`` yang kedaluwarsa berarti worker mati.
+    """
+
+    __tablename__ = "worker_heartbeat"
+    __table_args__ = (
+        Index("ix_worker_heartbeat_status_heartbeat", "status", "heartbeat_at"),
+    )
+
+    worker_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    pid: Mapped[int | None] = mapped_column(Integer)
+    run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), index=True
+    )
+    hostname: Mapped[str | None] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), default=WORKER_MENANGGUR)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+    heartbeat_at: Mapped[datetime] = mapped_column(
+        DateTime, default=sekarang, index=True
+    )
+
+
+class WorkerEvent(Base):
+    """Catatan kejadian operasional worker untuk halaman Status Sistem.
+
+    Event ditulis saat worker mulai/berhenti, klaim job, progres penting, sukses,
+    gagal, job terhenti, dan pelanggaran anggaran memori. Tabel dipangkas berkala
+    oleh worker (``WORKER_EVENT_RETENSI_HARI``/``WORKER_EVENT_MAKS``).
+    """
+
+    __tablename__ = "worker_event"
+    __table_args__ = (
+        Index("ix_worker_event_created", "created_at"),
+        Index("ix_worker_event_run_created", "run_id", "created_at"),
+        Index("ix_worker_event_worker_created", "worker_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(IdBesar, primary_key=True, autoincrement=True)
+    worker_id: Mapped[str | None] = mapped_column(String(80))
+    run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL")
+    )
+    level: Mapped[str] = mapped_column(String(16), default="info")
+    jenis: Mapped[str] = mapped_column(String(32))
+    pesan: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)

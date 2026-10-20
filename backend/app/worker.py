@@ -46,6 +46,7 @@ import logging
 import os
 import shutil
 import signal
+import socket
 import threading
 from datetime import timedelta
 from pathlib import Path
@@ -81,11 +82,16 @@ from app.models import (
     STATUS_MENUNGGU,
     STATUS_SUKSES,
     TIPE_A,
+    WORKER_BERHENTI,
+    WORKER_JALAN,
+    WORKER_MENANGGUR,
     RekapDesa,
     RekapKabupaten,
     Run,
     TitikHasil,
     Wilayah,
+    WorkerEvent,
+    WorkerHeartbeat,
     sekarang,
 )
 from app.potongan import baca_potongan
@@ -119,6 +125,133 @@ PESAN_DIHENTIKAN = "worker dihentikan, job dikembalikan ke antrean"
 PESAN_ANGGARAN_MEMORI = (
     "worker melewati anggaran memori; job dihentikan agar server tidak OOM"
 )
+
+
+def worker_id_untuk(nama: str | None = None) -> str:
+    """Identitas worker yang stabil untuk satu proses/thread."""
+    bagian = nama or threading.current_thread().name
+    return f"{socket.gethostname()}:{os.getpid()}:{bagian}"[:80]
+
+
+def pangkas_event(sesi: Session, setelan: Settings) -> None:
+    """Buang event lama dan batasi jumlah baris agar tabel tidak membengkak."""
+    batas = sekarang() - timedelta(days=setelan.worker_event_retensi_hari)
+    sesi.execute(delete(WorkerEvent).where(WorkerEvent.created_at < batas))
+    if setelan.worker_event_maks <= 0:
+        return
+    batas_id = sesi.scalar(
+        select(WorkerEvent.id)
+        .order_by(WorkerEvent.id.desc())
+        .offset(setelan.worker_event_maks - 1)
+        .limit(1)
+    )
+    if batas_id is not None:
+        sesi.execute(delete(WorkerEvent).where(WorkerEvent.id < batas_id))
+
+
+def catat_event(
+    sesi: Session,
+    *,
+    worker_id: str | None,
+    jenis: str,
+    pesan: str,
+    run_id: int | None = None,
+    level: str = "info",
+    setelan: Settings | None = None,
+) -> WorkerEvent:
+    """Tambahkan satu kejadian worker; pemanggil yang melakukan commit."""
+    event = WorkerEvent(
+        worker_id=worker_id,
+        run_id=run_id,
+        level=level,
+        jenis=jenis,
+        pesan=pesan[:4000],
+    )
+    sesi.add(event)
+    if setelan is not None:
+        pangkas_event(sesi, setelan)
+    return event
+
+
+def _catat_event_aman(
+    sesi_pabrik: sessionmaker[Session],
+    setelan: Settings,
+    *,
+    worker_id: str | None,
+    jenis: str,
+    pesan: str,
+    run_id: int | None = None,
+    level: str = "info",
+) -> None:
+    """Tulis event di sesi terpisah; kegagalan event tidak boleh mematikan job."""
+    try:
+        with sesi_pabrik() as sesi:
+            catat_event(
+                sesi,
+                worker_id=worker_id,
+                jenis=jenis,
+                pesan=pesan,
+                run_id=run_id,
+                level=level,
+                setelan=setelan,
+            )
+            sesi.commit()
+    except Exception:  # noqa: BLE001 - event hanya informasi operasional
+        logger.exception("gagal menulis event worker %s", jenis)
+
+
+def perbarui_heartbeat_worker(
+    sesi: Session,
+    worker_id: str,
+    *,
+    status: str,
+    run_id: int | None = None,
+) -> None:
+    """Upsert denyut worker di ``worker_heartbeat`` (commit oleh pemanggil)."""
+    waktu = sekarang()
+    baris = sesi.get(WorkerHeartbeat, worker_id)
+    if baris is None:
+        sesi.add(
+            WorkerHeartbeat(
+                worker_id=worker_id,
+                pid=os.getpid(),
+                run_id=run_id,
+                hostname=socket.gethostname()[:128],
+                status=status,
+                started_at=waktu,
+                heartbeat_at=waktu,
+            )
+        )
+        return
+    baris.pid = os.getpid()
+    baris.run_id = run_id
+    baris.hostname = socket.gethostname()[:128]
+    baris.status = status
+    baris.heartbeat_at = waktu
+
+
+def _set_worker_idle(
+    sesi_pabrik: sessionmaker[Session], worker_id: str
+) -> None:
+    """Tandai worker menganggur setelah satu job selesai/gagal."""
+    try:
+        with sesi_pabrik() as sesi:
+            perbarui_heartbeat_worker(sesi, worker_id, status=WORKER_MENANGGUR)
+            sesi.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("gagal memperbarui heartbeat worker %s", worker_id)
+
+
+def _set_worker_berhenti(
+    sesi_pabrik: sessionmaker[Session], worker_id: str
+) -> None:
+    """Tandai worker berhenti (mode sekali atau loop selesai)."""
+    try:
+        with sesi_pabrik() as sesi:
+            perbarui_heartbeat_worker(sesi, worker_id, status=WORKER_BERHENTI)
+            sesi.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("gagal menandai worker berhenti %s", worker_id)
 
 
 class WorkerDihentikan(RuntimeError):
@@ -526,7 +659,9 @@ def bersihkan_hasil(sesi: Session, run_id: int) -> None:
     sesi.execute(delete(RekapKabupaten).where(RekapKabupaten.run_id == run_id))
 
 
-def tandai_job_terhenti(sesi: Session, setelan: Settings) -> list[int]:
+def tandai_job_terhenti(
+    sesi: Session, setelan: Settings, worker_id: str | None = None
+) -> list[int]:
     """Tandai job ``jalan`` yang heartbeat-nya kedaluwarsa sebagai ``gagal``.
 
     Job seperti ini biasanya ditinggalkan proses yang mati (server dimatikan),
@@ -554,6 +689,15 @@ def tandai_job_terhenti(sesi: Session, setelan: Settings) -> list[int]:
         run.detail_tersedia = 0
         run.pesan = PESAN_TERHENTI
         run.finished_at = sekarang()
+        catat_event(
+            sesi,
+            worker_id=worker_id,
+            run_id=run.id,
+            level="warning",
+            jenis="job_terhenti",
+            pesan=f"Job {run.id} ditandai gagal: {PESAN_TERHENTI}",
+            setelan=setelan,
+        )
     sesi.commit()
     return ids
 
@@ -618,11 +762,12 @@ def terapkan_urut_penuh(sesi: Session, run_id: int) -> None:
 
 def _jaga_heartbeat(
     run_id: int,
+    worker_id: str,
     sesi_pabrik: sessionmaker[Session],
     berhenti: threading.Event,
     interval: float,
 ) -> None:
-    """Perbarui ``runs.heartbeat_at`` selama job berjalan, tiap ``interval`` detik."""
+    """Perbarui heartbeat job dan worker tiap ``interval`` detik."""
     while not berhenti.wait(interval):
         try:
             with sesi_pabrik() as sesi:
@@ -634,6 +779,9 @@ def _jaga_heartbeat(
                     update(Run)
                     .where(Run.id == run_id, Run.status == STATUS_JALAN)
                     .values(heartbeat_at=sekarang())
+                )
+                perbarui_heartbeat_worker(
+                    sesi, worker_id, status=WORKER_JALAN, run_id=run_id
                 )
                 sesi.commit()
                 if not hasil.rowcount:
@@ -654,6 +802,7 @@ def proses_satu_job(
     sesi_pabrik: sessionmaker[Session] | None = None,
     setelan: Settings | None = None,
     penghenti: threading.Event | None = None,
+    worker_id: str | None = None,
 ) -> bool:
     """Ambil lalu jalankan satu job; ``False`` kalau tidak ada job antre.
 
@@ -662,15 +811,31 @@ def proses_satu_job(
     """
     sesi_pabrik = sesi_pabrik or get_sessionmaker()
     setelan = setelan or get_settings()
+    worker_id = worker_id or worker_id_untuk()
 
     with sesi_pabrik() as sesi:
-        terhenti = tandai_job_terhenti(sesi, setelan)
+        perbarui_heartbeat_worker(sesi, worker_id, status=WORKER_MENANGGUR)
+        terhenti = tandai_job_terhenti(sesi, setelan, worker_id)
         if terhenti:
             logger.warning("job terhenti ditandai gagal: %s", terhenti)
         run = klaim_job(sesi)
         if run is None:
+            perbarui_heartbeat_worker(sesi, worker_id, status=WORKER_MENANGGUR)
+            sesi.commit()
             return False
         run_id, tipe, kdprov, kdkab = run.id, run.tipe, run.kdprov, run.kdkab
+        perbarui_heartbeat_worker(
+            sesi, worker_id, status=WORKER_JALAN, run_id=run_id
+        )
+        catat_event(
+            sesi,
+            worker_id=worker_id,
+            run_id=run_id,
+            jenis="job_klaim",
+            pesan=f"Job {run_id} ({tipe}, {kdprov}/{kdkab}) mulai dikerjakan",
+            setelan=setelan,
+        )
+        sesi.commit()
 
     logger.info("job %s (%s, %s/%s) mulai dikerjakan", run_id, tipe, kdprov, kdkab)
     potongan = setelan.proses_chunk_titik > 0
@@ -678,7 +843,13 @@ def proses_satu_job(
     berhenti_heartbeat = threading.Event()
     heartbeat = threading.Thread(
         target=_jaga_heartbeat,
-        args=(run_id, sesi_pabrik, berhenti_heartbeat, setelan.worker_heartbeat_detik),
+        args=(
+            run_id,
+            worker_id,
+            sesi_pabrik,
+            berhenti_heartbeat,
+            setelan.worker_heartbeat_detik,
+        ),
         name=f"pointse-heartbeat-{run_id}",
         daemon=True,
     )
@@ -737,12 +908,29 @@ def proses_satu_job(
             jumlah,
             buang or "tidak ada",
         )
+        _catat_event_aman(
+            sesi_pabrik,
+            setelan,
+            worker_id=worker_id,
+            run_id=run_id,
+            jenis="job_sukses",
+            pesan=f"Job {run_id} sukses: {jumlah} baris",
+        )
         if buang:
             with sesi_pabrik() as sesi:
                 terhapus = pangkas_berkas(sesi, buang, Path(setelan.dir_unggahan))
             logger.info("berkas mentah dihapus: %s", terhapus)
     except WorkerDihentikan:
         logger.info("job %s dihentikan setelah batch; dikembalikan ke antrean", run_id)
+        _catat_event_aman(
+            sesi_pabrik,
+            setelan,
+            worker_id=worker_id,
+            run_id=run_id,
+            level="warning",
+            jenis="job_dihentikan",
+            pesan=f"Job {run_id} dikembalikan ke antrean setelah sinyal berhenti",
+        )
         with sesi_pabrik() as sesi:
             bersihkan_hasil(sesi, run_id)
             sesi.execute(
@@ -762,6 +950,15 @@ def proses_satu_job(
             sesi.commit()
     except AnggaranMemori as galat:
         logger.error("job %s melewati anggaran memori: %s", run_id, galat)
+        _catat_event_aman(
+            sesi_pabrik,
+            setelan,
+            worker_id=worker_id,
+            run_id=run_id,
+            level="error",
+            jenis="anggaran_memori",
+            pesan=f"Job {run_id} gagal: {PESAN_ANGGARAN_MEMORI}",
+        )
         with sesi_pabrik() as sesi:
             bersihkan_hasil(sesi, run_id)
             sesi.execute(
@@ -777,6 +974,15 @@ def proses_satu_job(
             sesi.commit()
     except Exception as galat:  # noqa: BLE001 - pesan apa pun dicatat di runs.pesan
         logger.exception("job %s gagal", run_id)
+        _catat_event_aman(
+            sesi_pabrik,
+            setelan,
+            worker_id=worker_id,
+            run_id=run_id,
+            level="error",
+            jenis="job_gagal",
+            pesan=f"Job {run_id} gagal: {str(galat)[:1000]}",
+        )
         with sesi_pabrik() as sesi:
             bersihkan_hasil(sesi, run_id)
             sesi.execute(
@@ -793,6 +999,7 @@ def proses_satu_job(
     finally:
         berhenti_heartbeat.set()
         heartbeat.join(timeout=5)
+        _set_worker_idle(sesi_pabrik, worker_id)
     return True
 
 
@@ -814,9 +1021,28 @@ def jalankan_sekali(
     if not kunci.ambil():
         logger.info("worker lain sedang berjalan; keluar")
         return False
+    worker_id = worker_id_untuk("once")
     try:
-        return proses_satu_job(sesi_pabrik, setelan, penghenti)
+        with sesi_pabrik() as sesi:
+            perbarui_heartbeat_worker(sesi, worker_id, status=WORKER_MENANGGUR)
+            catat_event(
+                sesi,
+                worker_id=worker_id,
+                jenis="worker_mulai",
+                pesan="Worker mode --once mulai",
+                setelan=setelan,
+            )
+            sesi.commit()
+        return proses_satu_job(sesi_pabrik, setelan, penghenti, worker_id)
     finally:
+        _catat_event_aman(
+            sesi_pabrik,
+            setelan,
+            worker_id=worker_id,
+            jenis="worker_berhenti",
+            pesan="Worker mode --once berhenti",
+        )
+        _set_worker_berhenti(sesi_pabrik, worker_id)
         kunci.lepas()
 
 
@@ -827,14 +1053,38 @@ def jalankan_worker(
 ) -> None:
     """Loop worker: kerjakan job sampai ``penghenti`` diset."""
     setelan = setelan or get_settings()
-    while not penghenti.is_set():
-        try:
-            ada_job = proses_satu_job(sesi_pabrik, setelan, penghenti)
-        except Exception:  # noqa: BLE001 - worker jangan mati karena satu galat
-            logger.exception("worker gagal mengambil job")
-            ada_job = False
-        if not ada_job:
-            penghenti.wait(setelan.worker_poll_detik)
+    sesi_pabrik = sesi_pabrik or get_sessionmaker()
+    worker_id = worker_id_untuk()
+    try:
+        with sesi_pabrik() as sesi:
+            perbarui_heartbeat_worker(sesi, worker_id, status=WORKER_MENANGGUR)
+            catat_event(
+                sesi,
+                worker_id=worker_id,
+                jenis="worker_mulai",
+                pesan=f"Worker {worker_id} mulai",
+                setelan=setelan,
+            )
+            sesi.commit()
+        while not penghenti.is_set():
+            try:
+                ada_job = proses_satu_job(
+                    sesi_pabrik, setelan, penghenti, worker_id
+                )
+            except Exception:  # noqa: BLE001 - worker jangan mati karena satu galat
+                logger.exception("worker gagal mengambil job")
+                ada_job = False
+            if not ada_job:
+                penghenti.wait(setelan.worker_poll_detik)
+    finally:
+        _catat_event_aman(
+            sesi_pabrik,
+            setelan,
+            worker_id=worker_id,
+            jenis="worker_berhenti",
+            pesan=f"Worker {worker_id} berhenti",
+        )
+        _set_worker_berhenti(sesi_pabrik, worker_id)
     logger.info("worker berhenti")
 
 

@@ -14,10 +14,12 @@ npm run build
 ```
 
 Backend FastAPI dijalankan terpisah di AlmaLinux (lihat `../deploy/README.md`).
-Browser memanggil API langsung memakai `NEXT_PUBLIC_API_BASE`; **tidak ada rewrite
-`/backend` atau proxy same-origin**. Untuk lokal, isi
-`NEXT_PUBLIC_API_BASE=http://localhost:8000` di `.env.local`. Nilai ini dibaca
-saat build, jadi build production harus memakai URL API HTTPS yang final.
+Di production cPanel, frontend berjalan sebagai Node.js App. Browser memanggil
+`/api/backend/...` pada origin frontend; route Next.js membaca cookie sesi lalu
+meneruskan `Authorization: Bearer` ke `BACKEND_URL`. Untuk lokal, isi
+`NEXT_PUBLIC_API_BASE=http://localhost:8000` di `.env.local` bila ingin memanggil
+backend langsung, atau `/api/backend` + `BACKEND_URL=http://localhost:8000`
+untuk menguji proxy. Nilai `NEXT_PUBLIC_API_BASE` dibaca saat build.
 
 ## Login SSO BPS (T4)
 
@@ -83,8 +85,9 @@ memakai `PageHeader`, `Panel`, `EmptyState`, dan `TautanAksi` dari
 ## Unggah dan status job (T6)
 
 - Halaman 1. Identifikasi Titik dan 2. Pengecekan Titik memanggil
-  `POST {NEXT_PUBLIC_API_BASE}/runs` langsung ke FastAPI dengan header
-  `Authorization: Bearer`. Tidak ada cookie sesi atau proxy Next.
+  `POST {NEXT_PUBLIC_API_BASE}/runs` lewat `urlApi()`. Di cPanel, nilai ini
+  `/api/backend`; route Next.js menambahkan `Authorization: Bearer` dari cookie
+  sesi. Di lokal dapat diisi URL FastAPI langsung.
 - Berkas dikirim berpotongan: `POST /unggahan/mulai`, lalu
   `POST /unggahan/{id}/potongan/{n}` dengan body mentah
   (`Content-Type: application/octet-stream`) dan header `X-Sha256`, lalu
@@ -149,8 +152,10 @@ secret di repository atau membagikannya ke pengguna umum.
 - `lib/auth/jwt.ts` — token sesi HS256 + state OIDC.
 - `lib/auth/session.ts` — cookie httpOnly, `wajibSesi()`.
 - `app/api/auth/login|callback|logout|session/route.ts` — route OIDC.
-- `NEXT_PUBLIC_API_BASE` — browser memanggil API lintas origin dengan Bearer dari
-  `lib/api/token.ts` (memori/`sessionStorage`); backend tidak membaca cookie atau
-  memeriksa Origin untuk CSRF.
+- `NEXT_PUBLIC_API_BASE` — `/api/backend` memakai route proxy Next.js; cookie
+  sesi `httpOnly` dibaca server lalu diteruskan sebagai Bearer. Nilai absolut
+  memakai Bearer dari `lib/api/token.ts` (memori/`sessionStorage`).
+- `app/api/backend/[...jalur]/route.ts` — proxy streaming ke `BACKEND_URL`,
+  menambahkan Bearer, dan menolak Origin asing untuk request yang mengubah data.
 - `proxy.ts` — redirect halaman terlindungi ke `/login` (Next.js 16 memakai Proxy,
   bukan Middleware).

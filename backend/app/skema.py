@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RunOut(BaseModel):
@@ -422,6 +422,46 @@ class KonfigurasiWorkerOut(BaseModel):
     max_workers: int
 
 
+class WorkerHeartbeatOut(BaseModel):
+    """Satu baris denyut worker; ``aktif`` dihitung dari umur heartbeat."""
+
+    worker_id: str
+    pid: int | None = None
+    run_id: int | None = None
+    hostname: str | None = None
+    status: str
+    started_at: datetime
+    heartbeat_at: datetime
+    umur_heartbeat_detik: int
+    aktif: bool
+
+
+class WorkerEventOut(BaseModel):
+    """Satu kejadian operasional worker untuk riwayat Status Sistem."""
+
+    id: int
+    worker_id: str | None = None
+    run_id: int | None = None
+    level: str
+    jenis: str
+    pesan: str
+    created_at: datetime
+
+
+class BackupOut(BaseModel):
+    """Status backup harian dari berkas JSON ``deploy/backup.sh``."""
+
+    dikonfigurasi: bool = False
+    file_ada: bool = False
+    status: str = "belum_dikonfigurasi"
+    waktu_mulai: datetime | None = None
+    waktu_selesai: datetime | None = None
+    berkas: str | None = None
+    ukuran_bytes: int | None = None
+    pesan: str | None = None
+    umur_jam: float | None = None
+
+
 class SistemStatusOut(BaseModel):
     """Balasan halaman admin Status Sistem.
 
@@ -438,4 +478,7 @@ class SistemStatusOut(BaseModel):
     antrean: AntreanOut
     job_aktif: list[JobSistemOut]
     job_terakhir: JobSistemOut | None = None
+    heartbeats: list[WorkerHeartbeatOut] = []
+    kejadian: list[WorkerEventOut] = []
+    backup: BackupOut = BackupOut()
     peringatan: list[str]
