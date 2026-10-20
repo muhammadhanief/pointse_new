@@ -1009,13 +1009,16 @@ def progres_b(
     ``beres`` = target - sisa flag 1; nilai dapat turun bila muncul flag baru,
     dan UI wajib menjelaskannya.
     """
+    # Peta wilkerstat menyimpan kode pendek (07/72), sedangkan UI memakai kode
+    # 4 digit (3307/3372). Cocokkan keduanya.
+    kode_kab = kandidat_kdkab(kdprov, kdkab)
     kandidat_a = sesi.scalars(
         select(Run)
         .where(
             Run.tipe == TIPE_A,
             Run.status == STATUS_SUKSES,
             Run.kdprov == kdprov,
-            Run.kdkab == kdkab,
+            Run.kdkab.in_(kode_kab),
         )
         .order_by(Run.id)
     ).all()
@@ -1062,7 +1065,7 @@ def progres_b(
             Run.tipe == TIPE_B,
             Run.status == STATUS_SUKSES,
             Run.kdprov == kdprov,
-            Run.kdkab == kdkab,
+            Run.kdkab.in_(kode_kab),
         )
         .order_by(Run.id)
     ).all()
@@ -1100,9 +1103,17 @@ def progres_b(
             }
         )
 
-    saring = [Wilayah.kdprov == kdprov, Wilayah.kdkab == kdkab]
+    saring = [Wilayah.kdprov == kdprov, Wilayah.kdkab.in_(kode_kab)]
     nmprov = _peta_nama(sesi, "nmprov", ("kdprov",), saring[:1]).get((kdprov,))
-    nmkab = _peta_nama(sesi, "nmkab", ("kdprov", "kdkab"), saring).get((kdprov, kdkab))
+    peta_kab = _peta_nama(sesi, "nmkab", ("kdprov", "kdkab"), saring)
+    nmkab = next(
+        (
+            peta_kab.get((kdprov, kode))
+            for kode in (kdkab, *kode_kab)
+            if peta_kab.get((kdprov, kode))
+        ),
+        None,
+    )
     return {
         "kdprov": kdprov,
         "kdkab": kdkab,

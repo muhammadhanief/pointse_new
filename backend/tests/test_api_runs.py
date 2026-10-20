@@ -523,6 +523,25 @@ def test_progres_b_memakai_target_proses_a_pertama(
     ]
 
 
+def test_progres_b_menerima_kode_kabupaten_pendek(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Run dari peta wilkerstat menyimpan kdkab pendek (07), bukan 3307."""
+    titik, peta = berkas_uji(tmp_path)
+    id_a = unggah(klien, titik, peta, tanggal_data="2026-01-01").json()["id"]
+    jalankan(sesi_pabrik)
+
+    with sesi_pabrik() as sesi:
+        run = sesi.get(Run, id_a)
+        assert run is not None
+        run.kdkab = "07"
+        sesi.commit()
+
+    data = klien.get("/progres-b", params={"kdkab": "3307"}).json()
+    assert data["target"]["run_a_id"] == id_a
+    assert data["target"]["flag_1"] == 1
+
+
 def test_progres_b_memakai_detail_bila_rekap_run_lama_hilang(
     klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
