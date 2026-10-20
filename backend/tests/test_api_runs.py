@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from sqlalchemy.orm import Session, sessionmaker
 
 import data_kecil
-from app.models import STATUS_MENUNGGU, Run
+from app.models import STATUS_MENUNGGU, RekapKabupaten, Run
 from app.worker import proses_satu_job
 
 # Berkas titik: dua titik di SubSLS A1, satu di A2 (level_6 tetap A1) supaya ada
@@ -520,6 +521,24 @@ def test_progres_b_memakai_target_proses_a_pertama(
         (id_b1, 1, 0),
         (id_b2, 0, 1),
     ]
+
+
+def test_progres_b_memakai_detail_bila_rekap_run_lama_hilang(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Target tetap terbentuk untuk run A lama yang belum punya snapshot rekap."""
+    titik, peta = berkas_uji(tmp_path)
+    id_a = unggah(klien, titik, peta, tanggal_data="2026-01-01").json()["id"]
+    jalankan(sesi_pabrik)
+
+    with sesi_pabrik() as sesi:
+        sesi.execute(delete(RekapKabupaten).where(RekapKabupaten.run_id == id_a))
+        sesi.commit()
+
+    data = klien.get("/progres-b", params={"kdkab": "3307"}).json()
+    assert data["target"]["run_a_id"] == id_a
+    assert data["target"]["flag_1"] == 1
+    assert data["target"]["total"] == 3
 
 
 def test_perubahan_selisih_rekap_dan_per_titik(

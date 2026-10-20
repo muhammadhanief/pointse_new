@@ -953,6 +953,48 @@ def ringkasan(
     return {"baris": list(per_kab.values())}
 
 
+def _metrik_progres(
+    sesi: Session, run: Run, dasar: str
+) -> tuple[int, int] | None:
+    """Ambil (jumlah, belum) dari snapshot rekap atau detail titik run lama.
+
+    Run yang diproses sebelum snapshot rekap tersedia tidak punya baris
+    ``rekap_kabupaten``. Untuk run seperti itu, hitung ``belum`` dari
+    ``titik_hasil`` selama detailnya masih disimpan. Bila keduanya tidak ada,
+    kembalikan ``None`` supaya UI tidak menampilkan target palsu.
+    """
+    rekap = sesi.scalars(
+        select(RekapKabupaten).where(
+            RekapKabupaten.run_id == run.id,
+            RekapKabupaten.dasar == dasar,
+        )
+    ).first()
+    if rekap is not None:
+        return int(rekap.jumlah), int(rekap.belum)
+
+    jumlah_detail = (
+        sesi.scalar(
+            select(func.count())
+            .select_from(TitikHasil)
+            .where(TitikHasil.run_id == run.id)
+        )
+        or 0
+    )
+    if jumlah_detail == 0:
+        if run.detail_tersedia:
+            return int(run.jumlah_baris or 0), 0
+        return None
+    belum = (
+        sesi.scalar(
+            select(func.count())
+            .select_from(TitikHasil)
+            .where(TitikHasil.run_id == run.id, TitikHasil.flag_repair == 1)
+        )
+        or 0
+    )
+    return int(run.jumlah_baris or jumlah_detail), int(belum)
+
+
 def progres_b(
     sesi: Session,
     *,
@@ -962,11 +1004,12 @@ def progres_b(
 ) -> dict[str, object]:
     """Perjalanan Proses B satu kabupaten/kota terhadap target Proses A pertama.
 
-    Target = ``belum`` (flag 1) pada run Proses A sukses paling awal. Setiap run
-    B sukses menjadi satu titik waktu. ``beres`` = target - sisa flag 1; nilai
-    dapat turun bila muncul flag baru, dan UI wajib menjelaskannya.
+    Target = ``belum`` (flag 1) pada run Proses A sukses paling awal yang
+    metriknya masih bisa dibaca. Setiap run B sukses menjadi satu titik waktu.
+    ``beres`` = target - sisa flag 1; nilai dapat turun bila muncul flag baru,
+    dan UI wajib menjelaskannya.
     """
-    run_a = sesi.scalars(
+    kandidat_a = sesi.scalars(
         select(Run)
         .where(
             Run.tipe == TIPE_A,
@@ -975,35 +1018,46 @@ def progres_b(
             Run.kdkab == kdkab,
         )
         .order_by(Run.id)
-        .limit(1)
-    ).first()
+    ).all()
 
-    target: dict[str, object] | None = None
-    target_flag = 0
-    if run_a is not None:
-        rekap_a = sesi.scalars(
+    run_a: Run | None = None
+    metrik_a: tuple[int, int] | None = None
+    # Utamakan run yang punya snapshot rekap supaya tabulasi target juga bisa
+    # dibuka. Run lama tanpa snapshot baru memakai detail titik sebagai cadangan.
+    for kandidat in kandidat_a:
+        rekap = sesi.scalars(
             select(RekapKabupaten).where(
-                RekapKabupaten.run_id == run_a.id,
+                RekapKabupaten.run_id == kandidat.id,
                 RekapKabupaten.dasar == dasar,
             )
         ).first()
-        if rekap_a is not None:
-            target_flag = int(rekap_a.belum)
-            target = {
-                "run_a_id": run_a.id,
-                "nomor_urut": None,
-                "tanggal_data": run_a.tanggal_data,
-                "total": int(rekap_a.jumlah),
-                "flag_1": target_flag,
-            }
+        if rekap is not None:
+            run_a = kandidat
+            metrik_a = (int(rekap.jumlah), int(rekap.belum))
+            break
+    if run_a is None:
+        for kandidat in kandidat_a:
+            metrik = _metrik_progres(sesi, kandidat, dasar)
+            if metrik is not None:
+                run_a = kandidat
+                metrik_a = metrik
+                break
+
+    target: dict[str, object] | None = None
+    target_flag = 0
+    if run_a is not None and metrik_a is not None:
+        target_total, target_flag = metrik_a
+        target = {
+            "run_a_id": run_a.id,
+            "nomor_urut": None,
+            "tanggal_data": run_a.tanggal_data,
+            "total": target_total,
+            "flag_1": target_flag,
+        }
 
     baris: list[dict[str, object]] = []
-    hasil_b = sesi.execute(
-        select(Run, RekapKabupaten)
-        .join(
-            RekapKabupaten,
-            and_(RekapKabupaten.run_id == Run.id, RekapKabupaten.dasar == dasar),
-        )
+    run_b = sesi.scalars(
+        select(Run)
         .where(
             Run.tipe == TIPE_B,
             Run.status == STATUS_SUKSES,
@@ -1012,14 +1066,17 @@ def progres_b(
         )
         .order_by(Run.id)
     ).all()
-    semua_run = ([run_a] if run_a is not None else []) + [satu[0] for satu in hasil_b]
+    semua_run = ([run_a] if run_a is not None else []) + list(run_b)
     nomor = nomor_urut_run(sesi, semua_run)
     if target is not None:
         target["nomor_urut"] = nomor.get(run_a.id) if run_a is not None else None
 
     sebelumnya: int | None = target_flag if target is not None else None
-    for run, rekap in hasil_b:
-        sisa = int(rekap.belum)
+    for run in run_b:
+        metrik = _metrik_progres(sesi, run, dasar)
+        if metrik is None:
+            continue
+        total, sisa = metrik
         if target is None:
             beres = 0
             persen = None
@@ -1035,7 +1092,7 @@ def progres_b(
                 "nomor_urut": nomor.get(run.id),
                 "tanggal_data": run.tanggal_data,
                 "selesai_pada": run.finished_at,
-                "total": int(rekap.jumlah),
+                "total": total,
                 "sisa_flag_1": sisa,
                 "beres": beres,
                 "persen": persen,
