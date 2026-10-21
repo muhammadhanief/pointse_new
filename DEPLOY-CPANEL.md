@@ -26,7 +26,12 @@ Isi di cPanel Node.js App, lalu restart:
 ```dotenv
 NODE_ENV=production
 APP_URL=https://pointse.web.bps.go.id
-KEYCLOAK_REDIRECT_URI=https://pointse.web.bps.go.id/api/auth/callback
+KEYCLOAK_URL=https://accounts.bps.go.id
+KEYCLOAK_REALM=pegawai
+KEYCLOAK_CLIENT_ID=33000-pointse-v5h
+KEYCLOAK_CLIENT_SECRET=<isi dari portal SSO, jangan di-commit>
+KEYCLOAK_SCOPE="openid profile email"
+KEYCLOAK_REDIRECT_URI=https://pointse.web.bps.go.id/callback
 
 NEXT_PUBLIC_API_BASE=https://backend-pointse.feinah.web.id
 

@@ -27,7 +27,7 @@ lalu menyimpannya di memori/`sessionStorage`. Tidak ada route proxy API. Nilai
 ## Login SSO BPS (T4)
 
 Alur: browser -> `/login` -> `/api/auth/login` (state + nonce + PKCE S256) ->
-`accounts.bps.go.id` -> `/api/auth/callback` -> tukar kode, verifikasi ID token,
+`accounts.bps.go.id` -> `/callback` -> tukar kode, verifikasi ID token,
 ambil UserInfo, buat cookie sesi JWT httpOnly + cookie token API non-httpOnly
 (yang dibaca browser untuk memanggil backend) -> halaman `/`.
 
@@ -38,16 +38,16 @@ Variabel wajib di `.env.local` (lihat `.env.example`):
 | `KEYCLOAK_URL` | `https://accounts.bps.go.id` |
 | `KEYCLOAK_REALM` | realm aplikasi, mis. `pegawai` |
 | `KEYCLOAK_CLIENT_ID` / `KEYCLOAK_CLIENT_SECRET` | dari portal SSO BPS |
-| `KEYCLOAK_REDIRECT_URI` | harus **persis** sama dengan Valid Redirect URI, mis. `http://localhost:3000/api/auth/callback` |
+| `KEYCLOAK_REDIRECT_URI` | harus **persis** sama dengan Valid Redirect URI, mis. `http://localhost:3000/callback` |
 | `AUTH_SECRET` | minimal 32 karakter; **sama** dengan `backend/.env` |
 | `AUTH_ISSUER` / `AUTH_AUDIENCE` | `pointse` / `pointse-backend` |
 | `APP_URL` | URL publik frontend, mis. `https://pointse.web.bps.go.id`; dipakai untuk redirect di balik cPanel |
 
 Catatan:
 
-- Uji lokal memakai client Alih Audio (`33000-alihaudio-4s8`) yang redirect URI-nya
-  `http://localhost:3000/api/auth/callback`. Jangan pakai client/secret itu untuk
-  produksi; produksi harus mendaftarkan client sendiri untuk domain `*.bps.go.id`.
+- Client yang dipakai adalah `PointSE` (`33000-pointse-v5h`) dengan redirect URI
+  `http://localhost:3000/callback` dan `https://pointse.web.bps.go.id/callback`.
+  Jangan memakai client Alih Audio lama.
 - Client OIDC belum tentu mengirim atribut `org` di UserInfo/ID token. Bila tidak ada,
   frontend memakai **REST API Data Pegawai BPS** dengan service account (Client
   Credentials) untuk mencari pegawai lewat username/email/NIP. API mengembalikan

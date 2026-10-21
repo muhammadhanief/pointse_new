@@ -115,14 +115,13 @@ masukan Proses B.
 ## Catatan T4 (SSO BPS)
 
 - Login memakai OIDC Authorization Code + PKCE di frontend Next.js; callback persis di
-  `/api/auth/callback`. Sesi disimpan sebagai JWT HS256 di cookie httpOnly, lalu
+  `/callback`. Sesi disimpan sebagai JWT HS256 di cookie httpOnly, lalu
   diteruskan ke backend sebagai Bearer. Backend memverifikasi token dan membatasi
   wilayah sesuai peran (`3300`/`33000` admin provinsi, `3307`/`33070` petugas
   kabupaten/kota).
-- Client OIDC yang dipakai untuk uji lokal adalah client aplikasi Alih Audio
-  (`33000-alihaudio-4s8`, redirect `http://localhost:3000/api/auth/callback`). Client ini
-  **bukan** client produksi pointse; produksi harus mendaftarkan client sendiri untuk
-  domain `*.bps.go.id`.
+- Client OIDC yang dipakai adalah `PointSE` (`33000-pointse-v5h`) dengan redirect
+  `http://localhost:3000/callback` dan `https://pointse.web.bps.go.id/callback`.
+  Client Alih Audio lama tidak dipakai lagi.
 - Client uji tidak mengirim atribut `org` di UserInfo/ID token. Frontend memakai REST API
   Data Pegawai BPS (service account/Client Credentials) untuk mengambil
   `attributes.org`, `provinceCode`, dan `cityCode`. Pada akun uji, `org` bernilai `92000`

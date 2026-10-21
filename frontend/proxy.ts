@@ -25,6 +25,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  // Rute API Next (/api) tidak boleh diarahkan ke /login oleh penjaga halaman.
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|.*\\..*).*)"],
+  // Rute API Next (/api) dan callback SSO (/callback) tidak boleh diarahkan
+  // ke /login oleh penjaga halaman.
+  matcher: ["/((?!api|callback|_next/static|_next/image|favicon.ico|.*\\..*).*)"],
 };
