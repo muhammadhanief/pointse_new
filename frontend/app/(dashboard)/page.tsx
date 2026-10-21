@@ -1,43 +1,80 @@
 import type { Metadata } from "next";
 
-import {
-  PERAN_ADMIN_PROVINSI,
-  labelPeran,
-  labelWilayah,
-} from "@/lib/auth/peran";
+import { PERAN_ADMIN_PROVINSI } from "@/lib/auth/peran";
 import { wajibSesi } from "@/lib/auth/session";
 import {
   BarisStatus,
   EmptyState,
-  PageHeader,
   Panel,
   TautanAksi,
 } from "@/components/dashboard/ui";
+import { StatusDataAdmin } from "@/components/dashboard/status-data-admin";
 
 export const metadata: Metadata = {
   title: "Beranda",
 };
 
+const tautanIsi = "font-medium text-brand underline-offset-4 hover:underline";
+
 const LANGKAH = [
   {
-    judul: "Siapkan master geotag",
-    isi: "Admin provinsi mengunggah geotag asli kabupaten/kota. Versi lama tetap disimpan karena masih dirujuk proses sebelumnya.",
+    judul: "Admin Provinsi siapkan Master Landmark",
+    isi: (
+      <>
+        Unduh master landmark dari{" "}
+        <a
+          href="https://dataspasial.bps.go.id/gs/"
+          target="_blank"
+          rel="noreferrer"
+          className={tautanIsi}
+        >
+          dataspasial.bps.go.id/gs
+        </a>
+        .
+      </>
+    ),
   },
   {
-    judul: "Unggah peta Wilkerstat",
-    isi: "Peta batas SLS/SubSLS menjadi dasar pencocokan titik. Peta ini dipakai ulang oleh langkah 2. Pengecekan Titik.",
+    judul: "Kabupaten/Kota unggah Peta Digital SLS/SubSLS final",
+    isi: (
+      <>
+        Peta batas final menjadi dasar pencocokan titik bangunan.{" "}
+        <TautanAksi href="/proses/identifikasi" ringkas>
+          Unggah
+        </TautanAksi>
+      </>
+    ),
   },
   {
-    judul: "Jalankan 1. Identifikasi Titik",
-    isi: "Titik bangunan dicocokkan ke poligon, lalu flag awal dihitung untuk melihat titik yang perlu perhatian.",
+    judul: 'Sistem menjalankan model "01 Identifikasi Titik.model3"',
+    isi: "Master Landmark (1) dan Peta Digital (2) diproses otomatis; hasilnya Hasil Identifikasi Titik (.gpkg).",
   },
   {
     judul: "Edit titik di QGIS",
-    isi: "Unduh GPKG hasil 1. Identifikasi Titik, geser titik atau perbaiki atribut yang salah, lalu simpan hasilnya.",
+    isi: "Unduh .gpkg, perbaiki titik atau atribut di QGIS, lalu simpan hasilnya.",
   },
   {
-    judul: "Jalankan 2. Pengecekan Titik",
-    isi: "Unggah kembali hasil edit. Aplikasi menghitung posisi baru, perubahan atribut, dan status akhir.",
+    judul: "Kabupaten/Kota unggah titik hasil perbaikan",
+    isi: "Unggah kembali .gpkg hasil edit di QGIS untuk dicek.",
+  },
+  {
+    judul: 'Sistem menjalankan model "02 Pengecekan Titik.model3"',
+    isi: "Titik hasil perbaikan (4) dan Peta Digital (2) diproses otomatis; hasilnya Hasil Pengecekan Titik (.gpkg).",
+  },
+  {
+    judul: "Lihat progres di menu Rekap",
+    isi: (
+      <>
+        Lihat target, sisa, dan status per wilayah.{" "}
+        <TautanAksi href="/rekap" ringkas>
+          Rekap
+        </TautanAksi>
+      </>
+    ),
+  },
+  {
+    judul: "Ulangi langkah 4-7 jika belum selesai",
+    isi: "Jika masih ada titik yang belum selesai, perbaiki dan unggah ulang.",
   },
 ];
 
@@ -49,28 +86,14 @@ export default async function BerandaPage() {
   const admin = sesi.peran === PERAN_ADMIN_PROVINSI;
 
   return (
-    <div className="space-y-8">
-      <PageHeader
-        judul="Ringkasan wilayah kerja"
-        deskripsi="Pantau kesiapan data dan progres editing titik bangunan terhadap batas Wilkerstat. Halaman ini akan terisi setelah proses pertama dijalankan."
-        meta={
-          <div className="sm:text-right">
-            <p className="font-semibold text-ink">{labelPeran(sesi.peran)}</p>
-            <p className="mt-0.5 text-xs">
-              {labelWilayah(sesi.kdprov, sesi.kdkab)}
-            </p>
-          </div>
-        }
-      />
+    <div className="space-y-6">
+      <h1 className="sr-only">Beranda</h1>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,1fr)]">
-        <Panel
-          judul="Alur kerja"
-          deskripsi="Lima langkah dari data mentah sampai status akhir. Langkah 1 dan 2 mengikuti urutan ini."
-        >
-          <ol className="mt-5 space-y-4">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,1fr)]">
+        <Panel judul="Alur kerja">
+          <ol className="mt-4 space-y-3">
             {LANGKAH.map((langkah, indeks) => (
-              <li key={langkah.judul} className="flex gap-4">
+              <li key={langkah.judul} className="flex gap-3">
                 <span
                   aria-hidden="true"
                   className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line bg-paper text-xs font-semibold tabular-nums text-muted"
@@ -81,76 +104,71 @@ export default async function BerandaPage() {
                   <p className="text-sm font-semibold text-ink">
                     {langkah.judul}
                   </p>
-                  <p className="mt-1 text-sm leading-6 text-muted">
+                  <p className="mt-1 text-sm leading-normal text-muted">
                     {langkah.isi}
                   </p>
                 </div>
               </li>
             ))}
           </ol>
-          <div className="mt-6">
-            <TautanAksi href="/proses/identifikasi">
-              Buka 1. Identifikasi Titik
-            </TautanAksi>
-          </div>
         </Panel>
 
         <Panel
           judul="Status data"
-          deskripsi="Ringkasan berkas dan proses yang sedang dipakai."
+          deskripsi={
+            admin
+              ? "Tabulasi kesiapan data seluruh kabupaten/kota."
+              : "Ringkasan berkas dan proses yang sedang dipakai."
+          }
         >
-          <dl className="mt-4">
-            <BarisStatus
-              label="Master geotag"
-              nilai={admin ? "Belum ada" : "Dikelola provinsi"}
-              keterangan={
-                admin
-                  ? "Unggah master untuk kabupaten/kota di provinsi Anda."
-                  : "Admin provinsi menyiapkan master untuk wilayah kerja Anda."
-              }
-            />
-            <BarisStatus
-              label="Peta terakhir"
-              nilai="Belum ada"
-              keterangan="Peta dipakai ulang dari 1. Identifikasi Titik yang sukses."
-            />
-            <BarisStatus
-              label="Proses terakhir"
-              nilai="Belum ada"
-              keterangan="Riwayat langkah 1 dan 2 akan tampil di sini."
-            />
-          </dl>
+          {admin ? (
+            <StatusDataAdmin />
+          ) : (
+            <>
+              <dl className="mt-3">
+                <BarisStatus
+                  label="Master geotag"
+                  status="ada"
+                  keterangan="Dikelola admin provinsi."
+                />
+                <BarisStatus
+                  label="Peta terakhir"
+                  status="belum"
+                  keterangan="Dipakai ulang dari Proses 1 yang sukses."
+                  aksi={
+                    <TautanAksi href="/proses/identifikasi" ringkas>
+                      Unggah
+                    </TautanAksi>
+                  }
+                />
+                <BarisStatus
+                  label="Proses terakhir"
+                  status="belum"
+                  keterangan="Riwayat Proses 1 dan 2 tampil di sini."
+                  aksi={
+                    <TautanAksi href="/proses/identifikasi" ringkas>
+                      Jalankan
+                    </TautanAksi>
+                  }
+                />
+              </dl>
 
-          <EmptyState
-            judul="Belum ada proses yang bisa diringkas"
-            aksi={
-              <TautanAksi href="/proses/identifikasi">
-                Lihat langkah 1
-              </TautanAksi>
-            }
-          >
-            Setelah langkah 1 atau 2 selesai, jumlah titik dan status
-            tindakannya akan muncul di ringkasan ini.
-          </EmptyState>
+              <EmptyState
+                judul="Belum ada proses yang bisa diringkas"
+                aksi={
+                  <TautanAksi href="/proses/identifikasi">
+                    Lihat Proses 1
+                  </TautanAksi>
+                }
+              >
+                Setelah Proses 1 atau 2 selesai, jumlah titik dan status
+                tindakannya akan muncul di ringkasan ini.
+              </EmptyState>
+            </>
+          )}
         </Panel>
       </div>
 
-      <Panel
-        judul="Progres terakhir"
-        deskripsi="Rekap per wilayah dihitung dari proses yang sudah sukses."
-      >
-        <EmptyState
-          judul="Belum ada rekap"
-          aksi={
-            <TautanAksi href="/rekap" varian="sekunder">
-              Lihat bentuk rekap
-            </TautanAksi>
-          }
-        >
-          Rekap akan muncul setelah ada proses sukses. Halaman rekap memuat
-          contoh bentuk tabel, bukan angka hasil proses.
-        </EmptyState>
-      </Panel>
     </div>
   );
 }

@@ -138,19 +138,17 @@ export function ProsesWorkspace({ tipe }: { tipe: TipeRun }) {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="max-w-3xl">
-        {tipe === "A" ? (
-          <FormProsesA onSelesai={() => void muat(true)} />
-        ) : (
-          <FormProsesB
-            onSelesai={() => void muat(true)}
-            sumberA={sumberA}
-            memuatSumberA={memuatSumberA}
-            galatSumberA={galatSumberA}
-          />
-        )}
-      </div>
+    <div className="space-y-5">
+      {tipe === "A" ? (
+        <FormProsesA onSelesai={() => void muat(true)} />
+      ) : (
+        <FormProsesB
+          onSelesai={() => void muat(true)}
+          sumberA={sumberA}
+          memuatSumberA={memuatSumberA}
+          galatSumberA={galatSumberA}
+        />
+      )}
 
       <Panel
         judul={`Riwayat ${labelTipe(tipe)}`}
@@ -174,7 +172,7 @@ export function ProsesWorkspace({ tipe }: { tipe: TipeRun }) {
         {galat ? (
           <div
             role="alert"
-            className="mt-4 rounded-lg border border-danger/25 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
+            className="mt-4 rounded-lg border border-danger/25 bg-danger-soft px-4 py-3 text-sm leading-normal text-danger"
           >
             <p>{galat}</p>
             <button
@@ -188,7 +186,7 @@ export function ProsesWorkspace({ tipe }: { tipe: TipeRun }) {
         ) : null}
 
         {memuat && runs.length === 0 ? (
-          <p className="mt-4 text-sm leading-6 text-muted" role="status">
+          <p className="mt-4 text-sm leading-normal text-muted" role="status">
             Memuat status job...
           </p>
         ) : null}

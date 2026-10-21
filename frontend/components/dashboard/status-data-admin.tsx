@@ -1,0 +1,124 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
+import {
+  adalahBatal,
+  ambilJson,
+  pesanKesalahan,
+} from "@/lib/api/klien";
+import type { DaftarMaster, Ringkasan } from "@/lib/api/types";
+import { KABUPATEN_33, kodeKabupaten } from "@/lib/wilayah/kabupaten";
+
+import { BarisStatus, TautanAksi } from "./ui";
+
+type Tabulasi = {
+  master: number;
+  peta: number;
+  edit: number;
+};
+
+const TOTAL_KAB = KABUPATEN_33.length;
+
+function kode(kdprov: string, kdkab: string): string {
+  return kodeKabupaten(kdprov, kdkab);
+}
+
+export function StatusDataAdmin() {
+  const [data, setData] = useState<Tabulasi | null>(null);
+  const [galat, setGalat] = useState<string | null>(null);
+
+  const muat = useCallback(async (isyarat: AbortSignal) => {
+    setGalat(null);
+    try {
+      const [master, ringkasan] = await Promise.all([
+        ambilJson<DaftarMaster>("/geotag-master?limit=500", {
+          signal: isyarat,
+        }),
+        ambilJson<Ringkasan>("/ringkasan?dasar=tugas", {
+          signal: isyarat,
+        }),
+      ]);
+
+      const kabMaster = new Set(
+        master.baris.map((satu) => kode(satu.kdprov, satu.kdkab)),
+      );
+      const kabPeta = new Set<string>();
+      const kabEdit = new Set<string>();
+
+      for (const baris of ringkasan.baris) {
+        const kodeKab = kode(baris.kdprov, baris.kdkab);
+        if (baris.terakhir.some((satu) => satu.tipe === "A")) {
+          kabPeta.add(kodeKab);
+        }
+        if (baris.terakhir.some((satu) => satu.tipe === "B")) {
+          kabEdit.add(kodeKab);
+        }
+      }
+
+      setData({
+        master: kabMaster.size,
+        peta: kabPeta.size,
+        edit: kabEdit.size,
+      });
+    } catch (kesalahan) {
+      if (adalahBatal(kesalahan)) {
+        return;
+      }
+      setGalat(pesanKesalahan(kesalahan));
+    }
+  }, []);
+
+  useEffect(() => {
+    const kendali = new AbortController();
+    void muat(kendali.signal);
+    return () => kendali.abort();
+  }, [muat]);
+
+  if (galat) {
+    return (
+      <p className="mt-3 rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-sm leading-normal text-danger">
+        {galat}
+      </p>
+    );
+  }
+
+  if (!data) {
+    return <p className="mt-3 text-sm text-muted">Memuat tabulasi...</p>;
+  }
+
+  return (
+    <dl className="mt-3">
+      <BarisStatus
+        label="Master geotag"
+        nilai={`${data.master} / ${TOTAL_KAB} kabupaten/kota`}
+        keterangan="Sudah mengunggah master geotag."
+        aksi={
+          <TautanAksi href="/master-geotag" ringkas>
+            Lihat
+          </TautanAksi>
+        }
+      />
+      <BarisStatus
+        label="Peta digital terakhir"
+        nilai={`${data.peta} / ${TOTAL_KAB} kabupaten/kota`}
+        keterangan="Sudah punya Proses 1 sukses."
+        aksi={
+          <TautanAksi href="/proses/identifikasi" ringkas>
+            Lihat
+          </TautanAksi>
+        }
+      />
+      <BarisStatus
+        label="Edit geotag terakhir"
+        nilai={`${data.edit} / ${TOTAL_KAB} kabupaten/kota`}
+        keterangan="Sudah punya Proses 2 sukses."
+        aksi={
+          <TautanAksi href="/proses/pengecekan" ringkas>
+            Lihat
+          </TautanAksi>
+        }
+      />
+    </dl>
+  );
+}

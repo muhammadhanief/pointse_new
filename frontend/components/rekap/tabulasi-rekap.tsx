@@ -20,6 +20,16 @@ import {
 } from "@/lib/wilayah/kabupaten";
 
 type Tingkat = "kabupaten" | "kecamatan" | "desa";
+type KolomSort =
+  | "wilayah"
+  | "jumlah"
+  | "target"
+  | "selesai"
+  | "sisa"
+  | "persen"
+  | "status";
+type ArahSort = "asc" | "desc";
+type Sort = { kolom: KolomSort; arah: ArahSort };
 
 const LABEL_STATUS: Record<string, string> = {
   belum_b: "Belum ada B",
@@ -88,6 +98,84 @@ function BarPenyelesaian({ nilai }: { nilai: number | null }) {
   );
 }
 
+function nilaiSort(
+  baris: TabulasiProgresBaris,
+  kolom: KolomSort,
+): string | number {
+  switch (kolom) {
+    case "wilayah":
+      return (
+        (baris.level === "kabupaten"
+          ? namaKabupatenTampil(baris.kode ?? "", baris.nama)
+          : baris.nama) ??
+        baris.kode ??
+        ""
+      );
+    case "jumlah":
+      return baris.jumlah;
+    case "target":
+      return baris.target;
+    case "selesai":
+      return baris.selesai;
+    case "sisa":
+      return baris.sisa;
+    case "persen":
+      return baris.persen ?? -1;
+    case "status":
+      return LABEL_STATUS[baris.status] ?? baris.status;
+    default:
+      return "";
+  }
+}
+
+function SelSort({
+  label,
+  kolom,
+  sort,
+  onSort,
+  rata = "right",
+  kiri = false,
+  className = "",
+}: {
+  label: string;
+  kolom: KolomSort;
+  sort: Sort | null;
+  onSort: (kolom: KolomSort) => void;
+  rata?: "left" | "right";
+  kiri?: boolean;
+  className?: string;
+}) {
+  const aktif = sort?.kolom === kolom;
+  const arah = sort && sort.kolom === kolom ? sort.arah : null;
+  const ariaSort: "none" | "ascending" | "descending" =
+    arah === "asc" ? "ascending" : arah === "desc" ? "descending" : "none";
+  return (
+    <th
+      scope="col"
+      aria-sort={ariaSort}
+      className={`sticky top-0 border-b border-line bg-paper px-2.5 py-2 font-semibold ${
+        kiri ? "left-0 z-30" : "z-20"
+      } ${rata === "right" ? "text-right" : "text-left"} ${className}`}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(kolom)}
+        className={`inline-flex items-center gap-1 rounded hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${
+          rata === "right" ? "w-full justify-end" : ""
+        }`}
+      >
+        <span>{label}</span>
+        <span
+          aria-hidden="true"
+          className={aktif ? "text-brand-strong" : "text-muted/60"}
+        >
+          {arah === "asc" ? "↑" : arah === "desc" ? "↓" : "↕"}
+        </span>
+      </button>
+    </th>
+  );
+}
+
 function barisKosong(kode: string, nama: string): TabulasiProgresBaris {
   return {
     kode,
@@ -115,7 +203,7 @@ export function TabulasiRekap({
   const [tingkat, setTingkat] = useState<Tingkat>(tingkatAwal);
   const [kdkab, setKdkab] = useState<string | null>(kdkabAwal);
   const [kdkec, setKdkec] = useState<string | null>(null);
-  const [cari, setCari] = useState("");
+  const [sort, setSort] = useState<Sort | null>(null);
   const [data, setData] = useState<TabulasiProgres | null>(null);
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState<string | null>(null);
@@ -190,20 +278,42 @@ export function TabulasiRekap({
     return hasil;
   }, [data, kdprov, tingkat]);
 
-  const tersaring = useMemo(() => {
-    const kata = cari.trim().toLocaleLowerCase("id-ID");
-    if (!kata) {
-      return daftarBaris;
+  const terurut = useMemo(() => {
+    const hasil = [...daftarBaris];
+    if (!sort) {
+      return hasil;
     }
-    return daftarBaris.filter((baris) =>
-      `${baris.nama ?? ""} ${baris.kode ?? ""}`
-        .toLocaleLowerCase("id-ID")
-        .includes(kata),
-    );
-  }, [cari, daftarBaris]);
+    hasil.sort((a, b) => {
+      const kiri = nilaiSort(a, sort.kolom);
+      const kanan = nilaiSort(b, sort.kolom);
+      const banding =
+        typeof kiri === "number" && typeof kanan === "number"
+          ? kiri - kanan
+          : String(kiri).localeCompare(String(kanan), "id-ID", {
+              numeric: true,
+              sensitivity: "base",
+            });
+      if (banding === 0) {
+        return (a.kode ?? "").localeCompare(b.kode ?? "", "id-ID", {
+          numeric: true,
+        });
+      }
+      return sort.arah === "asc" ? banding : -banding;
+    });
+    return hasil;
+  }, [daftarBaris, sort]);
+
+  function gantiSort(kolom: KolomSort) {
+    setSort((lama) => {
+      if (!lama || lama.kolom !== kolom) {
+        return { kolom, arah: "asc" };
+      }
+      return { kolom, arah: lama.arah === "asc" ? "desc" : "asc" };
+    });
+  }
 
   const total = useMemo(() => {
-    return tersaring.reduce(
+    return terurut.reduce(
       (jumlah, baris) => ({
         jumlah: jumlah.jumlah + baris.jumlah,
         target: jumlah.target + baris.target,
@@ -212,7 +322,7 @@ export function TabulasiRekap({
       }),
       { jumlah: 0, target: 0, selesai: 0, sisa: 0 },
     );
-  }, [tersaring]);
+  }, [terurut]);
 
   const persenTotal =
     total.target > 0 ? (total.selesai / total.target) * 100 : null;
@@ -221,7 +331,6 @@ export function TabulasiRekap({
     if (!baris.kode || tingkat === "desa") {
       return;
     }
-    setCari("");
     if (tingkat === "kabupaten") {
       setKdkab(baris.kode);
       setKdkec(null);
@@ -233,7 +342,6 @@ export function TabulasiRekap({
   }
 
   function keKabupaten() {
-    setCari("");
     setKdkec(null);
     if (!kdkabAwal) {
       setKdkab(null);
@@ -246,7 +354,6 @@ export function TabulasiRekap({
 
   function keKecamatan() {
     if (tingkat === "desa" && kdkab) {
-      setCari("");
       setKdkec(null);
       setTingkat("kecamatan");
     }
@@ -267,9 +374,9 @@ export function TabulasiRekap({
     : null;
 
   return (
-    <section className="space-y-4">
-      <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4 sm:p-5">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+    <section className="space-y-3">
+      <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-3">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
           <button
             type="button"
             onClick={keKabupaten}
@@ -305,65 +412,50 @@ export function TabulasiRekap({
           ) : null}
         </div>
 
-        <div className="flex flex-col gap-3 border-t border-line pt-3 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
           {bisaKembali ? (
-            <div className="flex flex-wrap items-end gap-3">
-              <TombolAksi
-                varian="sekunder"
-                className="min-h-10 px-3"
-                onClick={() => {
-                  if (tingkat === "desa") {
-                    keKecamatan();
-                  } else {
-                    keKabupaten();
-                  }
-                }}
-              >
-                Kembali
-              </TombolAksi>
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="min-w-[13rem] flex-1 text-xs font-semibold uppercase tracking-wide text-muted sm:flex-none">
-              Cari wilayah
-              <input
-                type="search"
-                value={cari}
-                onChange={(event) => setCari(event.target.value)}
-                placeholder="Nama atau kode"
-                className="mt-1 block min-h-10 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm font-normal normal-case tracking-normal text-ink sm:w-56"
-              />
-            </label>
             <TombolAksi
               varian="sekunder"
-              className="min-h-10 px-3"
+              className="min-h-9 px-3"
               onClick={() => {
-                const kendali = new AbortController();
-                void muat(kendali.signal);
+                if (tingkat === "desa") {
+                  keKecamatan();
+                } else {
+                  keKabupaten();
+                }
               }}
-              disabled={memuat}
             >
-              {memuat ? "Memuat..." : "Muat ulang"}
+              Kembali
             </TombolAksi>
-          </div>
+          ) : null}
+          <TombolAksi
+            varian="sekunder"
+            className="min-h-9 px-3"
+            onClick={() => {
+              const kendali = new AbortController();
+              void muat(kendali.signal);
+            }}
+            disabled={memuat}
+          >
+            {memuat ? "Memuat..." : "Muat ulang"}
+          </TombolAksi>
         </div>
       </div>
 
       <div className="rounded-xl border border-line bg-surface">
-        <div className="flex flex-wrap items-end justify-between gap-2 border-b border-line px-4 py-3 sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-line px-3 py-2 sm:px-4">
           <div>
-            <h2 className="font-display text-lg font-semibold tracking-tight text-ink">
+            <h2 className="font-display text-base font-semibold tracking-tight text-ink">
               {judulTabel}
             </h2>
             {tingkat !== "kabupaten" ? (
-              <p className="mt-0.5 text-xs text-muted">
+              <p className="mt-0.5 text-[11px] text-muted">
                 Target dari Proses A pertama, sisa dari Proses B terakhir.
               </p>
             ) : null}
           </div>
           {data && (data.target || data.pembanding) ? (
-            <p className="text-xs text-muted">
+            <p className="text-[11px] text-muted">
               {data.target
                 ? `Target: A ke-${data.target.nomor_urut ?? "-"} (${formatTanggal(data.target.tanggal_data)})`
                 : "Target belum tersedia"}
@@ -397,44 +489,67 @@ export function TabulasiRekap({
               />
             ))}
           </div>
-        ) : tersaring.length === 0 ? (
+        ) : terurut.length === 0 ? (
           <div className="p-4 sm:p-5">
             <EmptyState judul={`Belum ada data ${judulTabel.toLocaleLowerCase("id-ID")}`}>
-              {cari
-                ? "Tidak ada wilayah yang cocok dengan pencarian."
-                : "Belum ada run Proses A yang targetnya bisa dibaca untuk tingkat ini."}
+              Belum ada run Proses A yang targetnya bisa dibaca untuk tingkat ini.
             </EmptyState>
           </div>
         ) : (
           <div className="relative max-h-[70vh] overflow-auto overscroll-contain">
-            <table className="w-full min-w-[46rem] border-collapse text-sm">
+            <table className="w-full min-w-[46rem] border-collapse text-[13px]">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide text-muted">
-                  <th className="sticky left-0 top-0 z-30 border-b border-line bg-paper px-4 py-2.5 font-semibold sm:px-5">
-                    Wilayah
-                  </th>
-                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-3 py-2.5 text-right font-semibold">
-                    Jumlah titik
-                  </th>
-                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-3 py-2.5 text-right font-semibold">
-                    Target
-                  </th>
-                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-3 py-2.5 text-right font-semibold">
-                    Selesai
-                  </th>
-                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-3 py-2.5 text-right font-semibold">
-                    Sisa
-                  </th>
-                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-3 py-2.5 text-right font-semibold">
-                    Penyelesaian
-                  </th>
-                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-4 py-2.5 text-right font-semibold sm:px-5">
-                    Status
-                  </th>
+                  <SelSort
+                    label="Wilayah"
+                    kolom="wilayah"
+                    sort={sort}
+                    onSort={gantiSort}
+                    rata="left"
+                    kiri
+                    className="sm:px-4"
+                  />
+                  <SelSort
+                    label="Jumlah titik"
+                    kolom="jumlah"
+                    sort={sort}
+                    onSort={gantiSort}
+                  />
+                  <SelSort
+                    label="Target"
+                    kolom="target"
+                    sort={sort}
+                    onSort={gantiSort}
+                  />
+                  <SelSort
+                    label="Selesai"
+                    kolom="selesai"
+                    sort={sort}
+                    onSort={gantiSort}
+                  />
+                  <SelSort
+                    label="Sisa"
+                    kolom="sisa"
+                    sort={sort}
+                    onSort={gantiSort}
+                  />
+                  <SelSort
+                    label="Penyelesaian"
+                    kolom="persen"
+                    sort={sort}
+                    onSort={gantiSort}
+                  />
+                  <SelSort
+                    label="Status"
+                    kolom="status"
+                    sort={sort}
+                    onSort={gantiSort}
+                    className="sm:px-4"
+                  />
                 </tr>
               </thead>
               <tbody>
-                {tersaring.map((baris) => {
+                {terurut.map((baris) => {
                   const bisaDibuka = Boolean(
                     baris.kode && tingkat !== "desa",
                   );
@@ -468,7 +583,7 @@ export function TabulasiRekap({
                           : ""
                       }`}
                     >
-                      <td className="sticky left-0 z-10 bg-surface px-4 py-2.5 font-medium text-ink sm:px-5">
+                      <td className="sticky left-0 z-10 bg-surface px-3 py-2 font-medium text-ink sm:px-4">
                         <span className="flex items-center gap-2">
                           {bisaDibuka ? <Chevron /> : <span className="h-4 w-4 shrink-0" />}
                           <span className="min-w-0">
@@ -481,22 +596,22 @@ export function TabulasiRekap({
                           </span>
                         </span>
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-muted">
+                      <td className="px-2.5 py-2 text-right tabular-nums text-muted">
                         {formatAngka(baris.jumlah)}
                       </td>
-                      <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-ink">
+                      <td className="px-2.5 py-2 text-right font-semibold tabular-nums text-ink">
                         {formatAngka(baris.target)}
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-success">
+                      <td className="px-2.5 py-2 text-right tabular-nums text-success">
                         {formatAngka(baris.selesai)}
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-accent-strong">
+                      <td className="px-2.5 py-2 text-right tabular-nums text-accent-strong">
                         {formatAngka(baris.sisa)}
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-ink">
+                      <td className="px-2.5 py-2 text-right tabular-nums text-ink">
                         <BarPenyelesaian nilai={baris.persen} />
                       </td>
-                      <td className="px-4 py-2.5 text-right sm:px-5">
+                      <td className="px-3 py-2 text-right sm:px-4">
                         <span
                           className={`inline-flex min-h-7 items-center rounded-full border px-2.5 text-xs font-semibold ${gayaStatus(baris.status)}`}
                         >
@@ -509,21 +624,21 @@ export function TabulasiRekap({
               </tbody>
               <tfoot>
                 <tr className="border-t border-line bg-paper/70 font-semibold text-ink">
-                  <td className="sticky left-0 z-10 bg-paper/95 px-4 py-3 sm:px-5">
-                    Total {tersaring.length} wilayah
+                  <td className="sticky left-0 z-10 bg-paper/95 px-3 py-2 sm:px-4">
+                    Total {terurut.length} wilayah
                   </td>
-                  <td className="px-3 py-3 text-right tabular-nums">{formatAngka(total.jumlah)}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{formatAngka(total.target)}</td>
-                  <td className="px-3 py-3 text-right tabular-nums text-success">
+                  <td className="px-2.5 py-2 text-right tabular-nums">{formatAngka(total.jumlah)}</td>
+                  <td className="px-2.5 py-2 text-right tabular-nums">{formatAngka(total.target)}</td>
+                  <td className="px-2.5 py-2 text-right tabular-nums text-success">
                     {formatAngka(total.selesai)}
                   </td>
-                  <td className="px-3 py-3 text-right tabular-nums text-accent-strong">
+                  <td className="px-2.5 py-2 text-right tabular-nums text-accent-strong">
                     {formatAngka(total.sisa)}
                   </td>
-                  <td className="px-3 py-3 text-right tabular-nums">
+                  <td className="px-2.5 py-2 text-right tabular-nums">
                     {formatPersen(persenTotal)}
                   </td>
-                  <td className="px-4 py-3 sm:px-5" />
+                  <td className="px-3 py-2 sm:px-4" />
                 </tr>
               </tfoot>
             </table>
