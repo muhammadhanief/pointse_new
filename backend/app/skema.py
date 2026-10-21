@@ -285,6 +285,46 @@ class ProgresBOut(BaseModel):
     baris: list[ProgresBBarisOut] = Field(default_factory=list)
 
 
+class TabulasiProgresRunOut(BaseModel):
+    """Run sumber angka tabulasi (target A atau pembanding B)."""
+
+    run_id: int
+    nomor_urut: int | None = None
+    tanggal_data: date
+
+
+class TabulasiProgresBarisOut(BaseModel):
+    """Satu baris tabulasi untuk satu wilayah pada satu tingkat."""
+
+    kode: str | None = None
+    induk: str | None = None
+    nama: str | None = None
+    level: str
+    jumlah: int
+    target: int
+    selesai: int
+    sisa: int
+    persen: float | None = None
+    status: str
+    ada_b: bool
+
+
+class TabulasiProgresOut(BaseModel):
+    """Tabulasi drill-down kabupaten/kota -> kecamatan -> desa."""
+
+    tingkat: str
+    dasar: str
+    kdprov: str
+    kdkab: str | None = None
+    kdkec: str | None = None
+    nmprov: str | None = None
+    nmkab: str | None = None
+    nmkec: str | None = None
+    target: TabulasiProgresRunOut | None = None
+    pembanding: TabulasiProgresRunOut | None = None
+    baris: list[TabulasiProgresBarisOut] = Field(default_factory=list)
+
+
 class TrenBarisOut(BaseModel):
     """Satu titik tren: per (kabupaten/kota atau provinsi, tipe, tanggal data)."""
 

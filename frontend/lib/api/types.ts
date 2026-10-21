@@ -165,6 +165,40 @@ export type ProgresB = {
   baris: ProgresBBaris[];
 };
 
+export type TabulasiProgresRun = {
+  run_id: number;
+  nomor_urut: number | null;
+  tanggal_data: string;
+};
+
+export type TabulasiProgresBaris = {
+  kode: string | null;
+  induk: string | null;
+  nama: string | null;
+  level: string;
+  jumlah: number;
+  target: number;
+  selesai: number;
+  sisa: number;
+  persen: number | null;
+  status: string;
+  ada_b: boolean;
+};
+
+export type TabulasiProgres = {
+  tingkat: string;
+  dasar: string;
+  kdprov: string;
+  kdkab: string | null;
+  kdkec: string | null;
+  nmprov: string | null;
+  nmkab: string | null;
+  nmkec: string | null;
+  target: TabulasiProgresRun | null;
+  pembanding: TabulasiProgresRun | null;
+  baris: TabulasiProgresBaris[];
+};
+
 export type WorkerHeartbeat = {
   worker_id: string;
   pid: number | null;

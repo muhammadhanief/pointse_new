@@ -995,20 +995,10 @@ def _metrik_progres(
     return int(run.jumlah_baris or jumlah_detail), int(belum)
 
 
-def progres_b(
-    sesi: Session,
-    *,
-    kdprov: str,
-    kdkab: str,
-    dasar: str = DASAR_TUGAS,
-) -> dict[str, object]:
-    """Perjalanan Proses B satu kabupaten/kota terhadap target Proses A pertama.
-
-    Target = ``belum`` (flag 1) pada run Proses A sukses paling awal yang
-    metriknya masih bisa dibaca. Setiap run B sukses menjadi satu titik waktu.
-    ``beres`` = target - sisa flag 1; nilai dapat turun bila muncul flag baru,
-    dan UI wajib menjelaskannya.
-    """
+def _pilih_target_a(
+    sesi: Session, kdprov: str, kdkab: str, dasar: str
+) -> tuple[Run | None, tuple[int, int] | None]:
+    """Run A pertama yang targetnya bisa dibaca untuk satu kabupaten/kota."""
     # Peta wilkerstat menyimpan kode pendek (07/72), sedangkan UI memakai kode
     # 4 digit (3307/3372). Cocokkan keduanya.
     kode_kab = kandidat_kdkab(kdprov, kdkab)
@@ -1023,8 +1013,6 @@ def progres_b(
         .order_by(Run.id)
     ).all()
 
-    run_a: Run | None = None
-    metrik_a: tuple[int, int] | None = None
     # Utamakan run yang punya snapshot rekap supaya tabulasi target juga bisa
     # dibuka. Run lama tanpa snapshot baru memakai detail titik sebagai cadangan.
     for kandidat in kandidat_a:
@@ -1035,16 +1023,30 @@ def progres_b(
             )
         ).first()
         if rekap is not None:
-            run_a = kandidat
-            metrik_a = (int(rekap.jumlah), int(rekap.belum))
-            break
-    if run_a is None:
-        for kandidat in kandidat_a:
-            metrik = _metrik_progres(sesi, kandidat, dasar)
-            if metrik is not None:
-                run_a = kandidat
-                metrik_a = metrik
-                break
+            return kandidat, (int(rekap.jumlah), int(rekap.belum))
+    for kandidat in kandidat_a:
+        metrik = _metrik_progres(sesi, kandidat, dasar)
+        if metrik is not None:
+            return kandidat, metrik
+    return None, None
+
+
+def progres_b(
+    sesi: Session,
+    *,
+    kdprov: str,
+    kdkab: str,
+    dasar: str = DASAR_TUGAS,
+) -> dict[str, object]:
+    """Perjalanan Proses B satu kabupaten/kota terhadap target Proses A pertama.
+
+    Target = ``belum`` (flag 1) pada run Proses A sukses paling awal yang
+    metriknya masih bisa dibaca. Setiap run B sukses menjadi satu titik waktu.
+    ``beres`` = target - sisa flag 1; nilai dapat turun bila muncul flag baru,
+    dan UI wajib menjelaskannya.
+    """
+    kode_kab = kandidat_kdkab(kdprov, kdkab)
+    run_a, metrik_a = _pilih_target_a(sesi, kdprov, kdkab, dasar)
 
     target: dict[str, object] | None = None
     target_flag = 0
@@ -1120,6 +1122,314 @@ def progres_b(
         "nmprov": nmprov,
         "nmkab": nmkab,
         "target": target,
+        "baris": baris,
+    }
+
+
+def _metrik_wilayah(
+    sesi: Session,
+    run: Run,
+    tingkat: str,
+    dasar: str,
+    kdprov: str,
+    kode_kab: Sequence[str],
+    kdkec: str | None = None,
+) -> dict[tuple[str | None, ...], dict[str, int]]:
+    """Metrik target/sisa per wilayah dari snapshot rekap satu run."""
+    if tingkat == "kabupaten":
+        sumber = RekapKabupaten
+        kunci = [RekapKabupaten.kdkab]
+        saring = [
+            RekapKabupaten.run_id == run.id,
+            RekapKabupaten.dasar == dasar,
+            RekapKabupaten.kdprov == kdprov,
+            RekapKabupaten.kdkab.in_(kode_kab),
+        ]
+    else:
+        sumber = RekapDesa
+        if tingkat == "kecamatan":
+            kunci = [RekapDesa.kdkec]
+            saring = [
+                RekapDesa.run_id == run.id,
+                RekapDesa.dasar == dasar,
+                RekapDesa.kdprov == kdprov,
+                RekapDesa.kdkab.in_(kode_kab),
+            ]
+        else:
+            kunci = [RekapDesa.kdkec, RekapDesa.kddesa]
+            saring = [
+                RekapDesa.run_id == run.id,
+                RekapDesa.dasar == dasar,
+                RekapDesa.kdprov == kdprov,
+                RekapDesa.kdkab.in_(kode_kab),
+                RekapDesa.kdkec == kdkec,
+            ]
+
+    hasil = sesi.execute(
+        select(*kunci, *_sumbu(sumber).values()).where(*saring).group_by(*kunci)
+    ).mappings()
+    keluaran: dict[tuple[str | None, ...], dict[str, int]] = {}
+    for satu in hasil:
+        kode = tuple(None if satu[kolom.name] is None else str(satu[kolom.name]) for kolom in kunci)
+        keluaran[kode] = {nama: int(satu[nama]) for nama in KOLOM_HITUNGAN}
+    return keluaran
+
+
+def _status_tabulasi(target: int, sisa: int, ada_b: bool) -> str:
+    if target <= 0:
+        return "tanpa_target"
+    if not ada_b:
+        return "belum_b"
+    if sisa <= 0:
+        return "selesai"
+    if target - sisa < 0:
+        return "mundur"
+    return "berjalan"
+
+
+def _ringkas_metrik(run: Run | None, metrik: tuple[int, int] | None, nomor: int | None) -> dict[str, object] | None:
+    if run is None or metrik is None:
+        return None
+    return {
+        "run_id": run.id,
+        "nomor_urut": nomor,
+        "tanggal_data": run.tanggal_data,
+    }
+
+
+def _baris_kabupaten(
+    kode_kab: str,
+    nama: str | None,
+    total: int,
+    target: int,
+    sisa_target: int,
+    ada_b: bool,
+) -> dict[str, object]:
+    selesai = target - sisa_target
+    return {
+        "kode": kode_kab,
+        "induk": None,
+        "nama": nama,
+        "level": "kabupaten",
+        "jumlah": total,
+        "target": target,
+        "selesai": selesai,
+        "sisa": sisa_target,
+        "persen": round(selesai / target * 100, 2) if target else None,
+        "status": _status_tabulasi(target, sisa_target, ada_b),
+        "ada_b": ada_b,
+    }
+
+
+def tabulasi_progres(
+    sesi: Session,
+    *,
+    kdprov: str,
+    kdkab: str | None = None,
+    kdkec: str | None = None,
+    tingkat: str = "kabupaten",
+    dasar: str = DASAR_TUGAS,
+) -> dict[str, object]:
+    """Tabulasi target A pertama vs sisa B terakhir, per tingkat wilayah.
+
+    Satu permintaan hanya mengembalikan satu tingkat: kabupaten/kota, lalu
+    kecamatan untuk satu kabupaten/kota, lalu desa untuk satu kecamatan.
+    """
+    if tingkat not in ("kabupaten", "kecamatan", "desa"):
+        raise KesalahanPerubahan("tingkat tabulasi harus kabupaten, kecamatan, atau desa")
+    if tingkat != "kabupaten" and not kdkab:
+        raise KesalahanPerubahan("kdkab wajib diisi untuk tingkat kecamatan/desa")
+    if tingkat == "desa" and not kdkec:
+        raise KesalahanPerubahan("kdkec wajib diisi untuk tingkat desa")
+
+    kode_kab = kandidat_kdkab(kdprov, kdkab) if kdkab else []
+    saring_nama: list[object] = [Wilayah.kdprov == kdprov]
+    if kode_kab:
+        saring_nama.append(Wilayah.kdkab.in_(kode_kab))
+    nmprov = _peta_nama(sesi, "nmprov", ("kdprov",), [Wilayah.kdprov == kdprov]).get((kdprov,))
+    peta_kab = _peta_nama(sesi, "nmkab", ("kdprov", "kdkab"), saring_nama)
+
+    def nama_kab(kode: str) -> str | None:
+        for calon in (kode, kode[-2:]):
+            hasil = peta_kab.get((kdprov, calon))
+            if hasil:
+                return hasil
+        return None
+
+    if tingkat == "kabupaten":
+        target_peta: dict[str, tuple[Run, tuple[int, int]]] = {}
+        if kdkab:
+            run_a, metrik_a = _pilih_target_a(sesi, kdprov, kdkab, dasar)
+            if run_a is not None and metrik_a is not None:
+                target_peta[kode_kabupaten(kdprov, kdkab)] = (run_a, metrik_a)
+            kode_semua = [kode_kabupaten(kdprov, kdkab)]
+        else:
+            kode_semua = sorted(
+                {
+                    kode_kabupaten(kdprov, run.kdkab)
+                    for run in sesi.scalars(
+                        select(Run).where(
+                            Run.tipe == TIPE_A,
+                            Run.status == STATUS_SUKSES,
+                            Run.kdprov == kdprov,
+                        )
+                    ).all()
+                }
+                | {
+                    kode_kabupaten(kdprov, kode)
+                    for _, kode in peta_kab
+                }
+            )
+            # Pilih target dengan aturan yang sama seperti ``progres_b``: run A
+            # pertama yang punya snapshot rekap, baru cadangan detail titik.
+            for kode in kode_semua:
+                run_a, metrik_a = _pilih_target_a(sesi, kdprov, kode, dasar)
+                if run_a is not None and metrik_a is not None:
+                    target_peta[kode] = (run_a, metrik_a)
+
+        terbaru_b: dict[str, Run] = {}
+        for run in sesi.scalars(
+            select(Run)
+            .where(
+                Run.tipe == TIPE_B,
+                Run.status == STATUS_SUKSES,
+                Run.kdprov == kdprov,
+            )
+            .order_by(Run.id)
+        ).all():
+            kode = kode_kabupaten(kdprov, run.kdkab)
+            terbaru_b[kode] = run
+        b_peta: dict[str, tuple[Run, tuple[int, int]]] = {}
+        for kode, run_b in terbaru_b.items():
+            metrik_b = _metrik_progres(sesi, run_b, dasar)
+            if metrik_b is not None:
+                b_peta[kode] = (run_b, metrik_b)
+
+        baris = []
+        for kode in kode_semua:
+            target_metrik = target_peta.get(kode)
+            total, target = target_metrik[1] if target_metrik is not None else (0, 0)
+            run_b_metrik = b_peta.get(kode)
+            sisa = run_b_metrik[1][1] if run_b_metrik is not None else target
+            baris.append(
+                _baris_kabupaten(kode, nama_kab(kode), total, target, sisa, run_b_metrik is not None)
+            )
+
+        kode_terpilih = kode_kabupaten(kdprov, kdkab) if kdkab else None
+        run_a_meta = target_peta.get(kode_terpilih, (None, None))[0] if kode_terpilih else None
+        metrik_a_meta = target_peta.get(kode_terpilih, (None, None))[1] if kode_terpilih else None
+        run_b_meta = b_peta.get(kode_terpilih, (None, None))[0] if kode_terpilih else None
+        metrik_b_meta = b_peta.get(kode_terpilih, (None, None))[1] if kode_terpilih else None
+        semua = [run for run in (run_a_meta, run_b_meta) if run is not None]
+        nomor = nomor_urut_run(sesi, semua)
+        return {
+            "tingkat": tingkat,
+            "dasar": dasar,
+            "kdprov": kdprov,
+            "kdkab": kdkab,
+            "kdkec": None,
+            "nmprov": nmprov,
+            "nmkab": nama_kab(kode_terpilih) if kode_terpilih else None,
+            "nmkec": None,
+            "target": _ringkas_metrik(
+                run_a_meta,
+                metrik_a_meta,
+                nomor.get(run_a_meta.id) if run_a_meta else None,
+            ),
+            "pembanding": _ringkas_metrik(
+                run_b_meta,
+                metrik_b_meta,
+                nomor.get(run_b_meta.id) if run_b_meta else None,
+            ),
+            "baris": baris,
+        }
+
+    assert kdkab is not None
+    run_a, metrik_a = _pilih_target_a(sesi, kdprov, kdkab, dasar)
+    if run_a is None or metrik_a is None:
+        return {
+            "tingkat": tingkat,
+            "dasar": dasar,
+            "kdprov": kdprov,
+            "kdkab": kdkab,
+            "kdkec": kdkec,
+            "nmprov": nmprov,
+            "nmkab": nama_kab(kode_kabupaten(kdprov, kdkab)),
+            "nmkec": None,
+            "target": None,
+            "pembanding": None,
+            "baris": [],
+        }
+
+    run_b = sesi.scalars(
+        select(Run)
+        .where(
+            Run.tipe == TIPE_B,
+            Run.status == STATUS_SUKSES,
+            Run.kdprov == kdprov,
+            Run.kdkab.in_(kode_kab),
+        )
+        .order_by(Run.id.desc())
+        .limit(1)
+    ).first()
+    metrik_b = _metrik_progres(sesi, run_b, dasar) if run_b is not None else None
+    if metrik_b is None:
+        run_b = None
+
+    target_peta = _metrik_wilayah(sesi, run_a, tingkat, dasar, kdprov, kode_kab, kdkec)
+    b_meter = _metrik_wilayah(sesi, run_b, tingkat, dasar, kdprov, kode_kab, kdkec) if run_b else {}
+
+    if tingkat == "kecamatan":
+        peta_nama = _peta_nama(sesi, "nmkec", ("kdkec",), saring_nama)
+    else:
+        peta_nama = _peta_nama(sesi, "nmdesa", ("kdkec", "kddesa"), saring_nama)
+    peta_kec = _peta_nama(sesi, "nmkec", ("kdkec",), saring_nama)
+    nmkec = peta_kec.get((kdkec,)) if kdkec else None
+
+    baris = []
+    for kunci in sorted(set(target_peta) | set(b_meter), key=lambda satu: (satu[0] is None, *satu)):
+        target_metrik = target_peta.get(kunci)
+        b_metrik = b_meter.get(kunci)
+        target = target_metrik["belum"] if target_metrik is not None else 0
+        sisa = b_metrik["belum"] if b_metrik is not None else target
+        selesai = target - sisa
+        kode = kunci[-1]
+        induk = kunci[0] if tingkat == "desa" else kode_kabupaten(kdprov, kdkab)
+        if kode is None:
+            nama = NAMA_TANPA_WILAYAH
+        elif tingkat == "kecamatan":
+            nama = peta_nama.get((kode,))
+        else:
+            nama = peta_nama.get((kunci[0], kode)) if kunci[0] is not None else None
+        baris.append(
+            {
+                "kode": kode,
+                "induk": induk,
+                "nama": nama,
+                "level": tingkat,
+                "jumlah": target_metrik["jumlah"] if target_metrik is not None else 0,
+                "target": target,
+                "selesai": selesai,
+                "sisa": sisa,
+                "persen": round(selesai / target * 100, 2) if target else None,
+                "status": _status_tabulasi(target, sisa, b_metrik is not None),
+                "ada_b": b_metrik is not None,
+            }
+        )
+
+    semua = [run for run in (run_a, run_b) if run is not None]
+    nomor = nomor_urut_run(sesi, semua)
+    return {
+        "tingkat": tingkat,
+        "dasar": dasar,
+        "kdprov": kdprov,
+        "kdkab": kdkab,
+        "kdkec": kdkec,
+        "nmprov": nmprov,
+        "nmkab": nama_kab(kode_kabupaten(kdprov, kdkab)),
+        "nmkec": nmkec,
+        "target": _ringkas_metrik(run_a, metrik_a, nomor.get(run_a.id)),
+        "pembanding": _ringkas_metrik(run_b, metrik_b, nomor.get(run_b.id) if run_b else None),
         "baris": baris,
     }
 

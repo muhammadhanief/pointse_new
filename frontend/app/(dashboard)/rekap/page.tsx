@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/components/dashboard/ui";
-import { RekapWorkspace } from "@/components/rekap/rekap-workspace";
+import { TabulasiRekap } from "@/components/rekap/tabulasi-rekap";
 import { wajibSesi } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
@@ -17,20 +17,17 @@ export default async function RekapPage() {
     <div className="space-y-8">
       <PageHeader
         judul="Rekap progres"
-        deskripsi="Pantau target awal, perjalanan perbaikan, dan rincian wilayah dari Proses A dan Proses B."
+        deskripsi="Tabulasi target dan penyelesaian wilayah. Klik kabupaten/kota untuk turun ke kecamatan, lalu desa/kelurahan."
         meta={
           <div className="sm:text-right">
-            <p className="font-semibold text-ink">Data per job</p>
+            <p className="font-semibold text-ink">Target A pertama</p>
             <p className="mt-0.5 text-xs">
-              Angka historis tidak berubah saat upload baru.
+              Dibandingkan dengan Proses B terakhir.
             </p>
           </div>
         }
       />
-      <RekapWorkspace
-        kdprov={sesi.kdprov}
-        kdkabAwal={sesi.kdkab}
-      />
+      <TabulasiRekap kdprov={sesi.kdprov} kdkabAwal={sesi.kdkab} />
     </div>
   );
 }

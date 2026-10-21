@@ -560,6 +560,112 @@ def test_progres_b_memakai_detail_bila_rekap_run_lama_hilang(
     assert data["target"]["total"] == 3
 
 
+def test_tabulasi_progres_kabupaten_kecamatan_desa(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Tabulasi mengganti tingkat: kabupaten -> kecamatan -> desa."""
+    titik, peta = berkas_uji(tmp_path)
+    unggah(klien, titik, peta, tanggal_data="2026-01-01")
+    jalankan(sesi_pabrik)
+
+    titik_b, peta_b = berkas_uji_b(tmp_path)
+    unggah(klien, titik_b, peta_b, tipe="B", tanggal_data="2026-01-03")
+    jalankan(sesi_pabrik)
+    baris_b_bebas = tuple(
+        data_kecil.baris_titik_b(
+            str(nomor), "A1", lat, lon, flag_repair_initial=0, flag_repair=0
+        )
+        for nomor, (lat, lon) in enumerate(((0.2, 0.2), (0.3, 0.3), (0.4, 0.4)), 1)
+    )
+    titik_b2, peta_b2 = berkas_uji_b(tmp_path, baris_b_bebas)
+    unggah(klien, titik_b2, peta_b2, tipe="B", tanggal_data="2026-01-04")
+    jalankan(sesi_pabrik)
+
+    kabupaten = klien.get(
+        "/tabulasi-progres", params={"tingkat": "kabupaten", "kdprov": "33"}
+    ).json()
+    assert kabupaten["tingkat"] == "kabupaten"
+    assert len(kabupaten["baris"]) == 1
+    kab = kabupaten["baris"][0]
+    assert (kab["kode"], kab["target"], kab["sisa"], kab["selesai"]) == (
+        "3307",
+        1,
+        0,
+        1,
+    )
+    assert kab["status"] == "selesai"
+
+    kecamatan = klien.get(
+        "/tabulasi-progres", params={"tingkat": "kecamatan", "kdkab": "3307"}
+    ).json()
+    assert kecamatan["tingkat"] == "kecamatan"
+    assert kecamatan["target"]["run_id"] is not None
+    assert kecamatan["pembanding"]["run_id"] is not None
+    assert len(kecamatan["baris"]) == 1
+    kec = kecamatan["baris"][0]
+    assert kec["kode"] == "330701"
+    assert (kec["target"], kec["sisa"], kec["selesai"]) == (1, 0, 1)
+    assert kec["induk"] == "3307"
+
+    desa = klien.get(
+        "/tabulasi-progres",
+        params={"tingkat": "desa", "kdkab": "3307", "kdkec": "330701"},
+    ).json()
+    assert desa["tingkat"] == "desa"
+    assert len(desa["baris"]) == 1
+    satu_desa = desa["baris"][0]
+    assert satu_desa["kode"] == "330701001"
+    assert satu_desa["induk"] == "330701"
+    assert (satu_desa["target"], satu_desa["sisa"]) == (1, 0)
+
+
+def test_tabulasi_progres_menerima_kode_kabupaten_pendek(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Kode run pendek (07) tetap bisa ditelusuri dengan kode UI 3307."""
+    titik, peta = berkas_uji(tmp_path)
+    id_a = unggah(klien, titik, peta).json()["id"]
+    jalankan(sesi_pabrik)
+    with sesi_pabrik() as sesi:
+        run = sesi.get(Run, id_a)
+        assert run is not None
+        run.kdkab = "07"
+        sesi.commit()
+
+    data = klien.get(
+        "/tabulasi-progres", params={"tingkat": "kecamatan", "kdkab": "3307"}
+    ).json()
+    assert data["kdkab"] == "3307"
+    assert data["target"] is not None
+    assert data["baris"]
+    assert sum(baris["target"] for baris in data["baris"]) == 1
+
+
+def test_tabulasi_progres_tanpa_b_dan_input_tidak_lengkap(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Tanpa B sisa = target; tingkat kecamatan/desa wajib menyebut induknya."""
+    titik, peta = berkas_uji(tmp_path)
+    unggah(klien, titik, peta)
+    jalankan(sesi_pabrik)
+
+    kabupaten = klien.get(
+        "/tabulasi-progres", params={"tingkat": "kabupaten", "kdprov": "33"}
+    ).json()
+    assert kabupaten["pembanding"] is None
+    assert kabupaten["baris"][0]["sisa"] == kabupaten["baris"][0]["target"]
+    assert kabupaten["baris"][0]["status"] == "belum_b"
+
+    tanpa_kab = klien.get("/tabulasi-progres", params={"tingkat": "kecamatan"})
+    assert tanpa_kab.status_code == 422
+    tanpa_kec = klien.get(
+        "/tabulasi-progres", params={"tingkat": "desa", "kdkab": "3307"}
+    )
+    assert tanpa_kec.status_code == 422
+    tingkat_asing = klien.get("/tabulasi-progres", params={"tingkat": "sls"})
+    assert tingkat_asing.status_code == 422
+
+
 def test_perubahan_selisih_rekap_dan_per_titik(
     klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:

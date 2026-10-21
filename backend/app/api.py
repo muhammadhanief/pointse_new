@@ -55,6 +55,7 @@ from app.skema import (
     RingkasanOut,
     RunDetailOut,
     RunOut,
+    TabulasiProgresOut,
     TrenOut,
 )
 
@@ -524,6 +525,39 @@ def progres_b(
     return ProgresBOut.model_validate(
         layanan.progres_b(sesi, kdprov=kdprov, kdkab=kdkab, dasar=dasar)
     )
+
+
+@router.get("/tabulasi-progres", response_model=TabulasiProgresOut)
+def tabulasi_progres(
+    tingkat: str = Query("kabupaten", description="'kabupaten', 'kecamatan', atau 'desa'"),
+    kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
+    kdkab: str | None = Query(None, description="Kode kabupaten/kota, mis. 3307"),
+    kdkec: str | None = Query(None, description="Kode kecamatan untuk tingkat desa"),
+    dasar: Dasar = Query(DASAR_TUGAS, description="'tugas' atau 'posisi'"),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> TabulasiProgresOut:
+    """Tabulasi target A pertama vs sisa B terakhir, satu tingkat per permintaan."""
+    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
+    if kdprov is None:
+        if kdkab:
+            kdprov = kdkab[:2]
+        else:
+            raise HTTPException(status_code=422, detail="kdprov wajib diisi")
+    if tingkat != "kabupaten" and kdkab is None:
+        raise HTTPException(status_code=422, detail="pilih kabupaten/kota lebih dulu")
+    try:
+        data = layanan.tabulasi_progres(
+            sesi,
+            kdprov=kdprov,
+            kdkab=kdkab,
+            kdkec=kdkec,
+            tingkat=tingkat,
+            dasar=dasar,
+        )
+    except layanan.KesalahanPerubahan as galat:
+        raise HTTPException(status_code=422, detail=str(galat)) from galat
+    return TabulasiProgresOut.model_validate(data)
 
 
 @router.get("/tren", response_model=TrenOut)
