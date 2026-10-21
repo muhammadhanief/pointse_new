@@ -406,19 +406,31 @@ export function TabulasiRekap({
             </EmptyState>
           </div>
         ) : (
-          <div className="relative overflow-x-auto">
+          <div className="relative max-h-[70vh] overflow-auto overscroll-contain">
             <table className="w-full min-w-[46rem] border-collapse text-sm">
               <thead>
-                <tr className="border-b border-line bg-paper/70 text-left text-xs uppercase tracking-wide text-muted">
-                  <th className="sticky left-0 z-10 bg-paper/95 px-4 py-2.5 font-semibold sm:px-5">
+                <tr className="text-left text-xs uppercase tracking-wide text-muted">
+                  <th className="sticky left-0 top-0 z-30 border-b border-line bg-paper px-4 py-2.5 font-semibold sm:px-5">
                     Wilayah
                   </th>
-                  <th className="px-3 py-2.5 text-right font-semibold">Jumlah titik</th>
-                  <th className="px-3 py-2.5 text-right font-semibold">Target</th>
-                  <th className="px-3 py-2.5 text-right font-semibold">Selesai</th>
-                  <th className="px-3 py-2.5 text-right font-semibold">Sisa</th>
-                  <th className="px-3 py-2.5 text-right font-semibold">Penyelesaian</th>
-                  <th className="px-4 py-2.5 text-right font-semibold sm:px-5">Status</th>
+                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-3 py-2.5 text-right font-semibold">
+                    Jumlah titik
+                  </th>
+                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-3 py-2.5 text-right font-semibold">
+                    Target
+                  </th>
+                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-3 py-2.5 text-right font-semibold">
+                    Selesai
+                  </th>
+                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-3 py-2.5 text-right font-semibold">
+                    Sisa
+                  </th>
+                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-3 py-2.5 text-right font-semibold">
+                    Penyelesaian
+                  </th>
+                  <th className="sticky top-0 z-20 border-b border-line bg-paper px-4 py-2.5 text-right font-semibold sm:px-5">
+                    Status
+                  </th>
                 </tr>
               </thead>
               <tbody>
