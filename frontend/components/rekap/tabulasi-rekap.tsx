@@ -20,7 +20,6 @@ import {
 } from "@/lib/wilayah/kabupaten";
 
 type Tingkat = "kabupaten" | "kecamatan" | "desa";
-type Dasar = "tugas" | "posisi";
 
 const LABEL_STATUS: Record<string, string> = {
   belum_b: "Belum ada B",
@@ -116,7 +115,6 @@ export function TabulasiRekap({
   const [tingkat, setTingkat] = useState<Tingkat>(tingkatAwal);
   const [kdkab, setKdkab] = useState<string | null>(kdkabAwal);
   const [kdkec, setKdkec] = useState<string | null>(null);
-  const [dasar, setDasar] = useState<Dasar>("tugas");
   const [cari, setCari] = useState("");
   const [data, setData] = useState<TabulasiProgres | null>(null);
   const [memuat, setMemuat] = useState(true);
@@ -129,7 +127,7 @@ export function TabulasiRekap({
       setData(null);
       const parameter = new URLSearchParams({
         tingkat,
-        dasar,
+        dasar: "tugas",
         kdprov,
       });
       if (kdkab) {
@@ -156,7 +154,7 @@ export function TabulasiRekap({
         }
       }
     },
-    [dasar, kdprov, kdkab, kdkec, tingkat],
+    [kdprov, kdkab, kdkec, tingkat],
   );
 
   useEffect(() => {
@@ -308,8 +306,8 @@ export function TabulasiRekap({
         </div>
 
         <div className="flex flex-col gap-3 border-t border-line pt-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="flex flex-wrap items-end gap-3">
-            {bisaKembali ? (
+          {bisaKembali ? (
+            <div className="flex flex-wrap items-end gap-3">
               <TombolAksi
                 varian="sekunder"
                 className="min-h-10 px-3"
@@ -323,24 +321,8 @@ export function TabulasiRekap({
               >
                 Kembali
               </TombolAksi>
-            ) : null}
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Dasar
-              <select
-                value={dasar}
-                onChange={(event) => setDasar(event.target.value as Dasar)}
-                className="mt-1 block min-h-10 min-w-[13rem] rounded-lg border border-line-strong bg-surface px-3 text-sm font-normal normal-case tracking-normal text-ink"
-              >
-                <option value="tugas">Wilayah penugasan</option>
-                <option value="posisi">Posisi titik</option>
-              </select>
-              <span className="mt-1 block max-w-[18rem] text-[11px] font-normal normal-case leading-4 tracking-normal text-muted">
-                {dasar === "tugas"
-                  ? "Mengikuti kode SubSLS pada data titik."
-                  : "Mengikuti wilayah hasil join peta."}
-              </span>
-            </label>
-          </div>
+            </div>
+          ) : null}
 
           <div className="flex flex-wrap items-end gap-3">
             <label className="min-w-[13rem] flex-1 text-xs font-semibold uppercase tracking-wide text-muted sm:flex-none">
