@@ -97,7 +97,7 @@ export function PerjalananB({ kdkab }: { kdkab: string }) {
     return (
       <Panel
         judul="Perjalanan perbaikan"
-        deskripsi="Target perbaikan terbentuk dari hasil Proses A pertama."
+        deskripsi="Target perbaikan terbentuk dari hasil Proses A terbaru."
       >
         <EmptyState
           judul="Target belum terbentuk"
@@ -107,7 +107,7 @@ export function PerjalananB({ kdkab }: { kdkab: string }) {
             </TautanAksi>
           }
         >
-          Setelah Proses A pertama sukses, jumlah titik dengan flag 1 akan
+          Setelah Proses A terbaru sukses, jumlah titik dengan flag 1 akan
           menjadi target penyelesaian Proses B.
         </EmptyState>
       </Panel>
@@ -126,7 +126,7 @@ export function PerjalananB({ kdkab }: { kdkab: string }) {
     <div className="space-y-6">
       <Panel
         judul={`Perjalanan perbaikan ${nama}`}
-        deskripsi="Setiap upload Proses B menjadi satu titik waktu. Angka dihitung terhadap target dari Proses A pertama."
+        deskripsi="Setiap upload Proses B menjadi satu titik waktu. Angka dihitung terhadap target dari Proses A terbaru."
       >
         <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(16rem,0.8fr)] lg:items-end">
           <div>
@@ -134,7 +134,7 @@ export function PerjalananB({ kdkab }: { kdkab: string }) {
             <p className="mt-1 font-display text-5xl font-semibold tracking-tight text-ink sm:text-6xl">
               {persenSelesai == null ? "-" : `${formatAngka(persenSelesai)}%`}
             </p>
-            <p className="mt-2 text-sm leading-6 text-muted">
+            <p className="mt-2 text-sm leading-normal text-muted">
               {formatAngka(beres)} dari {formatAngka(target.flag_1)} titik flag 1
               sudah beres.
             </p>

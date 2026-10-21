@@ -1005,7 +1005,11 @@ def _metrik_progres(
 def _pilih_target_a(
     sesi: Session, kdprov: str, kdkab: str, dasar: str
 ) -> tuple[Run | None, tuple[int, int] | None]:
-    """Run A pertama yang targetnya bisa dibaca untuk satu kabupaten/kota."""
+    """Run A terbaru yang targetnya bisa dibaca untuk satu kabupaten/kota.
+
+    Master geotag adalah acuan dari provinsi. Setiap Proses A baru memakai master
+    terbaru, jadi target mengikuti run A terbaru yang sukses, bukan run pertama.
+    """
     # Peta wilkerstat menyimpan kode pendek (07/72), sedangkan UI memakai kode
     # 4 digit (3307/3372). Cocokkan keduanya.
     kode_kab = kandidat_kdkab(kdprov, kdkab)
@@ -1017,7 +1021,7 @@ def _pilih_target_a(
             Run.kdprov == kdprov,
             Run.kdkab.in_(kode_kab),
         )
-        .order_by(Run.id)
+        .order_by(Run.id.desc())
     ).all()
 
     # Utamakan run yang punya snapshot rekap supaya tabulasi target juga bisa
@@ -1038,6 +1042,27 @@ def _pilih_target_a(
     return None, None
 
 
+def _saring_b_setelah_target(run_a: Run | None) -> list[object]:
+    """Syarat B yang sebanding dengan target A terbaru.
+
+    B harus dibuat setelah A target. Kalau sumber A-nya dicatat, sumber itu harus
+    sama dengan A target; B lama tanpa ``sumber_run_a_id`` tetap diterima.
+    """
+    if run_a is None:
+        return []
+    return [
+        Run.id > run_a.id,
+        or_(Run.sumber_run_a_id.is_(None), Run.sumber_run_a_id == run_a.id),
+    ]
+
+
+def _b_sebanding(run_b: Run, run_a: Run) -> bool:
+    """True kalau B dibuat setelah A target dan memakai sumber A yang sama."""
+    if run_b.id <= run_a.id:
+        return False
+    return run_b.sumber_run_a_id in (None, run_a.id)
+
+
 def progres_b(
     sesi: Session,
     *,
@@ -1045,12 +1070,12 @@ def progres_b(
     kdkab: str,
     dasar: str = DASAR_TUGAS,
 ) -> dict[str, object]:
-    """Perjalanan Proses B satu kabupaten/kota terhadap target Proses A pertama.
+    """Perjalanan Proses B satu kabupaten/kota terhadap target Proses A terbaru.
 
-    Target = ``belum`` (flag 1) pada run Proses A sukses paling awal yang
-    metriknya masih bisa dibaca. Setiap run B sukses menjadi satu titik waktu.
-    ``beres`` = target - sisa flag 1; nilai dapat turun bila muncul flag baru,
-    dan UI wajib menjelaskannya.
+    Target = ``belum`` (flag 1) pada run Proses A sukses terbaru yang metriknya
+    masih bisa dibaca. Setiap run B sukses setelah A target menjadi satu titik
+    waktu. ``beres`` = target - sisa flag 1; nilai dapat turun bila muncul flag
+    baru, dan UI wajib menjelaskannya.
     """
     kode_kab = kandidat_kdkab(kdprov, kdkab)
     run_a, metrik_a = _pilih_target_a(sesi, kdprov, kdkab, dasar)
@@ -1075,6 +1100,7 @@ def progres_b(
             Run.status == STATUS_SUKSES,
             Run.kdprov == kdprov,
             Run.kdkab.in_(kode_kab),
+            *_saring_b_setelah_target(run_a),
         )
         .order_by(Run.id)
     ).all()
@@ -1237,7 +1263,7 @@ def tabulasi_progres(
     tingkat: str = "kabupaten",
     dasar: str = DASAR_TUGAS,
 ) -> dict[str, object]:
-    """Tabulasi target A pertama vs sisa B terakhir, per tingkat wilayah.
+    """Tabulasi target A terbaru vs sisa B terakhir, per tingkat wilayah.
 
     Satu permintaan hanya mengembalikan satu tingkat: kabupaten/kota, lalu
     kecamatan untuk satu kabupaten/kota, lalu desa untuk satu kecamatan.
@@ -1305,6 +1331,9 @@ def tabulasi_progres(
             .order_by(Run.id)
         ).all():
             kode = kode_kabupaten(kdprov, run.kdkab)
+            target_metrik = target_peta.get(kode)
+            if target_metrik is not None and not _b_sebanding(run, target_metrik[0]):
+                continue
             terbaru_b[kode] = run
         b_peta: dict[str, tuple[Run, tuple[int, int]]] = {}
         for kode, run_b in terbaru_b.items():
@@ -1375,6 +1404,7 @@ def tabulasi_progres(
             Run.status == STATUS_SUKSES,
             Run.kdprov == kdprov,
             Run.kdkab.in_(kode_kab),
+            *_saring_b_setelah_target(run_a),
         )
         .order_by(Run.id.desc())
         .limit(1)

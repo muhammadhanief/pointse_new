@@ -516,7 +516,7 @@ def progres_b(
     sesi: Session = Depends(get_session),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> ProgresBOut:
-    """Perjalanan Proses B satu kabupaten/kota terhadap target Proses A pertama."""
+    """Perjalanan Proses B satu kabupaten/kota terhadap target Proses A terbaru."""
     kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
     if kdkab is None:
         raise HTTPException(status_code=422, detail="pilih kabupaten/kota untuk melihat progres")
@@ -537,7 +537,7 @@ def tabulasi_progres(
     sesi: Session = Depends(get_session),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> TabulasiProgresOut:
-    """Tabulasi target A pertama vs sisa B terakhir, satu tingkat per permintaan."""
+    """Tabulasi target A terbaru vs sisa B terakhir, satu tingkat per permintaan."""
     kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
     if kdprov is None:
         if kdkab:

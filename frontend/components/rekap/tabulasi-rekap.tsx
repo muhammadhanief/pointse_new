@@ -450,7 +450,7 @@ export function TabulasiRekap({
             </h2>
             {tingkat !== "kabupaten" ? (
               <p className="mt-0.5 text-[11px] text-muted">
-                Target dari Proses A pertama, sisa dari Proses B terakhir.
+                Target dari Proses A terbaru, sisa dari Proses B terakhir.
               </p>
             ) : null}
           </div>

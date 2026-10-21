@@ -121,7 +121,7 @@ export function TargetB({ kdkab }: { kdkab: string }) {
           }
         >
           Target Proses B diambil dari jumlah titik flag 1 pada Proses A
-          pertama.
+          terbaru.
         </EmptyState>
       </Panel>
     );
@@ -135,16 +135,16 @@ export function TargetB({ kdkab }: { kdkab: string }) {
     <div className="space-y-6">
       <Panel
         judul="Lembar target"
-        deskripsi="Jumlah titik flag 1 pada Proses A pertama. Angka ini menjadi beban kerja awal Proses B."
+        deskripsi="Jumlah titik flag 1 pada Proses A terbaru. Angka ini menjadi beban kerja awal Proses B."
       >
         <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(17rem,0.8fr)] lg:items-end">
           <div>
             <p className="font-display text-5xl font-semibold tracking-tight text-accent-strong sm:text-6xl">
               {formatAngka(target.flag_1)}
             </p>
-            <p className="mt-2 text-sm leading-6 text-muted">
+            <p className="mt-2 text-sm leading-normal text-muted">
               titik flag 1 dari {formatAngka(target.total)} titik pada Proses A
-              pertama.
+              terbaru.
             </p>
             <p className="mt-1 text-sm font-medium text-ink">
               {porsi(target.flag_1, target.total)} populasi titik

@@ -492,10 +492,10 @@ def test_ringkasan_dan_tren(
     ] == [("2026-01-01", "33", None, 1), ("2026-01-02", "33", None, 0)]
 
 
-def test_progres_b_memakai_target_proses_a_pertama(
+def test_progres_b_memakai_target_proses_a_tersedia(
     klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
-    """Target dari run A pertama; setiap upload B menjadi satu titik progres."""
+    """Target dari run A yang tersedia; setiap upload B menjadi satu titik progres."""
     titik, peta = berkas_uji(tmp_path)
     id_a = unggah(klien, titik, peta, tanggal_data="2026-01-01").json()["id"]
     jalankan(sesi_pabrik)
@@ -521,6 +521,46 @@ def test_progres_b_memakai_target_proses_a_pertama(
         (id_b1, 1, 0),
         (id_b2, 0, 1),
     ]
+
+
+def test_progres_b_memakai_target_a_terbaru_dan_mengabaikan_b_lama(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Target mengikuti A terbaru; B sebelum A itu tidak dihitung lagi."""
+    titik, peta = berkas_uji(tmp_path)
+    id_a1 = unggah(klien, titik, peta, tanggal_data="2026-01-01").json()["id"]
+    jalankan(sesi_pabrik)
+
+    titik_b1, peta_b1 = berkas_uji_b(tmp_path)
+    id_b1 = unggah(
+        klien, titik_b1, peta_b1, tipe="B", tanggal_data="2026-01-03"
+    ).json()["id"]
+    jalankan(sesi_pabrik)
+
+    # A baru memakai master terbaru; semuanya sudah benar, jadi target 0.
+    titik_a2, peta_a2 = berkas_uji(tmp_path, BARIS_A_BENAR)
+    id_a2 = unggah(klien, titik_a2, peta_a2, tanggal_data="2026-01-04").json()["id"]
+    jalankan(sesi_pabrik)
+
+    data = klien.get("/progres-b", params={"kdkab": "3307"}).json()
+    assert data["target"]["run_a_id"] == id_a2
+    assert data["target"]["flag_1"] == 0
+    assert data["baris"] == []
+
+    tabulasi = klien.get(
+        "/tabulasi-progres", params={"tingkat": "kabupaten", "kdkab": "3307"}
+    ).json()
+    assert tabulasi["target"]["run_id"] == id_a2
+
+    # B setelah A terbaru kembali dihitung.
+    titik_b2, peta_b2 = berkas_uji_b(tmp_path)
+    id_b2 = unggah(
+        klien, titik_b2, peta_b2, tipe="B", tanggal_data="2026-01-05"
+    ).json()["id"]
+    jalankan(sesi_pabrik)
+    data = klien.get("/progres-b", params={"kdkab": "3307"}).json()
+    assert [baris["run_id"] for baris in data["baris"]] == [id_b2]
+    assert id_b1 < id_a2 < id_b2
 
 
 def test_progres_b_menerima_kode_kabupaten_pendek(

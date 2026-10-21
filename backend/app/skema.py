@@ -251,7 +251,7 @@ class RingkasanOut(BaseModel):
 
 
 class ProgresBTargetOut(BaseModel):
-    """Target Proses B dari run Proses A pertama."""
+    """Target Proses B dari run Proses A terbaru."""
 
     run_a_id: int
     nomor_urut: int | None = None
