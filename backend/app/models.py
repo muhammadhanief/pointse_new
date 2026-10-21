@@ -464,3 +464,33 @@ class PenggunaAktif(Base):
     foto_url: Mapped[str | None] = mapped_column(Text)
     login_pada: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
     terakhir_aktif: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+
+
+class Aktivitas(Base):
+    """Jejak audit tindakan pengguna, termasuk identitas SSO pelakunya.
+
+    Ditulis setelah tindakan berhasil (mis. job dibuat atau master diunggah)
+    agar admin provinsi dapat melihat siapa melakukan apa. Baris audit tidak
+    dipakai untuk otorisasi dan tidak dihapus otomatis.
+    """
+
+    __tablename__ = "aktivitas"
+    __table_args__ = (
+        Index("ix_aktivitas_kdprov_created", "kdprov", "created_at"),
+        Index("ix_aktivitas_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(IdBesar, primary_key=True, autoincrement=True)
+    sub: Mapped[str] = mapped_column(String(128))
+    username: Mapped[str] = mapped_column(String(64))
+    nama: Mapped[str] = mapped_column(String(128))
+    nip: Mapped[str | None] = mapped_column(String(32))
+    peran: Mapped[str] = mapped_column(String(32))
+    kdprov: Mapped[str] = mapped_column(String(4))
+    kdkab: Mapped[str | None] = mapped_column(String(4))
+    foto_url: Mapped[str | None] = mapped_column(Text)
+    aksi: Mapped[str] = mapped_column(String(32))
+    objek: Mapped[str] = mapped_column(String(32))
+    objek_id: Mapped[int | None] = mapped_column(Integer)
+    detail: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)

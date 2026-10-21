@@ -22,6 +22,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
+from app.aktivitas import router as router_aktivitas
 from app.api import router
 from app.config import get_settings
 from app.pengguna import router as router_pengguna
@@ -86,6 +87,7 @@ async def tanpa_cache(
 
 
 app.include_router(router, prefix=prefix)
+app.include_router(router_aktivitas, prefix=prefix)
 app.include_router(router_pengguna, prefix=prefix)
 app.include_router(router_sistem, prefix=prefix)
 app.include_router(router_unggahan, prefix=prefix)

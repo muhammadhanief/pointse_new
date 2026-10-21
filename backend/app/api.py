@@ -31,7 +31,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from app import auth, ekspor, layanan, unggahan
+from app import aktivitas, auth, ekspor, layanan, unggahan
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.layanan import (
@@ -350,6 +350,14 @@ def unggah_run(
     if unggahan_dipakai:
         unggahan.hapus_unggahan(unggahan_dipakai, setelan)
     layanan.lengkapi_nomor_urut(sesi, [run])
+    aktivitas.catat(
+        sesi,
+        pengguna,
+        aksi=f"unggah_{tipe_bersih.lower()}",
+        objek="run",
+        objek_id=run.id,
+        detail=f"{run.nama_file_input} · {run.nama_file_peta}",
+    )
     return run
 
 
@@ -431,6 +439,14 @@ def unggah_master_geotag(
     if unggahan_dipakai:
         unggahan.hapus_unggahan(unggahan_dipakai, setelan)
     layanan.lengkapi_nomor_versi(sesi, [master])
+    aktivitas.catat(
+        sesi,
+        pengguna,
+        aksi="unggah_master",
+        objek="geotag_master",
+        objek_id=master.id,
+        detail=f"{master.nama_file} · {master.jumlah_baris or 0} baris",
+    )
     return MasterGeotagOut.model_validate(master)
 
 

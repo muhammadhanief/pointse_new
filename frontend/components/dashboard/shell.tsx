@@ -21,6 +21,7 @@ import {
 } from "@/lib/auth/peran";
 
 import {
+  IkonAktivitas,
   IkonBeranda,
   IkonKeluar,
   IkonMaster,
@@ -93,6 +94,12 @@ const MENU: GrupMenu[] = [
         href: "/pengguna",
         label: "Pengguna aktif",
         ikon: IkonPengguna,
+        peran: [PERAN_ADMIN_PROVINSI],
+      },
+      {
+        href: "/aktivitas",
+        label: "Log aktivitas",
+        ikon: IkonAktivitas,
         peran: [PERAN_ADMIN_PROVINSI],
       },
       {

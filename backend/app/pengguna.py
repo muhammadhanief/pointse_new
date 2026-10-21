@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import auth
+from app import aktivitas, auth
 from app.db import get_session
 from app.models import (
     PENGGUNA_LOGIN_BARU_MENIT,
@@ -50,6 +50,8 @@ def catat_kehadiran(
     """Catat/segarkan kehadiran pengguna yang sedang membuka dashboard."""
     waktu = sekarang()
     baris = sesi.get(PenggunaAktif, pengguna.sub)
+    baru = baris is None
+    login_baru = False
 
     if baris is None:
         baris = PenggunaAktif(
@@ -69,12 +71,21 @@ def catat_kehadiran(
         sesi.add(baris)
     else:
         jeda = (waktu - baris.terakhir_aktif).total_seconds()
-        if jeda >= PENGGUNA_LOGIN_BARU_MENIT * 60:
+        login_baru = jeda >= PENGGUNA_LOGIN_BARU_MENIT * 60
+        if login_baru:
             baris.login_pada = waktu
         _terapkan_identitas(baris, pengguna)
         baris.terakhir_aktif = waktu
 
     sesi.commit()
+    if baru or login_baru:
+        aktivitas.catat(
+            sesi,
+            pengguna,
+            aksi="login",
+            objek="sesi",
+            detail=f"Masuk sebagai {pengguna.peran.nama}",
+        )
     return {"status": "ok"}
 
 

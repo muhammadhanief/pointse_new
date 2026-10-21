@@ -585,3 +585,31 @@ class DaftarPenggunaAktifOut(BaseModel):
     total: int
     online: int
     baris: list[PenggunaAktifOut]
+
+
+class AktivitasOut(BaseModel):
+    """Satu tindakan pengguna yang tercatat di jejak audit."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    sub: str
+    username: str
+    nama: str
+    nip: str | None = None
+    peran: str
+    kdprov: str
+    kdkab: str | None = None
+    foto_url: str | None = None
+    aksi: str
+    objek: str
+    objek_id: int | None = None
+    detail: str | None = None
+    created_at: datetime
+
+
+class DaftarAktivitasOut(BaseModel):
+    """Daftar aktivitas terbaru untuk admin provinsi."""
+
+    total: int
+    baris: list[AktivitasOut]

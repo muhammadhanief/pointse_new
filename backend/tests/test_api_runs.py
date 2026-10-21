@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 import data_kecil
-from app.models import STATUS_MENUNGGU, RekapKabupaten, Run
+from app.models import STATUS_MENUNGGU, Aktivitas, RekapKabupaten, Run
 from app.worker import proses_satu_job
 
 # Berkas titik: dua titik di SubSLS A1, satu di A2 (level_6 tetap A1) supaya ada
@@ -112,6 +112,16 @@ def test_unggah_membuat_job_menunggu(
     assert berkas_input.exists() and Path(run.berkas_peta).exists()
     assert dir_unggahan in berkas_input.parents
     assert run.layer_input is not None and run.layer_peta is not None
+
+    audit = sesi.scalars(
+        select(Aktivitas).where(
+            Aktivitas.objek == "run",
+            Aktivitas.objek_id == run.id,
+        )
+    ).first()
+    assert audit is not None
+    assert audit.aksi == "unggah_a"
+    assert audit.sub == "dev"
 
 
 def test_unggah_bisa_mengisi_tanggal_data(

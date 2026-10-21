@@ -309,3 +309,25 @@ export type DaftarPenggunaAktif = {
   online: number;
   baris: PenggunaAktif[];
 };
+
+export type Aktivitas = {
+  id: number;
+  sub: string;
+  username: string;
+  nama: string;
+  nip: string | null;
+  peran: string;
+  kdprov: string;
+  kdkab: string | null;
+  foto_url: string | null;
+  aksi: string;
+  objek: string;
+  objek_id: number | null;
+  detail: string | null;
+  created_at: string;
+};
+
+export type DaftarAktivitas = {
+  total: number;
+  baris: Aktivitas[];
+};

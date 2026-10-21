@@ -101,6 +101,17 @@ export function IkonSistem(props: Props) {
   );
 }
 
+export function IkonAktivitas(props: Props) {
+  return (
+    <Dasar {...props}>
+      <path d="M6 3h12v18H6z" />
+      <path d="M9 8h6" />
+      <path d="M9 12h6" />
+      <path d="M9 16h4" />
+    </Dasar>
+  );
+}
+
 export function IkonPengguna(props: Props) {
   return (
     <Dasar {...props}>
