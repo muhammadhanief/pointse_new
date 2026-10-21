@@ -8,7 +8,10 @@ import {
   Panel,
   TautanAksi,
 } from "@/components/dashboard/ui";
-import { StatusDataAdmin } from "@/components/dashboard/status-data-admin";
+import {
+  StatusDataAdmin,
+  StatusDataPetugas,
+} from "@/components/dashboard/status-data-admin";
 
 export const metadata: Metadata = {
   title: "Beranda",
@@ -133,11 +136,7 @@ export default async function BerandaPage() {
           ) : (
             <>
               <dl className="mt-3">
-                <BarisStatus
-                  label="Master geotag"
-                  status="ada"
-                  keterangan="Dikelola admin provinsi."
-                />
+                <StatusDataPetugas kdkab={sesi.kdkab} />
                 <BarisStatus
                   label="Peta terakhir"
                   status="belum"

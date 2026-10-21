@@ -1227,6 +1227,7 @@ def _ringkas_metrik(run: Run | None, metrik: tuple[int, int] | None, nomor: int 
         "run_id": run.id,
         "nomor_urut": nomor,
         "tanggal_data": run.tanggal_data,
+        "pengunggah": run.user,
     }
 
 
@@ -1237,6 +1238,7 @@ def _baris_kabupaten(
     target: int,
     sisa_target: int,
     ada_b: bool,
+    pengunggah: str | None,
 ) -> dict[str, object]:
     selesai = target - sisa_target
     return {
@@ -1251,6 +1253,7 @@ def _baris_kabupaten(
         "persen": round(selesai / target * 100, 2) if target else None,
         "status": _status_tabulasi(target, sisa_target, ada_b),
         "ada_b": ada_b,
+        "pengunggah": pengunggah,
     }
 
 
@@ -1348,7 +1351,15 @@ def tabulasi_progres(
             run_b_metrik = b_peta.get(kode)
             sisa = run_b_metrik[1][1] if run_b_metrik is not None else target
             baris.append(
-                _baris_kabupaten(kode, nama_kab(kode), total, target, sisa, run_b_metrik is not None)
+                _baris_kabupaten(
+                    kode,
+                    nama_kab(kode),
+                    total,
+                    target,
+                    sisa,
+                    run_b_metrik is not None,
+                    run_b_metrik[0].user if run_b_metrik is not None else None,
+                )
             )
 
         kode_terpilih = kode_kabupaten(kdprov, kdkab) if kdkab else None
@@ -1451,6 +1462,7 @@ def tabulasi_progres(
                 "persen": round(selesai / target * 100, 2) if target else None,
                 "status": _status_tabulasi(target, sisa, b_metrik is not None),
                 "ada_b": b_metrik is not None,
+                "pengunggah": run_b.user if run_b is not None else None,
             }
         )
 

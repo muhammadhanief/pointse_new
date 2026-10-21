@@ -291,6 +291,8 @@ class TabulasiProgresRunOut(BaseModel):
     run_id: int
     nomor_urut: int | None = None
     tanggal_data: date
+    #: Nama pengunggah run sumber (A atau B).
+    pengunggah: str | None = None
 
 
 class TabulasiProgresBarisOut(BaseModel):
@@ -307,6 +309,8 @@ class TabulasiProgresBarisOut(BaseModel):
     persen: float | None = None
     status: str
     ada_b: bool
+    #: Nama pengunggah Proses B terakhir untuk wilayah/kabupaten ini.
+    pengunggah: str | None = None
 
 
 class TabulasiProgresOut(BaseModel):

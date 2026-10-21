@@ -169,6 +169,7 @@ export type TabulasiProgresRun = {
   run_id: number;
   nomor_urut: number | null;
   tanggal_data: string;
+  pengunggah: string | null;
 };
 
 export type TabulasiProgresBaris = {
@@ -183,6 +184,7 @@ export type TabulasiProgresBaris = {
   persen: number | null;
   status: string;
   ada_b: boolean;
+  pengunggah: string | null;
 };
 
 export type TabulasiProgres = {

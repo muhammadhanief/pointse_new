@@ -7,7 +7,8 @@ import {
   ambilJson,
   pesanKesalahan,
 } from "@/lib/api/klien";
-import type { DaftarMaster, Ringkasan } from "@/lib/api/types";
+import type { DaftarMaster, MasterGeotag, Ringkasan } from "@/lib/api/types";
+import { formatTanggal } from "@/lib/format";
 import { KABUPATEN_33, kodeKabupaten } from "@/lib/wilayah/kabupaten";
 
 import { BarisStatus, TautanAksi } from "./ui";
@@ -22,6 +23,67 @@ const TOTAL_KAB = KABUPATEN_33.length;
 
 function kode(kdprov: string, kdkab: string): string {
   return kodeKabupaten(kdprov, kdkab);
+}
+
+export function StatusDataPetugas({ kdkab }: { kdkab: string | null }) {
+  const [master, setMaster] = useState<MasterGeotag | null>(null);
+  const [memuat, setMemuat] = useState(true);
+  const [galat, setGalat] = useState<string | null>(null);
+
+  const muat = useCallback(
+    async (isyarat: AbortSignal) => {
+      if (!kdkab) {
+        setMemuat(false);
+        return;
+      }
+      setGalat(null);
+      try {
+        const hasil = await ambilJson<DaftarMaster>(
+          `/geotag-master?kdkab=${encodeURIComponent(kdkab)}&limit=1`,
+          { signal: isyarat },
+        );
+        setMaster(hasil.baris[0] ?? null);
+      } catch (kesalahan) {
+        if (!adalahBatal(kesalahan)) {
+          setGalat(pesanKesalahan(kesalahan));
+        }
+      } finally {
+        if (!isyarat.aborted) {
+          setMemuat(false);
+        }
+      }
+    },
+    [kdkab],
+  );
+
+  useEffect(() => {
+    const kendali = new AbortController();
+    void muat(kendali.signal);
+    return () => kendali.abort();
+  }, [muat]);
+
+  if (galat) {
+    return (
+      <p className="mt-1 rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-sm leading-normal text-danger">
+        {galat}
+      </p>
+    );
+  }
+
+  return (
+    <BarisStatus
+      label="Master geotag"
+      status={memuat ? undefined : master ? "ada" : "belum"}
+      nilai={memuat ? "Memuat..." : undefined}
+      keterangan={
+        memuat
+          ? "Memeriksa master untuk wilayah kerja Anda."
+          : master
+            ? `Versi ke-${master.nomor_versi ?? "-"} · ${formatTanggal(master.tanggal_data)}.`
+            : "Belum diunggah admin provinsi untuk wilayah kerja Anda."
+      }
+    />
+  );
 }
 
 export function StatusDataAdmin() {

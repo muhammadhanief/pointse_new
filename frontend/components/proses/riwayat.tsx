@@ -26,7 +26,13 @@ const TAB: { tipe: TipeRun; label: string }[] = [
   { tipe: "B", label: "2. Titik Hasil Perbaikan" },
 ];
 
-type KolomSort = "job" | "wilayah" | "diunggah" | "status" | "baris";
+type KolomSort =
+  | "job"
+  | "wilayah"
+  | "pengunggah"
+  | "diunggah"
+  | "status"
+  | "baris";
 type ArahSort = "asc" | "desc";
 type Sort = { kolom: KolomSort; arah: ArahSort };
 
@@ -46,6 +52,8 @@ function nilaiSort(run: Run, kolom: KolomSort): string | number {
         run.kdprov,
         run.kdkab,
       )}`.trim();
+    case "pengunggah":
+      return run.user ?? "";
     case "diunggah":
       return run.created_at;
     case "status":
@@ -360,7 +368,7 @@ export function RiwayatWorkspace() {
 
           {urut.length > 0 ? (
             <div className="relative mt-3 max-h-[70vh] overflow-auto overscroll-contain">
-              <table className="w-full min-w-[48rem] border-collapse text-[13px]">
+              <table className="w-full min-w-[56rem] border-collapse text-[13px]">
                 <caption className="sr-only">
                   Riwayat {labelAktif}. Klik judul kolom untuk mengurutkan.
                 </caption>
@@ -376,6 +384,12 @@ export function RiwayatWorkspace() {
                     <SelSort
                       label="Wilayah"
                       kolom="wilayah"
+                      sort={sort}
+                      onSort={gantiSort}
+                    />
+                    <SelSort
+                      label="Pengunggah"
+                      kolom="pengunggah"
                       sort={sort}
                       onSort={gantiSort}
                     />
@@ -425,6 +439,11 @@ export function RiwayatWorkspace() {
                           <p className="text-xs text-muted">
                             {kodeWilayah(run.kdprov, run.kdkab)}
                           </p>
+                        </td>
+                        <td className="max-w-[14rem] px-3 py-2 text-muted">
+                          <span className="block truncate" title={run.user ?? ""}>
+                            {run.user ?? "-"}
+                          </span>
                         </td>
                         <td className="px-3 py-2 text-muted">
                           {formatWaktu(run.created_at)}

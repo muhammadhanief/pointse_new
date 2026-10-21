@@ -37,6 +37,7 @@ type KolomSort =
   | "selesai"
   | "sisa"
   | "persen"
+  | "pengunggah"
   | "status";
 type ArahSort = "asc" | "desc";
 type Sort = { kolom: KolomSort; arah: ArahSort };
@@ -131,6 +132,8 @@ function nilaiSort(
       return baris.sisa;
     case "persen":
       return baris.persen ?? -1;
+    case "pengunggah":
+      return baris.pengunggah ?? "";
     case "status":
       return LABEL_STATUS[baris.status] ?? baris.status;
     default:
@@ -199,6 +202,7 @@ function barisKosong(kode: string, nama: string): TabulasiProgresBaris {
     persen: null,
     status: "tanpa_target",
     ada_b: false,
+    pengunggah: null,
   };
 }
 
@@ -429,7 +433,7 @@ export function TabulasiRekap({
             value: `${judulTabel} — ${wilayah}`,
             fontWeight: "bold",
             fontSize: 14,
-            columnSpan: 8,
+            columnSpan: 9,
           },
         ],
         [
@@ -437,7 +441,7 @@ export function TabulasiRekap({
             value: infoTarget,
             fontSize: 10,
             textColor: "#5c6672",
-            columnSpan: 8,
+            columnSpan: 9,
           },
         ],
         [],
@@ -449,6 +453,7 @@ export function TabulasiRekap({
           { value: "Selesai", ...kepala },
           { value: "Sisa", ...kepala },
           { value: "Penyelesaian", ...kepala },
+          { value: "Pengunggah terakhir", ...kepala },
           { value: "Status", ...kepala },
         ],
       ];
@@ -470,6 +475,7 @@ export function TabulasiRekap({
             ...kanan,
             ...(baris.persen == null ? {} : { format: "0.0%" }),
           },
+          { value: baris.pengunggah ?? "-", ...kiri },
           {
             value: LABEL_STATUS[baris.status] ?? baris.status,
             ...kiri,
@@ -491,6 +497,7 @@ export function TabulasiRekap({
           ...(persenTotal == null ? {} : { format: "0.0%" }),
         },
         { value: "", ...kiri },
+        { value: "", ...kiri },
       ]);
 
       const kodeBerkas =
@@ -511,6 +518,7 @@ export function TabulasiRekap({
           { width: 12 },
           { width: 10 },
           { width: 16 },
+          { width: 22 },
           { width: 34 },
         ],
         sheet: "Tabulasi",
@@ -658,7 +666,7 @@ export function TabulasiRekap({
           <GrafikBatang baris={terurut} tingkat={tingkat} onBuka={bukaBaris} />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[50rem] border-collapse text-[13px]">
+            <table className="w-full min-w-[60rem] border-collapse text-[13px]">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide text-muted">
                   <SelSort
@@ -705,6 +713,13 @@ export function TabulasiRekap({
                     kolom="persen"
                     sort={sort}
                     onSort={gantiSort}
+                  />
+                  <SelSort
+                    label="Pengunggah terakhir"
+                    kolom="pengunggah"
+                    sort={sort}
+                    onSort={gantiSort}
+                    className="sm:px-3"
                   />
                   <SelSort
                     label="Status"
@@ -776,6 +791,14 @@ export function TabulasiRekap({
                       <td className="px-3 py-1 text-right tabular-nums text-ink">
                         <BarPenyelesaian nilai={baris.persen} />
                       </td>
+                      <td className="max-w-[14rem] px-3 py-1 text-muted sm:px-3">
+                        <span
+                          className="block truncate"
+                          title={baris.pengunggah ?? ""}
+                        >
+                          {baris.pengunggah ?? "-"}
+                        </span>
+                      </td>
                       <td className="px-3 py-1 text-right sm:px-3">
                         <span
                           className={`inline-flex min-h-6 items-center whitespace-nowrap rounded-full border px-2 text-xs font-semibold ${gayaStatus(baris.status)}`}
@@ -804,6 +827,7 @@ export function TabulasiRekap({
                   <td className="px-3 py-1 text-right tabular-nums">
                     {formatPersen(persenTotal)}
                   </td>
+                  <td className="px-3 py-1 sm:px-3" />
                   <td className="px-3 py-1 sm:px-3" />
                 </tr>
               </tfoot>
