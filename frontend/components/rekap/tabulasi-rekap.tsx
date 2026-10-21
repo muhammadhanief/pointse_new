@@ -13,15 +13,14 @@ import type {
   TabulasiProgresBaris,
 } from "@/lib/api/types";
 import { formatAngka, formatTanggal } from "@/lib/format";
+import {
+  daftarKabupaten,
+  kodeKabupaten,
+  namaKabupatenTampil,
+} from "@/lib/wilayah/kabupaten";
 
 type Tingkat = "kabupaten" | "kecamatan" | "desa";
 type Dasar = "tugas" | "posisi";
-
-const LABEL_TINGKAT: Record<Tingkat, string> = {
-  kabupaten: "Kabupaten/kota",
-  kecamatan: "Kecamatan",
-  desa: "Desa/kelurahan",
-};
 
 const LABEL_STATUS: Record<string, string> = {
   belum_b: "Belum ada B",
@@ -90,6 +89,22 @@ function BarPenyelesaian({ nilai }: { nilai: number | null }) {
   );
 }
 
+function barisKosong(kode: string, nama: string): TabulasiProgresBaris {
+  return {
+    kode,
+    induk: null,
+    nama,
+    level: "kabupaten",
+    jumlah: 0,
+    target: 0,
+    selesai: 0,
+    sisa: 0,
+    persen: null,
+    status: "tanpa_target",
+    ada_b: false,
+  };
+}
+
 export function TabulasiRekap({
   kdprov,
   kdkabAwal,
@@ -150,18 +165,44 @@ export function TabulasiRekap({
     return () => kendali.abort();
   }, [muat]);
 
+  const daftarBaris = useMemo(() => {
+    const barisApi = data?.baris ?? [];
+    if (tingkat !== "kabupaten") {
+      return barisApi;
+    }
+    const opsi = daftarKabupaten(kdprov);
+    if (opsi.length === 0) {
+      return barisApi;
+    }
+    const peta = new Map<string, TabulasiProgresBaris>();
+    for (const baris of barisApi) {
+      if (baris.kode) {
+        peta.set(baris.kode, baris);
+      }
+    }
+    const hasil = opsi.map(
+      (satu) => peta.get(satu.kode) ?? barisKosong(satu.kode, satu.nama),
+    );
+    const dikenal = new Set(opsi.map((satu) => satu.kode));
+    for (const baris of barisApi) {
+      if (!baris.kode || !dikenal.has(baris.kode)) {
+        hasil.push(baris);
+      }
+    }
+    return hasil;
+  }, [data, kdprov, tingkat]);
+
   const tersaring = useMemo(() => {
-    const daftar = data?.baris ?? [];
     const kata = cari.trim().toLocaleLowerCase("id-ID");
     if (!kata) {
-      return daftar;
+      return daftarBaris;
     }
-    return daftar.filter((baris) =>
+    return daftarBaris.filter((baris) =>
       `${baris.nama ?? ""} ${baris.kode ?? ""}`
         .toLocaleLowerCase("id-ID")
         .includes(kata),
     );
-  }, [cari, data]);
+  }, [cari, daftarBaris]);
 
   const total = useMemo(() => {
     return tersaring.reduce(
@@ -218,10 +259,14 @@ export function TabulasiRekap({
 
   const judulTabel =
     tingkat === "kabupaten"
-      ? "Kabupaten/kota"
+      ? "Progres Edit Titik Bangunan"
       : tingkat === "kecamatan"
         ? "Kecamatan"
         : "Desa/kelurahan";
+
+  const namaKabTampil = data?.nmkab
+    ? namaKabupatenTampil(kodeKabupaten(kdprov, data.kdkab), data.nmkab)
+    : null;
 
   return (
     <section className="space-y-4">
@@ -234,7 +279,7 @@ export function TabulasiRekap({
           >
             {data?.nmprov ?? `Provinsi ${kdprov}`}
           </button>
-          {data?.nmkab ? (
+          {namaKabTampil ? (
             <>
               <span className="text-line-strong" aria-hidden="true">
                 /
@@ -248,7 +293,7 @@ export function TabulasiRekap({
                     : "text-brand-strong hover:underline"
                 }`}
               >
-                {data.nmkab}
+                {namaKabTampil}
               </button>
             </>
           ) : null}
@@ -289,6 +334,11 @@ export function TabulasiRekap({
                 <option value="tugas">Wilayah penugasan</option>
                 <option value="posisi">Posisi titik</option>
               </select>
+              <span className="mt-1 block max-w-[18rem] text-[11px] font-normal normal-case leading-4 tracking-normal text-muted">
+                {dasar === "tugas"
+                  ? "Mengikuti kode SubSLS pada data titik."
+                  : "Mengikuti wilayah hasil join peta."}
+              </span>
             </label>
           </div>
 
@@ -324,9 +374,11 @@ export function TabulasiRekap({
             <h2 className="font-display text-lg font-semibold tracking-tight text-ink">
               {judulTabel}
             </h2>
-            <p className="mt-0.5 text-xs text-muted">
-              Target dari Proses A pertama, sisa dari Proses B terakhir.
-            </p>
+            {tingkat !== "kabupaten" ? (
+              <p className="mt-0.5 text-xs text-muted">
+                Target dari Proses A pertama, sisa dari Proses B terakhir.
+              </p>
+            ) : null}
           </div>
           {data && (data.target || data.pembanding) ? (
             <p className="text-xs text-muted">
@@ -392,6 +444,10 @@ export function TabulasiRekap({
                   const bisaDibuka = Boolean(
                     baris.kode && tingkat !== "desa",
                   );
+                  const nama =
+                    baris.level === "kabupaten"
+                      ? namaKabupatenTampil(baris.kode ?? "", baris.nama)
+                      : baris.nama;
                   return (
                     <tr
                       key={`${baris.level}-${baris.kode ?? "null"}`}
@@ -399,7 +455,7 @@ export function TabulasiRekap({
                       role={bisaDibuka ? "button" : undefined}
                       aria-label={
                         bisaDibuka
-                          ? `Buka ${baris.nama ?? baris.kode}`
+                          ? `Buka ${nama ?? baris.kode}`
                           : undefined
                       }
                       onClick={() => bukaBaris(baris)}
@@ -422,7 +478,7 @@ export function TabulasiRekap({
                         <span className="flex items-center gap-2">
                           {bisaDibuka ? <Chevron /> : <span className="h-4 w-4 shrink-0" />}
                           <span className="min-w-0">
-                            <span className="block truncate">{baris.nama ?? baris.kode ?? "-"}</span>
+                            <span className="block truncate">{nama ?? baris.kode ?? "-"}</span>
                             {baris.kode ? (
                               <span className="block font-mono text-[11px] font-normal text-muted">
                                 {baris.kode}

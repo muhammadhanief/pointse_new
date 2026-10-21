@@ -69,3 +69,18 @@ export function labelKabupaten(
   const nama = namaKabupaten(kdprov, kdkab);
   return nama ? `${kode} ${nama}` : kode;
 }
+
+/** Nama tampilan: kota berawalan "KOTA", kabupaten tanpa awalan "Kabupaten". */
+export function namaKabupatenTampil(
+  kode: string,
+  nama: string | null,
+): string | null {
+  if (!nama) {
+    return null;
+  }
+  const bersih = nama.replace(/^(kabupaten|kota)\s+/i, "").trim();
+  if (!bersih) {
+    return nama;
+  }
+  return kode.length >= 3 && kode[2] === "7" ? `KOTA ${bersih}` : bersih;
+}
