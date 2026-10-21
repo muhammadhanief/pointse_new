@@ -224,9 +224,15 @@ export function FormMaster({
 
         <CatatanUnggah />
 
-        <TombolAksi type="submit" disabled={!berkas || sedang}>
-          Unggah master geotag
-        </TombolAksi>
+        <div className="sticky bottom-0 z-10 -mx-4 -mb-4 border-t border-line bg-surface px-4 py-3">
+          <TombolAksi
+            type="submit"
+            disabled={!berkas || sedang}
+            className="w-full"
+          >
+            Unggah master geotag
+          </TombolAksi>
+        </div>
 
         <ProgresUnggahan status={status} progres={progres} onBatal={batal} />
 
