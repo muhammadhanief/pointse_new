@@ -18,9 +18,9 @@ export function NotifikasiUnduh({
     <div
       role="status"
       aria-live="polite"
-      className="fixed inset-x-4 bottom-4 z-50 rounded-xl border border-line bg-surface p-4 shadow-lg sm:left-auto sm:right-6 sm:w-[22rem]"
+      className="fixed inset-x-4 bottom-4 z-50 rounded-xl border border-line bg-surface p-kartu shadow-lg sm:left-auto sm:right-6 sm:w-[22rem]"
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-field">
         <div
           aria-hidden="true"
           className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand-strong"
@@ -32,10 +32,10 @@ export function NotifikasiUnduh({
           <p className="text-sm font-semibold text-ink">
             {menyiapkan ? "Menyiapkan unduhan" : "Unduhan dimulai"}
           </p>
-          <p className="mt-0.5 break-words text-xs leading-5 text-muted">
+          <p className="mt-1 break-words text-xs leading-5 text-muted">
             {data.nama}
           </p>
-          <p className="mt-1 text-xs leading-5 text-muted">
+          <p className="mt-bantuan text-xs leading-5 text-muted">
             {menyiapkan
               ? "Berkas sedang disiapkan di server."
               : "Berkas besar bisa memakan waktu. Cek folder Unduhan browser."}
@@ -55,7 +55,7 @@ export function NotifikasiUnduh({
       {menyiapkan ? (
         <div
           aria-hidden="true"
-          className="mt-3 h-1 w-1/3 animate-pulse rounded-full bg-brand"
+          className="mt-1 h-1 w-1/3 animate-pulse rounded-full bg-brand"
         />
       ) : null}
     </div>

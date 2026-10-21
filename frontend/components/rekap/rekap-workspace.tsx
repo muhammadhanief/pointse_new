@@ -27,9 +27,9 @@ export function RekapWorkspace({
   const [kdkab, setKdkab] = useState(kdkabAwal ?? opsi[0]?.kode ?? "");
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 border-b border-line pb-4 sm:flex-row sm:items-end sm:justify-between">
-        <div role="tablist" aria-label="Bagian rekap" className="flex flex-wrap gap-2">
+    <div className="space-y-field">
+      <div className="flex flex-col gap-field border-b border-line pb-3 sm:flex-row sm:items-end sm:justify-between">
+        <div role="tablist" aria-label="Bagian rekap" className="flex flex-wrap gap-field">
           {TAB.map((satu) => (
             <button
               key={satu.nilai}
@@ -39,7 +39,7 @@ export function RekapWorkspace({
               aria-selected={tab === satu.nilai}
               aria-controls={`panel-${satu.nilai}`}
               onClick={() => setTab(satu.nilai)}
-              className={`min-h-10 rounded-lg px-3 text-sm font-semibold transition-colors ${
+              className={`min-h-9 rounded-lg px-tombol text-sm font-semibold transition-colors ${
                 tab === satu.nilai
                   ? "bg-brand text-white"
                   : "border border-line bg-surface text-muted hover:border-brand hover:text-brand-strong"
@@ -54,14 +54,14 @@ export function RekapWorkspace({
           <label className="text-sm font-medium text-ink">
             Kabupaten/kota
             {kdkabAwal ? (
-              <span className="mt-1.5 block min-h-10 text-sm font-medium text-muted">
+              <span className="mt-1 block min-h-10 text-sm font-medium text-muted">
                 {labelKabupaten(kdprov, kdkabAwal)}
               </span>
             ) : (
               <select
                 value={kdkab}
                 onChange={(event) => setKdkab(event.target.value)}
-                className="mt-1.5 block min-h-10 min-w-[14rem] rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+                className="mt-label block min-h-9 min-w-[14rem] rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
               >
                 {opsi.map((satu) => (
                   <option key={satu.kode} value={satu.kode}>

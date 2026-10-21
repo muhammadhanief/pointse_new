@@ -10,6 +10,7 @@ import type {
   SVGProps,
 } from "react";
 
+import { ambilJson } from "@/lib/api/klien";
 import { hapusToken } from "@/lib/api/token";
 import type { SesiPengguna } from "@/lib/auth/types";
 import {
@@ -21,12 +22,14 @@ import {
 
 import {
   IkonBeranda,
-  IkonEkspor,
   IkonKeluar,
   IkonMaster,
   IkonMenu,
   IkonPengecekan,
+  IkonPengguna,
   IkonRekap,
+  IkonRiwayat,
+  IkonSidebar,
   IkonSistem,
   IkonTutup,
   IkonUnggah,
@@ -34,7 +37,7 @@ import {
 
 type SesiRingkas = Pick<
   SesiPengguna,
-  "nama" | "peran" | "kdprov" | "kdkab"
+  "nama" | "peran" | "kdprov" | "kdkab" | "foto_url"
 >;
 
 type Ikon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -61,26 +64,37 @@ const MENU: GrupMenu[] = [
     item: [
       {
         href: "/proses/identifikasi",
-        label: "1. Identifikasi Titik",
+        label: "1. Unggah Peta SLS/SubSLS Final",
         ikon: IkonUnggah,
       },
       {
         href: "/proses/pengecekan",
-        label: "2. Pengecekan Titik",
+        label: "2. Unggah Titik Hasil Perbaikan",
         ikon: IkonPengecekan,
       },
+    ],
+  },
+  {
+    label: "Pemantauan",
+    item: [
+      { href: "/riwayat", label: "Riwayat upload", ikon: IkonRiwayat },
     ],
   },
   {
     label: "Hasil",
     item: [
       { href: "/rekap", label: "Rekap progres", ikon: IkonRekap },
-      { href: "/ekspor", label: "Ekspor", ikon: IkonEkspor },
     ],
   },
   {
     label: "Administrasi",
     item: [
+      {
+        href: "/pengguna",
+        label: "Pengguna aktif",
+        ikon: IkonPengguna,
+        peran: [PERAN_ADMIN_PROVINSI],
+      },
       {
         href: "/master-geotag",
         label: "Master geotag",
@@ -108,10 +122,12 @@ function ItemNavigasi({
   item,
   aktif,
   onPilih,
+  ringkas = false,
 }: {
   item: ItemMenu;
   aktif: boolean;
   onPilih?: () => void;
+  ringkas?: boolean;
 }) {
   const IkonItem = item.ikon;
 
@@ -120,14 +136,17 @@ function ItemNavigasi({
       href={item.href}
       onClick={onPilih}
       aria-current={aktif ? "page" : undefined}
-      className={`flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors ${
+      title={ringkas ? item.label : undefined}
+      className={`flex min-h-10 items-center rounded-lg py-menu text-xs font-medium leading-snug transition-colors ${
+        ringkas ? "justify-center px-2" : "gap-2.5 px-menu"
+      } ${
         aktif
           ? "bg-brand text-white"
           : "text-ink/80 hover:bg-brand-soft hover:text-brand-strong"
       }`}
     >
       <IkonItem className="h-[18px] w-[18px] shrink-0" />
-      <span>{item.label}</span>
+      <span className={ringkas ? "sr-only" : undefined}>{item.label}</span>
     </Link>
   );
 }
@@ -136,22 +155,38 @@ function DaftarMenu({
   sesi,
   pathname,
   onPilih,
+  ringkas = false,
 }: {
   sesi: SesiRingkas;
   pathname: string;
   onPilih?: () => void;
+  ringkas?: boolean;
 }) {
   const grup = menuUntuk(sesi.peran);
 
   return (
-    <nav aria-label="Menu utama" className="flex-1 overflow-y-auto px-3 py-4">
-      <div className="space-y-6">
-        {grup.map((satuGrup) => (
-          <div key={satuGrup.label}>
-            <p className="px-3 text-[11px] font-semibold text-muted">
+    <nav
+      aria-label="Menu utama"
+      className={`flex-1 overflow-y-auto ${ringkas ? "p-2" : "p-sidebar"}`}
+    >
+      <div className={ringkas ? "space-y-2" : "space-y-1"}>
+        {grup.map((satuGrup, indeks) => (
+          <div
+            key={satuGrup.label}
+            className={
+              ringkas && indeks > 0 ? "border-t border-line pt-2" : undefined
+            }
+          >
+            <p
+              className={
+                ringkas
+                  ? "sr-only"
+                  : "mb-1 mt-3 px-3 text-[11px] font-semibold uppercase tracking-wide text-muted first:mt-0"
+              }
+            >
               {satuGrup.label}
             </p>
-            <div className="mt-2 space-y-1">
+            <div className="space-y-1">
               {satuGrup.item.map((item) => (
                 <ItemNavigasi
                   key={item.href}
@@ -161,6 +196,7 @@ function DaftarMenu({
                     (item.href !== "/" && pathname.startsWith(`${item.href}/`))
                   }
                   onPilih={onPilih}
+                  ringkas={ringkas}
                 />
               ))}
             </div>
@@ -171,40 +207,62 @@ function DaftarMenu({
   );
 }
 
-function KartuPengguna({ sesi }: { sesi: SesiRingkas }) {
+function KartuPengguna({
+  sesi,
+  ringkas = false,
+}: {
+  sesi: SesiRingkas;
+  ringkas?: boolean;
+}) {
+  const [fotoGagal, setFotoGagal] = useState(false);
   const inisial = sesi.nama.trim().charAt(0).toUpperCase() || "P";
 
   return (
-    <div className="border-t border-line p-4">
-      <div className="flex items-center gap-3">
-        <div
-          aria-hidden="true"
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-brand-soft text-sm font-semibold text-brand-strong"
-        >
-          {inisial}
-        </div>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-ink">{sesi.nama}</p>
-          <p className="truncate text-xs text-muted">{labelPeran(sesi.peran)}</p>
-        </div>
-      </div>
-      <p className="mt-2 text-xs leading-5 text-muted">
-        {labelWilayah(sesi.kdprov, sesi.kdkab)}
-      </p>
-      <form
-        action="/api/auth/logout"
-        method="post"
-        className="mt-2"
-        onSubmit={() => hapusToken()}
+    <div className={`border-t border-line ${ringkas ? "p-2" : "p-sidebar"}`}>
+      <div
+        className={
+          ringkas
+            ? "flex flex-col items-center gap-2"
+            : "flex items-center gap-2"
+        }
       >
-        <button
-          type="submit"
-          className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium text-danger transition-colors hover:bg-danger-soft"
-        >
-          <IkonKeluar className="h-[18px] w-[18px] shrink-0" />
-          Keluar
-        </button>
-      </form>
+        {sesi.foto_url && !fotoGagal ? (
+          <img
+            src={sesi.foto_url}
+            alt=""
+            aria-hidden="true"
+            title={ringkas ? sesi.nama : undefined}
+            loading="lazy"
+            onError={() => setFotoGagal(true)}
+            className="h-8 w-8 shrink-0 rounded-md border border-line object-cover"
+          />
+        ) : (
+          <div
+            aria-hidden="true"
+            title={ringkas ? sesi.nama : undefined}
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-brand-soft text-xs font-semibold text-brand-strong"
+          >
+            {inisial}
+          </div>
+        )}
+        {ringkas ? (
+          <span className="sr-only">{sesi.nama}</span>
+        ) : (
+          <p className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
+            {sesi.nama}
+          </p>
+        )}
+        <form action="/api/auth/logout" method="post" onSubmit={() => hapusToken()}>
+          <button
+            type="submit"
+            aria-label="Keluar"
+            title="Keluar"
+            className="grid h-9 w-9 place-items-center rounded-md text-danger transition-colors hover:bg-danger-soft"
+          >
+            <IkonKeluar className="h-4 w-4" />
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -244,6 +302,7 @@ export function Shell({
 }) {
   const pathname = usePathname();
   const [menuSeluler, setMenuSeluler] = useState(false);
+  const [ringkas, setRingkas] = useState(false);
   const tombolTutupRef = useRef<HTMLButtonElement>(null);
   const tombolMenuRef = useRef<HTMLButtonElement>(null);
 
@@ -251,6 +310,57 @@ export function Shell({
     setMenuSeluler(false);
     requestAnimationFrame(() => tombolMenuRef.current?.focus());
   }
+
+  function gantiRingkas() {
+    setRingkas((lama) => {
+      const baru = !lama;
+      try {
+        window.localStorage.setItem("pointse.sidebar.ringkas", baru ? "1" : "0");
+      } catch {
+        // localStorage bisa diblokir; sidebar tetap bisa dibuka/tutup.
+      }
+      return baru;
+    });
+  }
+
+  useEffect(() => {
+    try {
+      setRingkas(window.localStorage.getItem("pointse.sidebar.ringkas") === "1");
+    } catch {
+      // abaikan
+    }
+  }, []);
+
+  useEffect(() => {
+    let dibatalkan = false;
+
+    async function kirimKehadiran() {
+      if (dibatalkan || document.visibilityState === "hidden") {
+        return;
+      }
+      try {
+        await ambilJson<{ status: string }>("/kehadiran", { method: "POST" });
+      } catch {
+        // Kehadiran bersifat pemantauan; kegagalan tidak mengganggu halaman.
+      }
+    }
+
+    function saatTerlihat() {
+      if (document.visibilityState === "visible") {
+        void kirimKehadiran();
+      }
+    }
+
+    void kirimKehadiran();
+    const timer = window.setInterval(kirimKehadiran, 60_000);
+    document.addEventListener("visibilitychange", saatTerlihat);
+
+    return () => {
+      dibatalkan = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", saatTerlihat);
+    };
+  }, []);
 
   useEffect(() => {
     const layarLebar = window.matchMedia("(min-width: 1024px)");
@@ -292,33 +402,53 @@ export function Shell({
       <a
         href="#konten"
         inert={menuSeluler ? true : undefined}
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-brand focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-brand focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
       >
         Lewati ke konten
       </a>
 
-      <aside className="fixed inset-y-0 left-0 hidden w-[17rem] flex-col border-r border-line bg-surface lg:flex">
-        <div className="border-b border-line px-5 py-5">
-          <Link href="/" className="inline-flex flex-col">
-            <span className="font-display text-2xl font-semibold tracking-tight text-brand">
-              Pointse
+      <aside
+        id="sidebar-utama"
+        className={`fixed inset-y-0 left-0 hidden flex-col border-r border-line bg-surface transition-[width] duration-200 motion-reduce:transition-none lg:flex ${
+          ringkas ? "w-16" : "w-[17rem]"
+        }`}
+      >
+        <div className={`border-b border-line ${ringkas ? "p-3" : "p-4"}`}>
+          <Link
+            href="/"
+            title="Pointse"
+            className={`inline-flex ${
+              ringkas ? "w-full items-center justify-center" : "flex-col"
+            }`}
+          >
+            <span
+              aria-hidden={ringkas ? true : undefined}
+              className="font-display text-xl font-semibold tracking-tight text-brand"
+            >
+              {ringkas ? "P" : "Pointse"}
             </span>
-            <span className="mt-0.5 text-xs font-medium text-muted">
-              Monitoring Wilkerstat, BPS
-            </span>
+            {ringkas ? (
+              <span className="sr-only">Pointse</span>
+            ) : (
+              <span className="mt-1 text-xs font-medium text-muted">
+                Monitoring Wilkerstat, BPS
+              </span>
+            )}
           </Link>
         </div>
 
-        <DaftarMenu sesi={sesi} pathname={pathname} />
-        <KartuPengguna sesi={sesi} />
+        <DaftarMenu sesi={sesi} pathname={pathname} ringkas={ringkas} />
+        <KartuPengguna sesi={sesi} ringkas={ringkas} />
       </aside>
 
       <div
         inert={menuSeluler ? true : undefined}
-        className="flex min-h-dvh flex-col lg:pl-[17rem]"
+        className={`flex min-h-dvh flex-col transition-[padding] duration-200 motion-reduce:transition-none ${
+          ringkas ? "lg:pl-16" : "lg:pl-[17rem]"
+        }`}
       >
-        <header className="sticky top-0 z-30 flex min-h-14 items-center justify-between gap-4 border-b border-line bg-paper px-4 sm:px-6 lg:px-10">
-          <div className="flex items-center gap-3">
+        <header className="sticky top-0 z-30 flex min-h-14 items-center justify-between gap-field border-b border-line bg-paper px-konten">
+          <div className="flex items-center gap-2">
             <button
               ref={tombolMenuRef}
               type="button"
@@ -326,10 +456,25 @@ export function Shell({
               aria-controls={menuSeluler ? "menu-seluler" : undefined}
               aria-haspopup="dialog"
               onClick={() => setMenuSeluler(true)}
-              className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 text-sm font-semibold text-ink transition-colors hover:border-brand lg:hidden"
+              className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-line-strong bg-surface px-tombol py-2 text-sm font-semibold text-ink transition-colors hover:border-brand lg:hidden"
             >
               <IkonMenu className="h-[18px] w-[18px]" />
               Menu
+            </button>
+            <button
+              type="button"
+              onClick={gantiRingkas}
+              aria-controls="sidebar-utama"
+              aria-expanded={!ringkas}
+              aria-label={ringkas ? "Buka sidebar" : "Ringkas sidebar"}
+              title={ringkas ? "Buka sidebar" : "Ringkas sidebar"}
+              className="hidden h-9 w-9 place-items-center rounded-lg border border-line-strong bg-surface text-muted transition-colors hover:border-brand hover:text-brand-strong lg:grid"
+            >
+              <IkonSidebar
+                className={`h-[18px] w-[18px] transition-transform motion-reduce:transition-none ${
+                  ringkas ? "rotate-180" : ""
+                }`}
+              />
             </button>
             <Link
               href="/"
@@ -343,23 +488,23 @@ export function Shell({
           </div>
 
           <p className="hidden text-right text-xs text-muted sm:block">
-            <span className="hidden md:inline">Wilayah kerja </span>
             <span className="font-semibold text-ink">
-              {labelWilayah(sesi.kdprov, sesi.kdkab)}
+              {labelPeran(sesi.peran)}
+            </span>
+            <span className="hidden md:inline">
+              {" "}
+              · {labelWilayah(sesi.kdprov, sesi.kdkab)}
             </span>
           </p>
         </header>
 
         <main
           id="konten"
-          className="mx-auto w-full max-w-[82rem] flex-1 px-4 py-8 sm:px-6 lg:px-10 lg:py-10"
+          className="mx-auto w-full max-w-[82rem] flex-1 px-konten py-konten"
         >
           {children}
         </main>
 
-        <footer className="border-t border-line px-4 py-5 text-xs text-muted sm:px-6 lg:px-10">
-          Badan Pusat Statistik, Pointse
-        </footer>
       </div>
 
       {menuSeluler ? (
@@ -379,7 +524,7 @@ export function Shell({
             onKeyDown={jagaFokus}
             className="relative flex h-full w-[min(20rem,85vw)] flex-col border-r border-line bg-surface shadow-xl"
           >
-            <div className="flex items-center justify-between border-b border-line px-4 py-3">
+            <div className="flex items-center justify-between border-b border-line p-4">
               <span className="font-display text-lg font-semibold tracking-tight text-brand">
                 Pointse
               </span>

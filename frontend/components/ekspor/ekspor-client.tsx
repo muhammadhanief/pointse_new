@@ -7,7 +7,6 @@ import {
   NotifikasiUnduh,
   type NotifikasiUnduhData,
 } from "./notifikasi-unduh";
-import { PemilihEkspor } from "./pemilih-ekspor";
 
 export function EksporClient() {
   const [notifikasi, setNotifikasi] =
@@ -19,9 +18,6 @@ export function EksporClient() {
 
   return (
     <>
-      <PemilihEkspor
-        onUnduh={(nama) => tampilkan(nama, "mulai")}
-      />
       <FormRekap
         onMulai={() => tampilkan("Rekap CSV", "menyiapkan")}
         onSiap={(nama) => tampilkan(nama, "mulai")}

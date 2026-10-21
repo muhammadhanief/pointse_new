@@ -7,16 +7,18 @@ export function PageHeader({
   meta,
 }: {
   judul: string;
-  deskripsi: string;
+  deskripsi?: string;
   meta?: ReactNode;
 }) {
   return (
-    <header className="flex flex-col gap-4 border-b border-line pb-5 sm:flex-row sm:items-end sm:justify-between">
+    <header className="flex flex-col gap-4 border-b border-line pb-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="max-w-3xl">
-        <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-[28px] sm:leading-9">
+        <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-[22px] sm:leading-7">
           {judul}
         </h1>
-        <p className="mt-1.5 text-sm leading-normal text-muted">{deskripsi}</p>
+        {deskripsi ? (
+          <p className="mt-1 text-sm leading-normal text-muted">{deskripsi}</p>
+        ) : null}
       </div>
       {meta ? <div className="shrink-0 text-sm text-muted">{meta}</div> : null}
     </header>
@@ -29,23 +31,27 @@ export function Panel({
   children,
   className = "",
 }: {
-  judul: string;
+  judul?: string;
   deskripsi?: string;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <section
-      className={`rounded-xl border border-line bg-surface p-4 sm:p-5 ${className}`}
+      className={`rounded-xl border border-line bg-surface p-kartu ${className}`}
     >
-      <div className="max-w-2xl">
-        <h2 className="text-lg font-semibold tracking-tight text-ink">
-          {judul}
-        </h2>
-        {deskripsi ? (
-          <p className="mt-1 text-sm leading-normal text-muted">{deskripsi}</p>
-        ) : null}
-      </div>
+      {judul || deskripsi ? (
+        <div className="max-w-2xl">
+          {judul ? (
+            <h2 className="text-base font-semibold tracking-tight text-ink">
+              {judul}
+            </h2>
+          ) : null}
+          {deskripsi ? (
+            <p className="mt-1 text-sm leading-normal text-muted">{deskripsi}</p>
+          ) : null}
+        </div>
+      ) : null}
       {children}
     </section>
   );
@@ -80,14 +86,14 @@ export function BarisStatus({
   aksi?: ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-3 border-b border-line py-3 last:border-0">
+    <div className="flex items-start justify-between gap-field border-b border-line py-3 last:border-0">
       <div className="min-w-0">
         <dt className="text-sm font-medium text-ink">{label}</dt>
         {keterangan ? (
-          <p className="mt-0.5 text-xs leading-5 text-muted">{keterangan}</p>
+          <p className="mt-bantuan text-xs leading-5 text-muted">{keterangan}</p>
         ) : null}
       </div>
-      <div className="flex shrink-0 flex-col items-end gap-2">
+      <div className="flex shrink-0 flex-col items-end gap-1">
         <dd className="text-right text-xs font-medium text-muted">
           {status ? <BadgeStatus status={status} /> : nilai}
         </dd>
@@ -107,9 +113,9 @@ export function EmptyState({
   aksi?: ReactNode;
 }) {
   return (
-    <div className="mt-4 rounded-lg border border-dashed border-line bg-paper/70 p-4">
+    <div className="mt-3 rounded-lg border border-dashed border-line bg-paper/70 p-kartu">
       <p className="text-sm font-semibold text-ink">{judul}</p>
-      <div className="mt-1 text-sm leading-normal text-muted">{children}</div>
+      <div className="mt-2 text-sm leading-normal text-muted">{children}</div>
       {aksi ? <div className="mt-3">{aksi}</div> : null}
     </div>
   );
@@ -119,7 +125,7 @@ export function CatatanContoh({ children }: { children: ReactNode }) {
   return (
     <div
       role="note"
-      className="rounded-lg border border-accent/25 bg-accent-soft/60 px-4 py-3 text-sm leading-normal text-ink"
+      className="rounded-lg border border-accent/25 bg-accent-soft/60 px-3 py-2 text-sm leading-normal text-ink"
     >
       <span className="font-semibold">Data contoh. </span>
       {children}
@@ -143,8 +149,8 @@ export function TautanAksi({
       ? "bg-brand text-white hover:bg-brand-strong"
       : "border border-line-strong bg-surface text-ink hover:border-brand hover:text-brand-strong";
   const ukuran = ringkas
-    ? "min-h-6 px-2 text-xs leading-4"
-    : "min-h-11 px-4 text-sm";
+    ? "min-h-9 px-3 text-xs leading-4"
+    : "min-h-9 px-tombol text-sm";
 
   return (
     <Link
@@ -173,7 +179,7 @@ export function TombolAksi({
   return (
     <button
       type={type}
-      className={`inline-flex min-h-11 items-center justify-center rounded-lg px-4 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${gaya} ${className}`}
+      className={`inline-flex min-h-9 items-center justify-center rounded-lg px-tombol text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${gaya} ${className}`}
       {...props}
     >
       {children}
@@ -183,7 +189,7 @@ export function TombolAksi({
 
 export function BarProgres({ nilai }: { nilai: number }) {
   return (
-    <div className="flex items-center justify-end gap-3">
+    <div className="flex items-center justify-end gap-2">
       <div
         className="h-1.5 w-20 overflow-hidden rounded-full bg-brand-soft"
         aria-hidden="true"

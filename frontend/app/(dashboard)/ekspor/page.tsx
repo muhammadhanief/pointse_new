@@ -4,19 +4,19 @@ import { PageHeader } from "@/components/dashboard/ui";
 import { EksporClient } from "@/components/ekspor/ekspor-client";
 
 export const metadata: Metadata = {
-  title: "Ekspor",
+  title: "Ekspor rekap",
 };
 
 export default function EksporPage() {
   return (
-    <div className="space-y-8">
+    <div className="space-y-field">
       <PageHeader
-        judul="Ekspor hasil"
-        deskripsi="Unduh berkas untuk diedit di QGIS atau diolah lebih lanjut. Ekspor per job memakai hasil job yang sudah sukses."
+        judul="Ekspor rekap"
+        deskripsi="Unduh rekap CSV per tingkat wilayah dan rentang tanggal data. Unduhan hasil per job tersedia di popup detail Riwayat upload."
         meta={
           <div className="sm:text-right">
-            <p className="font-semibold text-ink">Hanya job sukses</p>
-            <p className="mt-0.5 text-xs">CSV dan GPKG sesuai ketersediaan.</p>
+            <p className="font-semibold text-ink">Rekap periodik</p>
+            <p className="mt-1 text-xs">CSV sesuai snapshot.</p>
           </div>
         }
       />

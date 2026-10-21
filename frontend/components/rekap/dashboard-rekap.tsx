@@ -193,18 +193,18 @@ export function DashboardRekap() {
     pilihan !== null && (tingkat === "kabupaten" || tingkat === "desa");
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-field">
       <Panel
         judul="Saringan rekap"
         deskripsi="Angka di bawah berasal dari run sukses terakhir tiap kabupaten/kota. Pilih baris untuk melihat rincian wilayah."
       >
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-3 grid gap-field sm:grid-cols-2 lg:grid-cols-4">
           <label className="text-sm font-medium text-ink">
             Proses
             <select
               value={tipe}
               onChange={(event) => setTipe(event.target.value as TipeRun)}
-              className="mt-1.5 min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+              className="mt-1 min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
             >
               <option value="A">{labelTipe("A")}</option>
               <option value="B">{labelTipe("B")}</option>
@@ -215,7 +215,7 @@ export function DashboardRekap() {
             <select
               value={dasar}
               onChange={(event) => setDasar(event.target.value as Dasar)}
-              className="mt-1.5 min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+              className="mt-1 min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
             >
               <option value="tugas">Wilayah penugasan</option>
               <option value="posisi">Posisi titik</option>
@@ -226,7 +226,7 @@ export function DashboardRekap() {
             <select
               value={tingkat}
               onChange={(event) => setTingkat(event.target.value as Tingkat)}
-              className="mt-1.5 min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+              className="mt-1 min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
             >
               {TINGKAT.map((satu) => (
                 <option key={satu.nilai} value={satu.nilai}>
@@ -241,11 +241,11 @@ export function DashboardRekap() {
               value={cari}
               onChange={(event) => setCari(event.target.value)}
               placeholder="Nama atau kode"
-              className="mt-1.5 min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+              className="mt-1 min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
             />
           </label>
         </div>
-        <div className="mt-5 flex flex-wrap gap-3">
+        <div className="mt-3 flex flex-wrap gap-field">
           <TombolAksi
             varian="sekunder"
             disabled={mengunduh || memuat}
@@ -269,13 +269,13 @@ export function DashboardRekap() {
       {galat ? (
         <div
           role="alert"
-          className="rounded-lg border border-danger/30 bg-danger-soft/50 px-4 py-3 text-sm text-ink"
+          className="rounded-lg border border-danger/30 bg-danger-soft/50 px-3 py-2 text-sm text-ink"
         >
           {galat}
         </div>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-field sm:grid-cols-2 lg:grid-cols-4">
         <RingkasanKartu label="Kabupaten/kota" nilai={formatAngka(total.kabupaten)} />
         <RingkasanKartu label="Belum" nilai={formatAngka(total.belum)} />
         <RingkasanKartu label="Ditindak" nilai={formatAngka(total.ditindak)} />
@@ -290,7 +290,7 @@ export function DashboardRekap() {
         deskripsi="Klik rincian pada baris untuk melihat kecamatan, desa, SLS, atau SubSLS dari run terakhir kabupaten/kota tersebut."
       >
         {memuat ? (
-          <p className="mt-5 text-sm text-muted">Memuat rekap…</p>
+          <p className="mt-3 text-sm text-muted">Memuat rekap…</p>
         ) : tersaring.length === 0 ? (
           <EmptyState
             judul="Belum ada rekap"
@@ -304,15 +304,15 @@ export function DashboardRekap() {
             dasar wilayah ini.
           </EmptyState>
         ) : (
-          <div className="mt-5 overflow-x-auto">
+          <div className="mt-3 overflow-x-auto">
             <table className="w-full min-w-[720px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
-                  <th className="py-2 pr-4 font-semibold">Kabupaten/kota</th>
-                  <th className="py-2 pr-4 font-semibold">Tanggal data</th>
-                  <th className="py-2 pr-4 text-right font-semibold">Belum</th>
-                  <th className="py-2 pr-4 text-right font-semibold">Ditindak</th>
-                  <th className="py-2 pr-4 text-right font-semibold">Progres</th>
+                  <th className="py-2 pl-3 pr-3 font-semibold">Kabupaten/kota</th>
+                  <th className="py-2 pr-3 font-semibold">Tanggal data</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Belum</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Ditindak</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Progres</th>
                   <th className="py-2 text-right font-semibold">Aksi</th>
                 </tr>
               </thead>
@@ -329,7 +329,7 @@ export function DashboardRekap() {
                         terpilih ? "bg-brand-soft/40" : ""
                       }`}
                     >
-                      <td className="py-3 pr-4">
+                      <td className="py-2 pl-3 pr-3">
                         <p className="font-medium text-ink">
                           {baris.nmkab || labelKabupaten(baris.kdprov, baris.kdkab)}
                         </p>
@@ -337,22 +337,22 @@ export function DashboardRekap() {
                           {baris.kdprov}.{baris.kdkab}
                         </p>
                       </td>
-                      <td className="py-3 pr-4 text-muted">
+                      <td className="py-2 pr-3 text-muted">
                         {angka ? formatTanggal(angka.tanggal_data) : "-"}
                       </td>
-                      <td className="py-3 pr-4 text-right tabular-nums">
+                      <td className="py-2 pr-3 text-right tabular-nums">
                         {angka ? formatAngka(angka.belum) : "-"}
                       </td>
-                      <td className="py-3 pr-4 text-right tabular-nums">
+                      <td className="py-2 pr-3 text-right tabular-nums">
                         {angka ? formatAngka(angka.ditindak) : "-"}
                       </td>
-                      <td className="py-3 pr-4 text-right">
+                      <td className="py-2 pr-3 text-right">
                         <Progres nilai={angka?.persen_progres ?? null} />
                       </td>
-                      <td className="py-3 text-right">
+                      <td className="py-2 text-right">
                         <TombolAksi
                           varian="sekunder"
-                          className="min-h-9 px-3"
+                          className="min-h-9 px-tombol"
                           disabled={!angka}
                           onClick={() => setPilihan(baris)}
                         >
@@ -373,7 +373,7 @@ export function DashboardRekap() {
           judul={`Rincian ${pilihan.nmkab || labelKabupaten(pilihan.kdprov, pilihan.kdkab)}`}
           deskripsi={`Run ${pilihTipe(pilihan, tipe)?.run_id ?? "-"} · ${labelTipe(tipe)} · dasar ${dasar}`}
         >
-          <div className="mt-4 flex flex-wrap items-center gap-3">
+          <div className="mt-1 flex flex-wrap items-center gap-field">
             <TombolAksi
               varian="sekunder"
               disabled={mengunduh || !bolehEksporDetail}
@@ -400,32 +400,32 @@ export function DashboardRekap() {
           {galatDetail ? (
             <div
               role="alert"
-              className="mt-4 rounded-lg border border-danger/30 bg-danger-soft/50 px-4 py-3 text-sm text-ink"
+              className="mt-1 rounded-lg border border-danger/30 bg-danger-soft/50 px-3 py-2 text-sm text-ink"
             >
               {galatDetail}
             </div>
           ) : memuatDetail ? (
-            <p className="mt-5 text-sm text-muted">Memuat rincian…</p>
+            <p className="mt-3 text-sm text-muted">Memuat rincian…</p>
           ) : detail ? (
-            <div className="mt-5 overflow-x-auto">
+            <div className="mt-3 overflow-x-auto">
               <table className="w-full min-w-[640px] border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
-                    <th className="py-2 pr-4 font-semibold">Wilayah</th>
+                    <th className="py-2 pl-3 pr-3 font-semibold">Wilayah</th>
                     {detailRamping ? (
                       <>
-                        <th className="py-2 pr-4 text-right font-semibold">Belum</th>
-                        <th className="py-2 pr-4 text-right font-semibold">Ditindak</th>
+                        <th className="py-2 pr-3 text-right font-semibold">Belum</th>
+                        <th className="py-2 pr-3 text-right font-semibold">Ditindak</th>
                       </>
                     ) : (
                       <>
-                        <th className="py-2 pr-4 text-right font-semibold">Jumlah</th>
-                        <th className="py-2 pr-4 text-right font-semibold">Belum</th>
-                        <th className="py-2 pr-4 text-right font-semibold">Benar awal</th>
-                        <th className="py-2 pr-4 text-right font-semibold">Tindak benar</th>
-                        <th className="py-2 pr-4 text-right font-semibold">Tindak salah</th>
-                        <th className="py-2 pr-4 text-right font-semibold">Digeser</th>
-                        <th className="py-2 pr-4 text-right font-semibold">Tanpa wilayah</th>
+                        <th className="py-2 pr-3 text-right font-semibold">Jumlah</th>
+                        <th className="py-2 pr-3 text-right font-semibold">Belum</th>
+                        <th className="py-2 pr-3 text-right font-semibold">Benar awal</th>
+                        <th className="py-2 pr-3 text-right font-semibold">Tindak benar</th>
+                        <th className="py-2 pr-3 text-right font-semibold">Tindak salah</th>
+                        <th className="py-2 pr-3 text-right font-semibold">Digeser</th>
+                        <th className="py-2 pr-3 text-right font-semibold">Tanpa wilayah</th>
                       </>
                     )}
                     <th className="py-2 text-right font-semibold">Progres</th>
@@ -437,7 +437,7 @@ export function DashboardRekap() {
                       key={`${baris.kode ?? "tanpa"}-${nomor}`}
                       className="border-b border-line/70 last:border-0"
                     >
-                      <td className="py-3 pr-4">
+                      <td className="py-2 pl-3 pr-3">
                         <p className="font-medium text-ink">
                           {baris.nama || "(tanpa wilayah)"}
                         </p>
@@ -445,49 +445,49 @@ export function DashboardRekap() {
                       </td>
                       {detailRamping ? (
                         <>
-                          <td className="py-3 pr-4 text-right tabular-nums">
+                          <td className="py-2 pr-3 text-right tabular-nums">
                             {formatAngka("belum" in baris ? baris.belum : null)}
                           </td>
-                          <td className="py-3 pr-4 text-right tabular-nums">
+                          <td className="py-2 pr-3 text-right tabular-nums">
                             {formatAngka("ditindak" in baris ? baris.ditindak : null)}
                           </td>
                         </>
                       ) : (
                         <>
-                          <td className="py-3 pr-4 text-right tabular-nums">
+                          <td className="py-2 pr-3 text-right tabular-nums">
                             {formatAngka("jumlah" in baris ? baris.jumlah : null)}
                           </td>
-                          <td className="py-3 pr-4 text-right tabular-nums">
+                          <td className="py-2 pr-3 text-right tabular-nums">
                             {formatAngka("belum" in baris ? baris.belum : null)}
                           </td>
-                          <td className="py-3 pr-4 text-right tabular-nums">
+                          <td className="py-2 pr-3 text-right tabular-nums">
                             {formatAngka("benar_awal" in baris ? baris.benar_awal : null)}
                           </td>
-                          <td className="py-3 pr-4 text-right tabular-nums">
+                          <td className="py-2 pr-3 text-right tabular-nums">
                             {formatAngka(
                               "ditindak_posisi_benar" in baris
                                 ? baris.ditindak_posisi_benar
                                 : null,
                             )}
                           </td>
-                          <td className="py-3 pr-4 text-right tabular-nums">
+                          <td className="py-2 pr-3 text-right tabular-nums">
                             {formatAngka(
                               "ditindak_posisi_salah" in baris
                                 ? baris.ditindak_posisi_salah
                                 : null,
                             )}
                           </td>
-                          <td className="py-3 pr-4 text-right tabular-nums">
+                          <td className="py-2 pr-3 text-right tabular-nums">
                             {formatAngka("digeser" in baris ? baris.digeser : null)}
                           </td>
-                          <td className="py-3 pr-4 text-right tabular-nums">
+                          <td className="py-2 pr-3 text-right tabular-nums">
                             {formatAngka(
                               "tanpa_wilayah" in baris ? baris.tanpa_wilayah : null,
                             )}
                           </td>
                         </>
                       )}
-                      <td className="py-3 text-right">
+                      <td className="py-2 text-right">
                         <Progres nilai={baris.persen_progres} />
                       </td>
                     </tr>
@@ -496,7 +496,7 @@ export function DashboardRekap() {
               </table>
             </div>
           ) : (
-            <p className="mt-5 text-sm text-muted">Tidak ada rincian untuk saringan ini.</p>
+            <p className="mt-3 text-sm text-muted">Tidak ada rincian untuk saringan ini.</p>
           )}
         </Panel>
       ) : null}
@@ -506,11 +506,11 @@ export function DashboardRekap() {
 
 function RingkasanKartu({ label, nilai }: { label: string; nilai: string }) {
   return (
-    <div className="rounded-xl border border-line bg-surface p-5">
+    <div className="rounded-xl border border-line bg-surface p-kartu">
       <p className="text-xs font-semibold uppercase tracking-wide text-muted">
         {label}
       </p>
-      <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-ink">
+      <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-ink">
         {nilai}
       </p>
     </div>

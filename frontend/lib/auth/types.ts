@@ -7,6 +7,7 @@ export type SesiPengguna = {
   nama: string;
   nip?: string | null;
   email?: string | null;
+  foto_url?: string | null;
   //: Kode wilayah kerja hasil pemetaan org/provinceCode+cityCode (4/5 digit).
   org: string;
   peran: NamaPeran;

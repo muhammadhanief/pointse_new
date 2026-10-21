@@ -77,14 +77,14 @@ export function StatusDataAdmin() {
 
   if (galat) {
     return (
-      <p className="mt-3 rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-sm leading-normal text-danger">
+      <p className="mt-1 rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-sm leading-normal text-danger">
         {galat}
       </p>
     );
   }
 
   if (!data) {
-    return <p className="mt-3 text-sm text-muted">Memuat tabulasi...</p>;
+    return <p className="mt-1 text-sm text-muted">Memuat tabulasi...</p>;
   }
 
   return (

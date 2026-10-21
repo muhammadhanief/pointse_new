@@ -39,6 +39,7 @@ def _token(
     sub: str = "jane.smith",
     username: str = "jane.smith",
     nama: str = "Jane Smith",
+    foto_url: str | None = None,
     rahasia: str = SECRET,
     kedaluwarsa: bool = False,
 ) -> str:
@@ -49,6 +50,7 @@ def _token(
         "sub": sub,
         "username": username,
         "nama": nama,
+        "foto_url": foto_url,
         "org": org,
         "iat": int(sekarang.timestamp()),
         "exp": int((sekarang + (-1 if kedaluwarsa else 1) * timedelta(hours=1)).timestamp()),
@@ -111,6 +113,14 @@ def test_token_admin_provinsi_5_digit() -> None:
     assert pengguna.peran.nama == PERAN_ADMIN_PROVINSI
     assert pengguna.kdprov == "33"
     assert pengguna.kdkab is None
+
+
+def test_token_membawa_foto_profil() -> None:
+    pengguna = pengguna_saat_ini(
+        _request(_token("33000", foto_url="https://sso.example/foto.jpg")),
+        _setelan(),
+    )
+    assert pengguna.foto_url == "https://sso.example/foto.jpg"
 
 
 def test_token_petugas_kabkot_5_digit() -> None:

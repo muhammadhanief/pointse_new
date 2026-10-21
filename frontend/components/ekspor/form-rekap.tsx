@@ -69,8 +69,8 @@ export function FormRekap({
       judul="Unduh rekap CSV"
       deskripsi="Satu baris per run per wilayah dalam rentang tanggal data. Kategori tanpa wilayah ditulis dengan kode kosong."
     >
-      <form onSubmit={kirim} className="mt-5 space-y-5">
-        <div className="grid gap-4 sm:grid-cols-3">
+      <form onSubmit={kirim} className="mt-3 space-y-field">
+        <div className="grid gap-field sm:grid-cols-3">
           <div>
             <label
               htmlFor="tingkat-rekap"
@@ -82,7 +82,7 @@ export function FormRekap({
               id="tingkat-rekap"
               value={tingkat}
               onChange={(event) => setTingkat(event.target.value)}
-              className="mt-2 block min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+              className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
             >
               <option value="kabupaten">Kabupaten/kota</option>
               <option value="desa">Desa</option>
@@ -100,7 +100,7 @@ export function FormRekap({
               id="tipe-rekap"
               value={tipe}
               onChange={(event) => setTipe(event.target.value)}
-              className="mt-2 block min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+              className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
             >
               <option value="">Semua proses</option>
               <option value="A">1. Identifikasi Titik</option>
@@ -119,7 +119,7 @@ export function FormRekap({
               id="dasar-rekap"
               value={dasar}
               onChange={(event) => setDasar(event.target.value)}
-              className="mt-2 block min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+              className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
             >
               <option value="tugas">Tugas</option>
               <option value="posisi">Posisi</option>
@@ -127,7 +127,7 @@ export function FormRekap({
           </div>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-field sm:grid-cols-2">
           <div>
             <label
               htmlFor="awal-rekap"
@@ -140,7 +140,7 @@ export function FormRekap({
               type="date"
               value={awal}
               onChange={(event) => setAwal(event.target.value)}
-              className="mt-2 block min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+              className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
             />
           </div>
 
@@ -156,7 +156,7 @@ export function FormRekap({
               type="date"
               value={akhir}
               onChange={(event) => setAkhir(event.target.value)}
-              className="mt-2 block min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+              className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
             />
           </div>
         </div>
@@ -164,7 +164,7 @@ export function FormRekap({
         {galat ? (
           <p
             role="alert"
-            className="rounded-lg border border-danger/25 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
+            className="rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-sm leading-normal text-danger"
           >
             {galat}
           </p>

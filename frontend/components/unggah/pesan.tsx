@@ -15,7 +15,7 @@ export function PesanUnggah({
     return (
       <div
         role="status"
-        className="mt-4 rounded-lg border border-success/30 bg-success-soft px-4 py-3 text-sm leading-6 text-success"
+        className="mt-1 rounded-lg border border-success/30 bg-success-soft px-3 py-2 text-sm leading-normal text-success"
       >
         {children ?? "Unggahan berhasil."}
       </div>
@@ -26,7 +26,7 @@ export function PesanUnggah({
     return (
       <div
         role="alert"
-        className="mt-4 rounded-lg border border-danger/25 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
+        className="mt-1 rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-sm leading-normal text-danger"
       >
         {pesan}
       </div>
@@ -37,7 +37,7 @@ export function PesanUnggah({
     return (
       <div
         role="status"
-        className="mt-4 rounded-lg border border-line bg-paper px-4 py-3 text-sm leading-6 text-muted"
+        className="mt-1 rounded-lg border border-line bg-paper px-3 py-2 text-sm leading-normal text-muted"
       >
         {pesan ?? "Unggahan dibatalkan."}
       </div>

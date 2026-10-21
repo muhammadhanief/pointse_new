@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
-import { Panel, TombolAksi } from "@/components/dashboard/ui";
+import { TombolAksi } from "@/components/dashboard/ui";
 import { BidangBerkas } from "@/components/unggah/bidang-berkas";
 import { CatatanUnggah } from "@/components/unggah/catatan";
 import { PesanUnggah } from "@/components/unggah/pesan";
@@ -18,12 +18,14 @@ import {
 
 export function FormMaster({
   kdprov,
+  kdkabAwal,
   onSelesai,
 }: {
   kdprov: string;
+  kdkabAwal?: string;
   onSelesai: () => void;
 }) {
-  const [kdkab, setKdkab] = useState("");
+  const [kdkab, setKdkab] = useState(kdkabAwal ?? "");
   const [tanggal, setTanggal] = useState("");
   const [layer, setLayer] = useState("");
   const [berkas, setBerkas] = useState<File | null>(null);
@@ -70,29 +72,25 @@ export function FormMaster({
           signal,
         }),
     });
-    onSelesai();
 
     if (hasil) {
       setTanggal("");
       setLayer("");
       setBerkas(null);
       setKunciBerkas((nilai) => nilai + 1);
+      onSelesai();
     }
   }
 
   return (
-    <Panel
-      judul="Unggah versi master"
-      deskripsi="Setiap unggahan menjadi versi baru untuk satu kabupaten/kota. Versi lama tetap disimpan."
-    >
-      <form onSubmit={kirim} className="mt-5 space-y-5" aria-busy={sedang}>
-        <div className="grid gap-4 sm:grid-cols-2">
+    <form onSubmit={kirim} className="space-y-field" aria-busy={sedang}>
+        <div className="grid gap-field sm:grid-cols-2">
           <div>
             <p className="text-sm font-medium text-ink">Kode provinsi</p>
-            <p className="mt-2 flex min-h-11 items-center rounded-lg border border-line bg-paper px-3 text-sm font-semibold tabular-nums text-ink">
+            <p className="mt-1 flex min-h-9 items-center rounded-lg border border-line bg-paper px-3 text-sm font-semibold tabular-nums text-ink">
               {kdprov}
             </p>
-            <p className="mt-1.5 text-xs leading-5 text-muted">
+            <p className="mt-bantuan text-xs leading-5 text-muted">
               Mengikuti wilayah akun admin.
             </p>
           </div>
@@ -114,7 +112,7 @@ export function FormMaster({
                     setKdkab(event.target.value);
                     setGalatIsian(null);
                   }}
-                  className="mt-2 block min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <option value="">Pilih kabupaten/kota</option>
                   {pilihanKabupaten.map((satu) => (
@@ -123,7 +121,7 @@ export function FormMaster({
                     </option>
                   ))}
                 </select>
-                <p className="mt-1.5 text-xs leading-5 text-muted">
+                <p className="mt-bantuan text-xs leading-5 text-muted">
                   Pilih kode BPS Provinsi {kdprov}.
                 </p>
               </>
@@ -144,9 +142,9 @@ export function FormMaster({
                     );
                     setGalatIsian(null);
                   }}
-                  className="mt-2 block min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm tabular-nums text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm tabular-nums text-ink disabled:cursor-not-allowed disabled:opacity-60"
                 />
-                <p className="mt-1.5 text-xs leading-5 text-muted">
+                <p className="mt-bantuan text-xs leading-5 text-muted">
                   Daftar kode provinsi ini belum tersedia. Masukkan empat digit
                   berawalan {kdprov}.
                 </p>
@@ -162,11 +160,11 @@ export function FormMaster({
           accept=".gpkg,.geojson,.json,application/geo+json,application/geopackage+sqlite3"
           berkas={berkas}
           onPilih={pilihBerkas}
-          keterangan="GPKG atau GeoJSON. Semua level_6_full_code harus milik kabupaten/kota yang sama."
+          keterangan="GPKG atau GeoJSON asli dari GS, bukan hasil Proses 1/2. Semua level_6_full_code harus milik kabupaten/kota yang sama."
           disabled={sedang}
         />
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-field sm:grid-cols-2">
           <div>
             <label
               htmlFor="tanggal-master"
@@ -180,9 +178,9 @@ export function FormMaster({
               value={tanggal}
               disabled={sedang}
               onChange={(event) => setTanggal(event.target.value)}
-              className="mt-2 block min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink disabled:cursor-not-allowed disabled:opacity-60"
             />
-            <p className="mt-1.5 text-xs leading-5 text-muted">
+            <p className="mt-bantuan text-xs leading-5 text-muted">
               Kosongkan untuk memakai tanggal hari ini.
             </p>
           </div>
@@ -201,9 +199,9 @@ export function FormMaster({
               disabled={sedang}
               autoComplete="off"
               onChange={(event) => setLayer(event.target.value)}
-              className="mt-2 block min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink disabled:cursor-not-allowed disabled:opacity-60"
             />
-            <p className="mt-1.5 text-xs leading-5 text-muted">
+            <p className="mt-bantuan text-xs leading-5 text-muted">
               Isi bila berkas punya beberapa layer.
             </p>
           </div>
@@ -212,11 +210,17 @@ export function FormMaster({
         {galatIsian ? (
           <p
             role="alert"
-            className="rounded-lg border border-danger/25 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
+            className="rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-sm leading-normal text-danger"
           >
             {galatIsian}
           </p>
         ) : null}
+
+        <p className="rounded-lg bg-paper px-3 py-2 text-xs leading-5 text-muted">
+          Berkas harus asli dari GS. Semua{" "}
+          <span className="font-mono">level_6_full_code</span> harus milik satu
+          kabupaten/kota. Versi lama tetap tersimpan.
+        </p>
 
         <CatatanUnggah />
 
@@ -235,7 +239,6 @@ export function FormMaster({
               }).`
             : "Master geotag berhasil disimpan."}
         </PesanUnggah>
-      </form>
-    </Panel>
+    </form>
   );
 }

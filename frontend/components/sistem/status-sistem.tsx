@@ -51,7 +51,7 @@ function BarPemakaian({
   const lebar = Math.max(0, Math.min(100, nilai ?? 0));
   return (
     <div
-      className="mt-2 h-2 overflow-hidden rounded-full bg-brand-soft"
+      className="mt-1 h-2 overflow-hidden rounded-full bg-brand-soft"
       aria-hidden="true"
     >
       <div
@@ -76,12 +76,12 @@ function KartuMetrik({
   bahaya?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-line bg-paper/60 p-4">
+    <div className="rounded-lg border border-line bg-paper/60 p-kartu">
       <p className="text-xs font-semibold text-muted">{label}</p>
       <p className="mt-1 font-display text-2xl font-semibold tracking-tight text-ink">
         {nilai}
       </p>
-      <p className="mt-1 text-xs leading-5 text-muted">{keterangan}</p>
+      <p className="mt-bantuan text-xs leading-5 text-muted">{keterangan}</p>
       {bar !== undefined ? (
         <BarPemakaian nilai={bar} bahaya={bahaya} />
       ) : null}
@@ -91,13 +91,13 @@ function KartuMetrik({
 
 function BarisJob({ job }: { job: JobSistem }) {
   return (
-    <div className="border-b border-line py-4 last:border-0 last:pb-0 first:pt-0">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="border-b border-line py-2 last:border-0 last:pb-0 first:pt-0">
+      <div className="flex flex-wrap items-start justify-between gap-field">
         <div>
           <p className="text-sm font-semibold text-ink">
             Job {job.id} · {labelTipe(job.tipe)}
           </p>
-          <p className="mt-0.5 text-xs leading-5 text-muted">
+          <p className="mt-bantuan text-xs leading-5 text-muted">
             Wilayah {job.kdprov}/{job.kdkab}
             {job.user ? ` · oleh ${job.user}` : ""}
           </p>
@@ -105,35 +105,35 @@ function BarisJob({ job }: { job: JobSistem }) {
         <BadgeStatus status={job.status} />
       </div>
 
-      <dl className="mt-3 grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+      <dl className="mt-1 grid gap-x-3 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <dt className="text-muted">Mulai</dt>
-          <dd className="mt-0.5 font-medium text-ink">
+          <dd className="mt-1 font-medium text-ink">
             {formatWaktu(job.started_at)}
           </dd>
         </div>
         <div>
           <dt className="text-muted">Heartbeat</dt>
-          <dd className="mt-0.5 font-medium text-ink">
+          <dd className="mt-1 font-medium text-ink">
             {formatWaktu(job.heartbeat_at)}
           </dd>
         </div>
         <div>
           <dt className="text-muted">Umur heartbeat</dt>
-          <dd className="mt-0.5 font-medium text-ink">
+          <dd className="mt-1 font-medium text-ink">
             {nilaiDurasi(job.umur_heartbeat_detik)}
           </dd>
         </div>
         <div>
           <dt className="text-muted">Baris tersimpan</dt>
-          <dd className="mt-0.5 font-medium text-ink">
+          <dd className="mt-1 font-medium text-ink">
             {formatAngka(job.jumlah_baris)}
           </dd>
         </div>
       </dl>
 
       {job.pesan ? (
-        <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-sm leading-6 text-ink">
+        <p className="mt-1 rounded-lg bg-paper px-3 py-2 text-sm leading-normal text-ink">
           {job.pesan}
         </p>
       ) : null}
@@ -210,7 +210,7 @@ export function StatusSistem() {
         judul="Memuat status sistem"
         deskripsi="Membaca status worker, antrean, dan pemakaian server."
       >
-        <p className="mt-4 text-sm leading-6 text-muted" role="status">
+        <p className="mt-1 text-sm leading-normal text-muted" role="status">
           Memuat...
         </p>
       </Panel>
@@ -226,13 +226,13 @@ export function StatusSistem() {
         {galat ? (
           <div
             role="alert"
-            className="mt-4 rounded-lg border border-danger/25 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
+            className="mt-1 rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-sm leading-normal text-danger"
           >
             <p>{galat}</p>
             <button
               type="button"
               onClick={() => void muat()}
-              className="mt-2 min-h-11 rounded-lg border border-danger/30 bg-surface px-3 text-sm font-semibold text-danger"
+              className="mt-1 min-h-9 rounded-lg border border-danger/30 bg-surface px-tombol text-sm font-semibold text-danger"
             >
               Coba lagi
             </button>
@@ -249,8 +249,8 @@ export function StatusSistem() {
   const diskPenuh = (disk.persen_terpakai ?? 0) >= 90;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="space-y-field">
+      <div className="flex flex-wrap items-center justify-between gap-field">
         <p className="text-sm text-muted" aria-live="polite">
           Terakhir dibaca {formatWaktu(status.waktu)}. Diperbarui otomatis
           setiap 5 detik.
@@ -263,7 +263,7 @@ export function StatusSistem() {
       {galat ? (
         <div
           role="alert"
-          className="rounded-lg border border-danger/25 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
+          className="rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-sm leading-normal text-danger"
         >
           <p>{galat}</p>
           <p className="mt-1 text-xs">
@@ -275,10 +275,10 @@ export function StatusSistem() {
       {status.peringatan.length > 0 ? (
         <div
           role="alert"
-          className="rounded-lg border border-accent/30 bg-accent-soft px-4 py-3 text-sm leading-6 text-ink"
+          className="rounded-lg border border-accent/30 bg-accent-soft px-3 py-2 text-sm leading-normal text-ink"
         >
           <p className="font-semibold">Perlu perhatian</p>
-          <ul className="mt-1 list-disc space-y-1 pl-5">
+          <ul className="mt-1 list-disc space-y-field pl-5">
             {status.peringatan.map((pesan) => (
               <li key={pesan}>{pesan}</li>
             ))}
@@ -286,7 +286,7 @@ export function StatusSistem() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-field sm:grid-cols-2 xl:grid-cols-4">
         <KartuMetrik
           label="Worker"
           nilai={worker.aktif ? "Hidup" : "Mati"}
@@ -335,7 +335,7 @@ export function StatusSistem() {
         judul="Antrean job"
         deskripsi="Job diproses satu per satu oleh worker; status diperbarui setiap 5 detik."
       >
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-2 gap-field sm:grid-cols-4">
           {(
             [
               ["Menunggu", antrean.menunggu],
@@ -346,7 +346,7 @@ export function StatusSistem() {
           ).map(([label, jumlah]) => (
             <div
               key={label}
-              className="rounded-lg border border-line bg-paper/60 px-3 py-3"
+              className="rounded-lg border border-line bg-paper/60 px-3 py-2"
             >
               <p className="text-xs font-semibold text-muted">{label}</p>
               <p className="mt-1 font-display text-xl font-semibold text-ink">
@@ -355,7 +355,7 @@ export function StatusSistem() {
             </div>
           ))}
         </div>
-        <p className="mt-3 text-xs leading-5 text-muted">
+        <p className="mt-bantuan text-xs leading-5 text-muted">
           Total {formatAngka(antrean.total)} job
           {antrean.tertua_menunggu
             ? ` · job menunggu paling lama sejak ${formatWaktu(
@@ -366,9 +366,9 @@ export function StatusSistem() {
         </p>
 
         {status.job_aktif.length > 0 ? (
-          <div className="mt-5">
+          <div className="mt-3">
             <p className="text-sm font-semibold text-ink">Job sedang diproses</p>
-            <div className="mt-2">
+            <div className="mt-1">
               {status.job_aktif.map((job) => (
                 <BarisJob key={job.id} job={job} />
               ))}
@@ -382,9 +382,9 @@ export function StatusSistem() {
         )}
 
         {status.job_terakhir ? (
-          <div className="mt-5">
+          <div className="mt-3">
             <p className="text-sm font-semibold text-ink">Job terakhir</p>
-            <div className="mt-2">
+            <div className="mt-1">
               <BarisJob job={status.job_terakhir} />
             </div>
           </div>
@@ -400,15 +400,15 @@ export function StatusSistem() {
             Jalankan service worker setelah migrasi 0009 agar heartbeat tercatat.
           </EmptyState>
         ) : (
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-3 overflow-x-auto">
             <table className="w-full min-w-[760px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
-                  <th className="py-2 pr-4 font-semibold">Worker</th>
-                  <th className="py-2 pr-4 font-semibold">PID</th>
-                  <th className="py-2 pr-4 font-semibold">Status</th>
-                  <th className="py-2 pr-4 font-semibold">Job</th>
-                  <th className="py-2 pr-4 font-semibold">Heartbeat</th>
+                  <th className="py-2 pl-3 pr-3 font-semibold">Worker</th>
+                  <th className="py-2 pr-3 font-semibold">PID</th>
+                  <th className="py-2 pr-3 font-semibold">Status</th>
+                  <th className="py-2 pr-3 font-semibold">Job</th>
+                  <th className="py-2 pr-3 font-semibold">Heartbeat</th>
                   <th className="py-2 text-right font-semibold">Umur</th>
                 </tr>
               </thead>
@@ -418,7 +418,7 @@ export function StatusSistem() {
                     key={heartbeat.worker_id}
                     className="border-b border-line/70 last:border-0"
                   >
-                    <td className="break-all py-3 pr-4 font-medium text-ink">
+                    <td className="break-all py-2 pl-3 pr-3 font-medium text-ink">
                       {heartbeat.worker_id}
                       {heartbeat.hostname ? (
                         <span className="block text-xs font-normal text-muted">
@@ -426,10 +426,10 @@ export function StatusSistem() {
                         </span>
                       ) : null}
                     </td>
-                    <td className="py-3 pr-4 tabular-nums text-muted">
+                    <td className="py-2 pr-3 tabular-nums text-muted">
                       {heartbeat.pid ?? "-"}
                     </td>
-                    <td className="py-3 pr-4">
+                    <td className="py-2 pr-3">
                       <span
                         className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
                           heartbeat.aktif
@@ -441,13 +441,13 @@ export function StatusSistem() {
                         {heartbeat.aktif ? "" : " · tidak aktif"}
                       </span>
                     </td>
-                    <td className="py-3 pr-4 text-muted">
+                    <td className="py-2 pr-3 text-muted">
                       {heartbeat.run_id ? `Job ${heartbeat.run_id}` : "-"}
                     </td>
-                    <td className="py-3 pr-4 text-muted">
+                    <td className="py-2 pr-3 text-muted">
                       {formatWaktu(heartbeat.heartbeat_at)}
                     </td>
-                    <td className="py-3 text-right tabular-nums text-muted">
+                    <td className="py-2 text-right tabular-nums text-muted">
                       {nilaiDurasi(heartbeat.umur_heartbeat_detik)}
                     </td>
                   </tr>
@@ -468,10 +468,10 @@ export function StatusSistem() {
             harian terlihat di sini.
           </EmptyState>
         ) : (
-          <dl className="mt-4 grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+          <dl className="mt-1 grid gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <dt className="text-muted">Status terakhir</dt>
-              <dd className="mt-0.5 font-medium text-ink">
+              <dd className="mt-1 font-medium text-ink">
                 {status.backup.status}
                 {status.backup.umur_jam != null
                   ? ` · ${formatAngka(status.backup.umur_jam)} jam lalu`
@@ -480,25 +480,25 @@ export function StatusSistem() {
             </div>
             <div>
               <dt className="text-muted">Berkas</dt>
-              <dd className="mt-0.5 break-all font-medium text-ink">
+              <dd className="mt-1 break-all font-medium text-ink">
                 {status.backup.berkas ?? "-"}
               </dd>
             </div>
             <div>
               <dt className="text-muted">Ukuran</dt>
-              <dd className="mt-0.5 font-medium text-ink">
+              <dd className="mt-1 font-medium text-ink">
                 {formatBytes(status.backup.ukuran_bytes)}
               </dd>
             </div>
             <div>
               <dt className="text-muted">Selesai</dt>
-              <dd className="mt-0.5 font-medium text-ink">
+              <dd className="mt-1 font-medium text-ink">
                 {formatWaktu(status.backup.waktu_selesai)}
               </dd>
             </div>
             <div className="sm:col-span-2">
               <dt className="text-muted">Pesan</dt>
-              <dd className="mt-0.5 font-medium text-ink">
+              <dd className="mt-1 font-medium text-ink">
                 {status.backup.pesan ?? "-"}
               </dd>
             </div>
@@ -515,28 +515,53 @@ export function StatusSistem() {
             Kejadian akan tercatat saat worker mulai atau memproses job.
           </EmptyState>
         ) : (
-          <ul className="mt-4 divide-y divide-line">
-            {status.kejadian.map((kejadian) => (
-              <li key={kejadian.id} className="py-3 first:pt-0 last:pb-0">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <p className="text-sm font-medium text-ink">
-                    {kejadian.jenis}
-                    {kejadian.run_id ? ` · Job ${kejadian.run_id}` : ""}
-                  </p>
-                  <time className="text-xs text-muted">
-                    {formatWaktu(kejadian.created_at)}
-                  </time>
-                </div>
-                <p className="mt-1 break-words text-sm leading-6 text-muted">
-                  {kejadian.pesan}
-                </p>
-                <p className="mt-1 text-xs text-muted">
-                  {kejadian.level}
-                  {kejadian.worker_id ? ` · ${kejadian.worker_id}` : ""}
-                </p>
-              </li>
-            ))}
-          </ul>
+          <div className="mt-3 max-h-[55vh] overflow-auto overscroll-contain rounded-lg border border-line">
+            <table className="w-full min-w-[52rem] border-collapse text-[13px]">
+              <caption className="sr-only">
+                Riwayat kejadian worker, terbaru lebih dulu.
+              </caption>
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-muted">
+                  {["Waktu", "Level", "Jenis", "Job", "Worker", "Pesan"].map(
+                    (label) => (
+                      <th
+                        key={label}
+                        scope="col"
+                        className="sticky top-0 z-10 border-b border-line bg-paper px-3 py-2 font-semibold"
+                      >
+                        {label}
+                      </th>
+                    ),
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {status.kejadian.map((kejadian) => (
+                  <tr
+                    key={kejadian.id}
+                    className="border-b border-line/70 last:border-0 hover:bg-brand-soft/20"
+                  >
+                    <td className="whitespace-nowrap px-3 py-2 text-muted">
+                      {formatWaktu(kejadian.created_at)}
+                    </td>
+                    <td className="px-3 py-2 font-medium text-ink">
+                      {kejadian.level}
+                    </td>
+                    <td className="px-3 py-2 text-muted">{kejadian.jenis}</td>
+                    <td className="px-3 py-2 tabular-nums text-muted">
+                      {kejadian.run_id ? `Job ${kejadian.run_id}` : "-"}
+                    </td>
+                    <td className="px-3 py-2 text-muted">
+                      {kejadian.worker_id ?? "-"}
+                    </td>
+                    <td className="max-w-[28rem] break-words px-3 py-2 text-muted">
+                      {kejadian.pesan}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Panel>
 
@@ -544,20 +569,20 @@ export function StatusSistem() {
         judul="Detail server"
         deskripsi="Angka RAM dalam MB. Nilai yang tidak tersedia di sistem operasi ditampilkan sebagai tanda minus."
       >
-        <dl className="mt-4 grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+        <dl className="mt-1 grid gap-x-3 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
           <div>
             <dt className="text-muted">Host</dt>
-            <dd className="mt-0.5 font-medium text-ink">{sistem.hostname}</dd>
+            <dd className="mt-1 font-medium text-ink">{sistem.hostname}</dd>
           </div>
           <div>
             <dt className="text-muted">CPU</dt>
-            <dd className="mt-0.5 font-medium text-ink">
+            <dd className="mt-1 font-medium text-ink">
               {sistem.cpu == null ? "-" : `${sistem.cpu} core`}
             </dd>
           </div>
           <div>
             <dt className="text-muted">Load average</dt>
-            <dd className="mt-0.5 font-medium text-ink">
+            <dd className="mt-1 font-medium text-ink">
               {sistem.load_1 == null
                 ? "-"
                 : `${sistem.load_1} / ${sistem.load_5} / ${sistem.load_15}`}
@@ -565,44 +590,44 @@ export function StatusSistem() {
           </div>
           <div>
             <dt className="text-muted">RAM API</dt>
-            <dd className="mt-0.5 font-medium text-ink">
+            <dd className="mt-1 font-medium text-ink">
               {nilaiMb(memori.api_rss_mb)}
             </dd>
           </div>
           <div>
             <dt className="text-muted">Swap terpakai</dt>
-            <dd className="mt-0.5 font-medium text-ink">
+            <dd className="mt-1 font-medium text-ink">
               {nilaiMb(memori.swap_terpakai_mb)} dari{" "}
               {nilaiMb(memori.swap_total_mb)}
             </dd>
           </div>
           <div>
             <dt className="text-muted">Disk terpakai</dt>
-            <dd className="mt-0.5 font-medium text-ink">
+            <dd className="mt-1 font-medium text-ink">
               {nilaiMb(disk.terpakai_mb)} dari {nilaiMb(disk.total_mb)}
             </dd>
           </div>
           <div>
             <dt className="text-muted">Polling worker</dt>
-            <dd className="mt-0.5 font-medium text-ink">
+            <dd className="mt-1 font-medium text-ink">
               {konfigurasi.poll_detik} detik
             </dd>
           </div>
           <div>
             <dt className="text-muted">Heartbeat job</dt>
-            <dd className="mt-0.5 font-medium text-ink">
+            <dd className="mt-1 font-medium text-ink">
               {konfigurasi.heartbeat_detik} detik
             </dd>
           </div>
           <div>
             <dt className="text-muted">Batas heartbeat</dt>
-            <dd className="mt-0.5 font-medium text-ink">
+            <dd className="mt-1 font-medium text-ink">
               {konfigurasi.timeout_menit} menit
             </dd>
           </div>
           <div>
             <dt className="text-muted">Potongan titik</dt>
-            <dd className="mt-0.5 font-medium text-ink">
+            <dd className="mt-1 font-medium text-ink">
               {konfigurasi.chunk_titik > 0
                 ? `${formatAngka(konfigurasi.chunk_titik)} baris`
                 : "Tanpa potongan"}
@@ -610,7 +635,7 @@ export function StatusSistem() {
           </div>
           <div>
             <dt className="text-muted">Maks. worker</dt>
-            <dd className="mt-0.5 font-medium text-ink">
+            <dd className="mt-1 font-medium text-ink">
               {konfigurasi.max_workers}
             </dd>
           </div>

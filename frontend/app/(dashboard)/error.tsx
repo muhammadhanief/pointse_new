@@ -15,25 +15,25 @@ export default function DashboardError({
   }, [error]);
 
   return (
-    <div className="mx-auto max-w-2xl rounded-xl border border-line bg-surface p-6 sm:p-8">
-      <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">
+    <div className="mx-auto max-w-2xl rounded-xl border border-line bg-surface p-kartu">
+      <h1 className="font-display text-xl font-semibold tracking-tight text-ink">
         Halaman gagal dimuat
       </h1>
-      <p className="mt-2 text-sm leading-6 text-muted">
+      <p className="mt-1 text-sm leading-normal text-muted">
         Ada gangguan saat menyiapkan halaman ini. Coba muat ulang. Bila masih
         gagal, kembali ke beranda dan periksa proses yang sedang berjalan.
       </p>
-      <div className="mt-6 flex flex-wrap gap-3">
+      <div className="mt-3 flex flex-wrap gap-field">
         <button
           type="button"
           onClick={reset}
-          className="inline-flex min-h-11 items-center rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-strong"
+          className="inline-flex min-h-9 items-center rounded-lg bg-brand px-tombol text-sm font-semibold text-white transition-colors hover:bg-brand-strong"
         >
           Coba lagi
         </button>
         <Link
           href="/"
-          className="inline-flex min-h-11 items-center rounded-lg border border-line-strong bg-surface px-4 text-sm font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong"
+          className="inline-flex min-h-9 items-center rounded-lg border border-line-strong bg-surface px-tombol text-sm font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong"
         >
           Kembali ke beranda
         </Link>

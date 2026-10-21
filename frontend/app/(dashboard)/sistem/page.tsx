@@ -24,7 +24,7 @@ export default async function StatusSistemPage() {
 
   if (!admin) {
     return (
-      <div className="space-y-8">
+      <div className="space-y-field">
         <PageHeader
           judul="Status sistem"
           deskripsi="Pemantauan worker, antrean, dan pemakaian server."
@@ -46,14 +46,14 @@ export default async function StatusSistemPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-field">
       <PageHeader
         judul="Status sistem"
         deskripsi="Pantau worker, antrean job, RAM, CPU, dan disk server. Halaman ini hanya membaca status; tidak mengubah job atau konfigurasi."
         meta={
           <div className="sm:text-right">
             <p className="font-semibold text-ink">Admin Provinsi</p>
-            <p className="mt-0.5 text-xs">
+            <p className="mt-1 text-xs">
               {labelWilayah(sesi.kdprov, sesi.kdkab)}
             </p>
           </div>

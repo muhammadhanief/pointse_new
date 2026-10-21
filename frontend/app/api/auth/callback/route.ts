@@ -80,7 +80,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         ? "org"
         : pesan === "api_pegawai"
           ? "api_pegawai"
-          : "login";
+          : pesan === "koneksi_ke_sso_gagal"
+            ? "jaringan"
+            : pesan.startsWith("token_http_")
+              ? "token"
+              : "login";
     console.error("Callback SSO gagal:", pesan || "kesalahan tidak dikenal");
     return kembaliGagal(request, kode);
   }

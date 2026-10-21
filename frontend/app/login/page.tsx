@@ -17,6 +17,10 @@ const PESAN_GALAT: Record<string, string> = {
   org: "Akun SSO tidak memiliki atribut unit kerja (org). Hubungi admin SSO BPS.",
   api_pegawai:
     "Gagal mengambil data unit kerja dari API Pegawai BPS. Coba lagi beberapa saat atau hubungi administrator.",
+  jaringan:
+    "Server tidak dapat terhubung ke SSO BPS. Periksa VPN/jaringan server lalu coba lagi.",
+  token:
+    "SSO/WAF menolak penukaran kode login. Periksa koneksi/VPN, Redirect URI, dan Client Secret aplikasi SSO.",
   login: "Login gagal. Silakan coba lagi atau hubungi administrator.",
   bypass: "Kode bypass atau pilihan kabupaten/kota tidak valid.",
 };
@@ -44,8 +48,8 @@ async function IsiLogin({
   const kabupaten = bypassAktif ? daftarKabupaten("33") : [];
 
   return (
-    <div className="w-full max-w-md rounded-xl border border-line bg-surface p-8">
-      <div className="mb-8 flex items-center gap-3">
+    <div className="w-full max-w-md rounded-xl border border-line bg-surface p-4">
+      <div className="mb-4 flex items-center gap-field">
         <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-brand text-sm font-bold text-white">
           BPS
         </div>
@@ -57,10 +61,10 @@ async function IsiLogin({
         </div>
       </div>
 
-      <h1 className="font-display text-2xl font-semibold tracking-tight text-ink">
+      <h1 className="font-display text-xl font-semibold tracking-tight text-ink">
         Monitoring Editing Batas Wilkerstat
       </h1>
-      <p className="mt-3 text-sm leading-6 text-muted">
+      <p className="mt-1 text-sm leading-normal text-muted">
         Masuk dengan akun SSO BPS untuk memantau progres perbaikan titik
         bangunan terhadap batas SLS/SubSLS.
       </p>
@@ -68,7 +72,7 @@ async function IsiLogin({
       {galat ? (
         <div
           role="alert"
-          className="mt-6 rounded-lg border border-danger/25 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
+          className="mt-3 rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-sm leading-normal text-danger"
         >
           {galat}
         </div>
@@ -76,22 +80,22 @@ async function IsiLogin({
 
       <a
         href={tautan}
-        className="mt-7 flex min-h-11 w-full items-center justify-center rounded-lg bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-strong"
+        className="mt-3 flex min-h-9 w-full items-center justify-center rounded-lg bg-brand px-tombol text-sm font-semibold text-white transition-colors hover:bg-brand-strong"
       >
         Masuk dengan SSO BPS
       </a>
 
       {bypassAktif ? (
-        <div className="mt-6 border-t border-line pt-5">
+        <div className="mt-3 border-t border-line pt-3">
           <p className="text-sm font-semibold text-ink">Bypass pengujian</p>
-          <p className="mt-1 text-xs leading-5 text-muted">
+          <p className="mt-bantuan text-xs leading-5 text-muted">
             Masuk tanpa SSO untuk pengujian. Di production, kode bypass wajib
             diisi. Jangan biarkan aktif setelah pengujian selesai.
           </p>
           <form
             action="/api/auth/bypass"
             method="post"
-            className="mt-3 space-y-3"
+            className="mt-3 space-y-field"
           >
             <div>
               <label
@@ -106,9 +110,9 @@ async function IsiLogin({
                 type="password"
                 required={perluKodeBypass}
                 autoComplete="off"
-                className="mt-2 block min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+                className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
               />
-              <p className="mt-1.5 text-xs leading-5 text-muted">
+              <p className="mt-bantuan text-xs leading-5 text-muted">
                 {perluKodeBypass
                   ? "Wajib diisi sesuai AUTH_BYPASS_SECRET di server."
                   : "Kosongkan bila server lokal tidak memakai kode."}
@@ -126,7 +130,7 @@ async function IsiLogin({
                 id="bypass-kdkab"
                 name="kdkab"
                 defaultValue="3307"
-                className="mt-2 block min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink"
+                className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
               >
                 {kabupaten.map((satu) => (
                   <option key={satu.kode} value={satu.kode}>
@@ -136,12 +140,12 @@ async function IsiLogin({
               </select>
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-field sm:grid-cols-2">
               <button
                 type="submit"
                 name="peran"
                 value="petugas_kabkot"
-                className="flex min-h-11 items-center justify-center rounded-lg border border-line-strong bg-surface px-4 text-sm font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong"
+                className="flex min-h-9 items-center justify-center rounded-lg border border-line-strong bg-surface px-tombol text-sm font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong"
               >
                 Masuk petugas
               </button>
@@ -149,7 +153,7 @@ async function IsiLogin({
                 type="submit"
                 name="peran"
                 value="admin_prov"
-                className="flex min-h-11 items-center justify-center rounded-lg border border-line-strong bg-surface px-4 text-sm font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong"
+                className="flex min-h-9 items-center justify-center rounded-lg border border-line-strong bg-surface px-tombol text-sm font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong"
               >
                 Masuk admin provinsi 33
               </button>
@@ -158,7 +162,7 @@ async function IsiLogin({
         </div>
       ) : null}
 
-      <p className="mt-5 text-center text-xs leading-5 text-muted">
+      <p className="mt-3 text-center text-xs leading-5 text-muted">
         Gunakan akun pegawai BPS. Anda akan diarahkan ke halaman login resmi
         <span className="font-medium text-ink"> accounts.bps.go.id</span>.
       </p>
@@ -168,7 +172,7 @@ async function IsiLogin({
 
 export default function LoginPage({ searchParams }: PageProps<"/login">) {
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center bg-paper px-4 py-12">
+    <main className="flex min-h-dvh flex-col items-center justify-center bg-paper px-konten py-konten">
       <Suspense
         fallback={
           <div className="h-80 w-full max-w-md animate-pulse rounded-xl border border-line bg-surface" />
@@ -176,7 +180,7 @@ export default function LoginPage({ searchParams }: PageProps<"/login">) {
       >
         <IsiLogin searchParams={searchParams} />
       </Suspense>
-      <p className="mt-8 text-xs text-muted">Badan Pusat Statistik</p>
+      <p className="mt-3 text-xs text-muted">Badan Pusat Statistik</p>
     </main>
   );
 }

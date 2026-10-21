@@ -73,10 +73,21 @@ async function curlHttp(url: string, opsi: OpsiHttp): Promise<HasilHttp> {
   }
   argumen.push("-w", "\n%{http_code}", url);
 
-  const { stdout } = await execFileAsync("curl", argumen, {
-    maxBuffer: 10 * 1024 * 1024,
-    windowsHide: true,
-  });
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync("curl", argumen, {
+      maxBuffer: 10 * 1024 * 1024,
+      windowsHide: true,
+    }));
+  } catch (galat) {
+    const kode = (galat as NodeJS.ErrnoException).code;
+    if (kode === "ENOENT" || kode === "EACCES") {
+      throw galat;
+    }
+    // Jangan teruskan pesan execFile ke log: argumen curl memuat Basic auth
+    // dan code_verifier. Pesan ini hanya untuk diagnosa jaringan.
+    throw new Error("koneksi_ke_sso_gagal");
+  }
   const potong = stdout.lastIndexOf("\n");
   if (potong < 0) {
     throw new Error("respons curl tidak valid");
@@ -229,7 +240,7 @@ export async function tukarKode(
     body: body.toString(),
   });
   if (resp.status !== 200) {
-    throw new Error(`tukar kode gagal (HTTP ${resp.status})`);
+    throw new Error(`token_http_${resp.status}`);
   }
   const data = JSON.parse(resp.teks) as Partial<TokenOidc>;
   if (!data.access_token || !data.id_token) {
@@ -303,6 +314,17 @@ function klaimGabungan(userInfo: Klaim, idToken: JWTPayload): Klaim {
       ? (userInfo.attributes as Klaim)
       : {};
   return { ...idToken, ...atribut, ...userInfo };
+}
+
+/** URL foto profil dari klaim SSO/API pegawai; nama klaim berbeda antar-client. */
+function fotoDariKlaim(klaim: Klaim): string | undefined {
+  return (
+    klaimTeks(klaim, "foto_url") ??
+    klaimTeks(klaim, "foto") ??
+    klaimTeks(klaim, "picture") ??
+    klaimTeks(klaim, "photo") ??
+    klaimTeks(klaim, "avatar")
+  );
 }
 
 /**
@@ -478,10 +500,13 @@ export async function susunPengguna(
 
   const klaim = klaimGabungan(userInfo, idToken);
   let org = kodeWilayahDariAtribut(klaim);
+  let atributPegawai: Klaim | undefined;
   if (!org) {
     try {
-      const atribut = await atributPegawaiDariApi(config, klaim);
-      org = atribut ? kodeWilayahDariAtribut(atribut) : undefined;
+      atributPegawai = await atributPegawaiDariApi(config, klaim);
+      org = atributPegawai
+        ? kodeWilayahDariAtribut(atributPegawai)
+        : undefined;
     } catch (galat) {
       if (galat instanceof Error && galat.message === "api_pegawai") {
         throw galat;
@@ -512,6 +537,19 @@ export async function susunPengguna(
     [namaDepan, namaBelakang].filter(Boolean).join(" ").trim() ??
     username;
 
+  let foto = fotoDariKlaim(klaim);
+  if (!foto && !atributPegawai) {
+    try {
+      atributPegawai = await atributPegawaiDariApi(config, klaim);
+      foto = atributPegawai ? fotoDariKlaim(atributPegawai) : undefined;
+    } catch {
+      // Foto profil opsional; jangan gagalkan login bila API pegawai bermasalah.
+    }
+  }
+  if (!foto && atributPegawai) {
+    foto = fotoDariKlaim(atributPegawai);
+  }
+
   return {
     sub: subIdToken ?? subUserInfo ?? username,
     username,
@@ -522,6 +560,7 @@ export async function susunPengguna(
       klaimTeks(klaim, "nip") ??
       null,
     email: klaimTeks(klaim, "email") ?? null,
+    foto_url: foto ?? null,
     org,
     peran: peran.nama,
     kdprov: peran.kdprov,

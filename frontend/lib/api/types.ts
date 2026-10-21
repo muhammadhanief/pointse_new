@@ -287,3 +287,25 @@ export type StatusSistem = {
   backup: Backup;
   peringatan: string[];
 };
+
+export type PenggunaAktif = {
+  sub: string;
+  username: string;
+  nama: string;
+  nip: string | null;
+  email: string | null;
+  org: string;
+  peran: string;
+  kdprov: string;
+  kdkab: string | null;
+  foto_url: string | null;
+  login_pada: string;
+  terakhir_aktif: string;
+  online: boolean;
+};
+
+export type DaftarPenggunaAktif = {
+  total: number;
+  online: number;
+  baris: PenggunaAktif[];
+};

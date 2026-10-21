@@ -32,9 +32,9 @@ export function BidangBerkas({
         disabled={disabled}
         aria-describedby={bantuanId}
         onChange={(event) => onPilih(event.target.files?.[0] ?? null)}
-        className="mt-2 block w-full cursor-pointer rounded-lg border border-line-strong bg-surface p-2.5 text-sm text-muted file:mr-3 file:min-h-11 file:cursor-pointer file:rounded-md file:border-0 file:bg-brand file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-brand-strong disabled:cursor-not-allowed disabled:opacity-60"
+        className="mt-1 block w-full cursor-pointer rounded-lg border border-line-strong bg-surface p-2 text-sm text-muted file:mr-3 file:min-h-9 file:cursor-pointer file:rounded-md file:border-0 file:bg-brand file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-brand-strong disabled:cursor-not-allowed disabled:opacity-60"
       />
-      <div id={bantuanId} className="mt-2 text-xs leading-5 text-muted">
+      <div id={bantuanId} className="mt-bantuan text-xs leading-5 text-muted">
         {berkas ? (
           <p>
             <span className="font-medium text-ink">{berkas.name}</span>{" "}

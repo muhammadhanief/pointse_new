@@ -557,3 +557,31 @@ class SistemStatusOut(BaseModel):
     kejadian: list[WorkerEventOut] = []
     backup: BackupOut = BackupOut()
     peringatan: list[str]
+
+
+class PenggunaAktifOut(BaseModel):
+    """Satu pengguna yang pernah/login dan heartbeat-nya tercatat."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    sub: str
+    username: str
+    nama: str
+    nip: str | None = None
+    email: str | None = None
+    org: str
+    peran: str
+    kdprov: str
+    kdkab: str | None = None
+    foto_url: str | None = None
+    login_pada: datetime
+    terakhir_aktif: datetime
+    online: bool = False
+
+
+class DaftarPenggunaAktifOut(BaseModel):
+    """Daftar pengguna untuk halaman pemantauan admin provinsi."""
+
+    total: int
+    online: int
+    baris: list[PenggunaAktifOut]

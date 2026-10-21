@@ -48,6 +48,7 @@ class Pengguna:
     peran: Peran
     nip: str | None = None
     email: str | None = None
+    foto_url: str | None = None
 
     @property
     def kdprov(self) -> str:
@@ -137,6 +138,7 @@ def pengguna_saat_ini(
         peran=peran,
         nip=_teks_atau_none(klaim.get("nip")),
         email=_teks_atau_none(klaim.get("email")),
+        foto_url=_teks_atau_none(klaim.get("foto_url")),
     )
 
 

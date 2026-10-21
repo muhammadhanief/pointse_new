@@ -50,9 +50,11 @@ export function kodeWilayah(kdprov: string, kdkab: string | null): string {
   return kodeKabupaten(kdprov, kdkab);
 }
 
-/** Label wilayah kerja tanpa mengarang nama jika kode belum dikenal. */
+/** Label wilayah kerja tanpa kode provinsi; aplikasi hanya untuk Jawa Tengah. */
 export function labelWilayah(kdprov: string, kdkab: string | null): string {
-  return kdkab
-    ? `${labelKabupaten(kdprov, kdkab)}, Provinsi ${kdprov}`
-    : `Provinsi ${kdprov}`;
+  if (!kdkab) {
+    return kdprov === "33" ? "Jawa Tengah" : `Provinsi ${kdprov}`;
+  }
+  const kabupaten = labelKabupaten(kdprov, kdkab);
+  return kdprov === "33" ? kabupaten : `${kabupaten}, Provinsi ${kdprov}`;
 }

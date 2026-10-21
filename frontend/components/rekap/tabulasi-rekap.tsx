@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { EmptyState, TombolAksi } from "@/components/dashboard/ui";
 import {
@@ -12,6 +18,7 @@ import type {
   TabulasiProgres,
   TabulasiProgresBaris,
 } from "@/lib/api/types";
+import type { SheetData } from "write-excel-file/browser";
 import { formatAngka, formatTanggal } from "@/lib/format";
 import {
   daftarKabupaten,
@@ -19,9 +26,12 @@ import {
   namaKabupatenTampil,
 } from "@/lib/wilayah/kabupaten";
 
+import { GrafikBatang } from "./grafik-batang";
+
 type Tingkat = "kabupaten" | "kecamatan" | "desa";
 type KolomSort =
   | "wilayah"
+  | "kode"
   | "jumlah"
   | "target"
   | "selesai"
@@ -32,11 +42,11 @@ type ArahSort = "asc" | "desc";
 type Sort = { kolom: KolomSort; arah: ArahSort };
 
 const LABEL_STATUS: Record<string, string> = {
-  belum_b: "Belum ada B",
+  belum_b: "Belum Unggah Titik Hasil Perbaikan",
   berjalan: "Berjalan",
   selesai: "Selesai",
   mundur: "Mundur",
-  tanpa_target: "Tanpa target",
+  tanpa_target: "Belum Unggah Peta SLS/SubSLS Final",
 };
 
 function gayaStatus(status: string): string {
@@ -86,7 +96,7 @@ function Chevron() {
 function BarPenyelesaian({ nilai }: { nilai: number | null }) {
   const lebar = nilai == null ? 0 : Math.max(0, Math.min(100, nilai));
   return (
-    <div className="flex items-center justify-end gap-2.5">
+    <div className="flex items-center justify-end gap-2">
       <div
         className="h-1.5 w-16 overflow-hidden rounded-full bg-brand-soft sm:w-20"
         aria-hidden="true"
@@ -107,10 +117,10 @@ function nilaiSort(
       return (
         (baris.level === "kabupaten"
           ? namaKabupatenTampil(baris.kode ?? "", baris.nama)
-          : baris.nama) ??
-        baris.kode ??
-        ""
+          : baris.nama) ?? ""
       );
+    case "kode":
+      return baris.kode ?? "";
     case "jumlah":
       return baris.jumlah;
     case "target":
@@ -153,14 +163,14 @@ function SelSort({
     <th
       scope="col"
       aria-sort={ariaSort}
-      className={`sticky top-0 border-b border-line bg-paper px-2.5 py-2 font-semibold ${
+      className={`sticky top-0 border-b border-line bg-paper px-3 py-2 font-semibold ${
         kiri ? "left-0 z-30" : "z-20"
       } ${rata === "right" ? "text-right" : "text-left"} ${className}`}
     >
       <button
         type="button"
         onClick={() => onSort(kolom)}
-        className={`inline-flex items-center gap-1 rounded hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${
+        className={`inline-flex items-center gap-1.5 rounded hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${
           rata === "right" ? "w-full justify-end" : ""
         }`}
       >
@@ -195,9 +205,13 @@ function barisKosong(kode: string, nama: string): TabulasiProgresBaris {
 export function TabulasiRekap({
   kdprov,
   kdkabAwal,
+  tampilan = "tabel",
+  kontrol,
 }: {
   kdprov: string;
   kdkabAwal: string | null;
+  tampilan?: "tabel" | "grafik";
+  kontrol?: ReactNode;
 }) {
   const tingkatAwal: Tingkat = kdkabAwal ? "kecamatan" : "kabupaten";
   const [tingkat, setTingkat] = useState<Tingkat>(tingkatAwal);
@@ -207,6 +221,8 @@ export function TabulasiRekap({
   const [data, setData] = useState<TabulasiProgres | null>(null);
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState<string | null>(null);
+  const [mengekspor, setMengekspor] = useState(false);
+  const [galatEkspor, setGalatEkspor] = useState<string | null>(null);
 
   const muat = useCallback(
     async (isyarat: AbortSignal) => {
@@ -373,10 +389,145 @@ export function TabulasiRekap({
     ? namaKabupatenTampil(kodeKabupaten(kdprov, data.kdkab), data.nmkab)
     : null;
 
+  async function eksporXlsx() {
+    if (terurut.length === 0 || mengekspor) {
+      return;
+    }
+
+    setMengekspor(true);
+    setGalatEkspor(null);
+
+    try {
+      const { default: writeXlsxFile } = await import(
+        "write-excel-file/browser"
+      );
+      const garis = {
+        borderColor: "#d5dde3",
+        borderStyle: "thin" as const,
+      };
+      const kepala = {
+        ...garis,
+        backgroundColor: "#eef3f6",
+        fontWeight: "bold" as const,
+        align: "center" as const,
+      };
+      const kiri = { ...garis, align: "left" as const };
+      const kanan = { ...garis, align: "right" as const };
+
+      const wilayah =
+        tingkat === "kabupaten"
+          ? (data?.nmprov ?? `Provinsi ${kdprov}`)
+          : tingkat === "kecamatan"
+            ? (namaKabTampil ?? kdprov)
+            : (data?.nmkec ?? namaKabTampil ?? kdprov);
+      const infoTarget = data?.target
+        ? `Target: A ke-${data.target.nomor_urut ?? "-"} (${formatTanggal(data.target.tanggal_data)})`
+        : "Target belum tersedia";
+      const isi: SheetData = [
+        [
+          {
+            value: `${judulTabel} — ${wilayah}`,
+            fontWeight: "bold",
+            fontSize: 14,
+            columnSpan: 8,
+          },
+        ],
+        [
+          {
+            value: infoTarget,
+            fontSize: 10,
+            textColor: "#5c6672",
+            columnSpan: 8,
+          },
+        ],
+        [],
+        [
+          { value: "Kode", ...kepala },
+          { value: "Wilayah", ...kepala },
+          { value: "Jumlah titik", ...kepala },
+          { value: "Target", ...kepala },
+          { value: "Selesai", ...kepala },
+          { value: "Sisa", ...kepala },
+          { value: "Penyelesaian", ...kepala },
+          { value: "Status", ...kepala },
+        ],
+      ];
+
+      for (const baris of terurut) {
+        const nama =
+          baris.level === "kabupaten"
+            ? namaKabupatenTampil(baris.kode ?? "", baris.nama)
+            : baris.nama;
+        isi.push([
+          { value: baris.kode ?? "-", ...kiri },
+          { value: nama ?? baris.kode ?? "-", ...kiri },
+          { value: baris.jumlah, ...kanan },
+          { value: baris.target, ...kanan },
+          { value: baris.selesai, ...kanan },
+          { value: baris.sisa, ...kanan },
+          {
+            value: baris.persen == null ? "-" : baris.persen / 100,
+            ...kanan,
+            ...(baris.persen == null ? {} : { format: "0.0%" }),
+          },
+          {
+            value: LABEL_STATUS[baris.status] ?? baris.status,
+            ...kiri,
+          },
+        ]);
+      }
+
+      isi.push([
+        { value: "Total", ...kiri, fontWeight: "bold" },
+        { value: `${terurut.length} wilayah`, ...kiri, fontWeight: "bold" },
+        { value: total.jumlah, ...kanan, fontWeight: "bold" },
+        { value: total.target, ...kanan, fontWeight: "bold" },
+        { value: total.selesai, ...kanan, fontWeight: "bold" },
+        { value: total.sisa, ...kanan, fontWeight: "bold" },
+        {
+          value: persenTotal == null ? "-" : persenTotal / 100,
+          ...kanan,
+          fontWeight: "bold",
+          ...(persenTotal == null ? {} : { format: "0.0%" }),
+        },
+        { value: "", ...kiri },
+      ]);
+
+      const kodeBerkas =
+        tingkat === "desa"
+          ? (kdkec ?? kdkab ?? kdprov)
+          : (kdkab ?? kdprov);
+      const namaBerkas = `progres_edit_titik_${tingkat}_${kodeBerkas}`
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+
+      await writeXlsxFile(isi, {
+        columns: [
+          { width: 10 },
+          { width: 28 },
+          { width: 15 },
+          { width: 12 },
+          { width: 12 },
+          { width: 10 },
+          { width: 16 },
+          { width: 34 },
+        ],
+        sheet: "Tabulasi",
+      }).toFile(`${namaBerkas}.xlsx`);
+    } catch (kesalahan) {
+      if (!adalahBatal(kesalahan)) {
+        setGalatEkspor(pesanKesalahan(kesalahan));
+      }
+    } finally {
+      setMengekspor(false);
+    }
+  }
+
   return (
-    <section className="space-y-3">
-      <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-3">
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+    <section className="space-y-field">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
           <button
             type="button"
             onClick={keKabupaten}
@@ -412,11 +563,12 @@ export function TabulasiRekap({
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {kontrol}
           {bisaKembali ? (
             <TombolAksi
               varian="sekunder"
-              className="min-h-9 px-3"
+              className="min-h-8 px-tombol"
               onClick={() => {
                 if (tingkat === "desa") {
                   keKecamatan();
@@ -428,50 +580,57 @@ export function TabulasiRekap({
               Kembali
             </TombolAksi>
           ) : null}
-          <TombolAksi
-            varian="sekunder"
-            className="min-h-9 px-3"
-            onClick={() => {
-              const kendali = new AbortController();
-              void muat(kendali.signal);
-            }}
-            disabled={memuat}
-          >
-            {memuat ? "Memuat..." : "Muat ulang"}
-          </TombolAksi>
         </div>
       </div>
 
       <div className="rounded-xl border border-line bg-surface">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-line px-3 py-2 sm:px-4">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line px-3 py-2 sm:px-3">
           <div>
             <h2 className="font-display text-base font-semibold tracking-tight text-ink">
               {judulTabel}
             </h2>
             {tingkat !== "kabupaten" ? (
-              <p className="mt-0.5 text-[11px] text-muted">
+              <p className="mt-1 text-[11px] text-muted">
                 Target dari Proses A terbaru, sisa dari Proses B terakhir.
               </p>
             ) : null}
           </div>
-          {data && (data.target || data.pembanding) ? (
-            <p className="text-[11px] text-muted">
-              {data.target
-                ? `Target: A ke-${data.target.nomor_urut ?? "-"} (${formatTanggal(data.target.tanggal_data)})`
-                : "Target belum tersedia"}
-              {data.pembanding
-                ? ` · B ke-${data.pembanding.nomor_urut ?? "-"} (${formatTanggal(data.pembanding.tanggal_data)})`
-                : " · Belum ada Proses B"}
-            </p>
-          ) : null}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {data && (data.target || data.pembanding) ? (
+              <p className="text-[11px] text-muted">
+                {data.target
+                  ? `Target: A ke-${data.target.nomor_urut ?? "-"} (${formatTanggal(data.target.tanggal_data)})`
+                  : "Target belum tersedia"}
+                {data.pembanding
+                  ? ` · B ke-${data.pembanding.nomor_urut ?? "-"} (${formatTanggal(data.pembanding.tanggal_data)})`
+                  : " · Belum ada Proses B"}
+              </p>
+            ) : null}
+            <TombolAksi
+              varian="sekunder"
+              className="min-h-8 px-2.5 text-xs"
+              onClick={() => void eksporXlsx()}
+              disabled={memuat || terurut.length === 0 || mengekspor}
+              aria-label="Ekspor tabel ke XLSX"
+              title="Ekspor tabel ke XLSX"
+            >
+              {mengekspor ? "Menyiapkan..." : "XLSX"}
+            </TombolAksi>
+          </div>
         </div>
 
+        {galatEkspor ? (
+          <p className="border-b border-line px-3 py-1 text-xs text-danger" role="alert">
+            {galatEkspor}
+          </p>
+        ) : null}
+
         {galat ? (
-          <div className="m-4 rounded-lg border border-danger/30 bg-danger-soft/50 px-4 py-3 text-sm text-ink">
+          <div className="m-3 rounded-lg border border-danger/30 bg-danger-soft/50 px-3 py-2 text-sm text-ink">
             <p>{galat}</p>
             <TombolAksi
               varian="sekunder"
-              className="mt-3 min-h-9 px-3"
+              className="mt-1 min-h-9 px-tombol"
               onClick={() => {
                 const kendali = new AbortController();
                 void muat(kendali.signal);
@@ -481,7 +640,7 @@ export function TabulasiRekap({
             </TombolAksi>
           </div>
         ) : memuat && data == null ? (
-          <div className="space-y-2 p-4 sm:p-5" aria-label="Memuat tabulasi">
+          <div className="space-y-field p-kartu" aria-label="Memuat tabulasi">
             {[0, 1, 2, 3, 4].map((baris) => (
               <div
                 key={baris}
@@ -490,24 +649,32 @@ export function TabulasiRekap({
             ))}
           </div>
         ) : terurut.length === 0 ? (
-          <div className="p-4 sm:p-5">
+          <div className="p-kartu">
             <EmptyState judul={`Belum ada data ${judulTabel.toLocaleLowerCase("id-ID")}`}>
               Belum ada run Proses A yang targetnya bisa dibaca untuk tingkat ini.
             </EmptyState>
           </div>
+        ) : tampilan === "grafik" ? (
+          <GrafikBatang baris={terurut} tingkat={tingkat} onBuka={bukaBaris} />
         ) : (
-          <div className="relative max-h-[70vh] overflow-auto overscroll-contain">
-            <table className="w-full min-w-[46rem] border-collapse text-[13px]">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[50rem] border-collapse text-[13px]">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide text-muted">
+                  <SelSort
+                    label="Kode"
+                    kolom="kode"
+                    sort={sort}
+                    onSort={gantiSort}
+                    rata="left"
+                    kiri
+                    className="sm:px-3"
+                  />
                   <SelSort
                     label="Wilayah"
                     kolom="wilayah"
                     sort={sort}
                     onSort={gantiSort}
-                    rata="left"
-                    kiri
-                    className="sm:px-4"
                   />
                   <SelSort
                     label="Jumlah titik"
@@ -544,7 +711,7 @@ export function TabulasiRekap({
                     kolom="status"
                     sort={sort}
                     onSort={gantiSort}
-                    className="sm:px-4"
+                    className="sm:px-3"
                   />
                 </tr>
               </thead>
@@ -583,37 +750,35 @@ export function TabulasiRekap({
                           : ""
                       }`}
                     >
-                      <td className="sticky left-0 z-10 bg-surface px-3 py-2 font-medium text-ink sm:px-4">
+                      <td className="sticky left-0 z-10 bg-surface px-3 py-1 font-mono text-[11px] text-muted sm:px-3">
+                        {baris.kode ?? "-"}
+                      </td>
+                      <td className="px-3 py-1 font-medium text-ink">
                         <span className="flex items-center gap-2">
                           {bisaDibuka ? <Chevron /> : <span className="h-4 w-4 shrink-0" />}
-                          <span className="min-w-0">
-                            <span className="block truncate">{nama ?? baris.kode ?? "-"}</span>
-                            {baris.kode ? (
-                              <span className="block font-mono text-[11px] font-normal text-muted">
-                                {baris.kode}
-                              </span>
-                            ) : null}
+                          <span className="min-w-0 block truncate">
+                            {nama ?? baris.kode ?? "-"}
                           </span>
                         </span>
                       </td>
-                      <td className="px-2.5 py-2 text-right tabular-nums text-muted">
+                      <td className="px-3 py-1 text-right tabular-nums text-muted">
                         {formatAngka(baris.jumlah)}
                       </td>
-                      <td className="px-2.5 py-2 text-right font-semibold tabular-nums text-ink">
+                      <td className="px-3 py-1 text-right font-semibold tabular-nums text-ink">
                         {formatAngka(baris.target)}
                       </td>
-                      <td className="px-2.5 py-2 text-right tabular-nums text-success">
+                      <td className="px-3 py-1 text-right tabular-nums text-success">
                         {formatAngka(baris.selesai)}
                       </td>
-                      <td className="px-2.5 py-2 text-right tabular-nums text-accent-strong">
+                      <td className="px-3 py-1 text-right tabular-nums text-accent-strong">
                         {formatAngka(baris.sisa)}
                       </td>
-                      <td className="px-2.5 py-2 text-right tabular-nums text-ink">
+                      <td className="px-3 py-1 text-right tabular-nums text-ink">
                         <BarPenyelesaian nilai={baris.persen} />
                       </td>
-                      <td className="px-3 py-2 text-right sm:px-4">
+                      <td className="px-3 py-1 text-right sm:px-3">
                         <span
-                          className={`inline-flex min-h-7 items-center rounded-full border px-2.5 text-xs font-semibold ${gayaStatus(baris.status)}`}
+                          className={`inline-flex min-h-6 items-center whitespace-nowrap rounded-full border px-2 text-xs font-semibold ${gayaStatus(baris.status)}`}
                         >
                           {LABEL_STATUS[baris.status] ?? baris.status}
                         </span>
@@ -624,28 +789,29 @@ export function TabulasiRekap({
               </tbody>
               <tfoot>
                 <tr className="border-t border-line bg-paper/70 font-semibold text-ink">
-                  <td className="sticky left-0 z-10 bg-paper/95 px-3 py-2 sm:px-4">
-                    Total {terurut.length} wilayah
+                  <td className="sticky left-0 z-10 bg-paper/95 px-3 py-1 sm:px-3">
+                    Total
                   </td>
-                  <td className="px-2.5 py-2 text-right tabular-nums">{formatAngka(total.jumlah)}</td>
-                  <td className="px-2.5 py-2 text-right tabular-nums">{formatAngka(total.target)}</td>
-                  <td className="px-2.5 py-2 text-right tabular-nums text-success">
+                  <td className="px-3 py-1">{terurut.length} wilayah</td>
+                  <td className="px-3 py-1 text-right tabular-nums">{formatAngka(total.jumlah)}</td>
+                  <td className="px-3 py-1 text-right tabular-nums">{formatAngka(total.target)}</td>
+                  <td className="px-3 py-1 text-right tabular-nums text-success">
                     {formatAngka(total.selesai)}
                   </td>
-                  <td className="px-2.5 py-2 text-right tabular-nums text-accent-strong">
+                  <td className="px-3 py-1 text-right tabular-nums text-accent-strong">
                     {formatAngka(total.sisa)}
                   </td>
-                  <td className="px-2.5 py-2 text-right tabular-nums">
+                  <td className="px-3 py-1 text-right tabular-nums">
                     {formatPersen(persenTotal)}
                   </td>
-                  <td className="px-3 py-2 sm:px-4" />
+                  <td className="px-3 py-1 sm:px-3" />
                 </tr>
               </tfoot>
             </table>
           </div>
         )}
 
-        <p className="border-t border-line px-4 py-3 text-xs leading-5 text-muted sm:px-5">
+        <p className="border-t border-line px-3 py-2 text-xs leading-5 text-muted sm:px-3">
           Klik baris kabupaten/kota untuk melihat kecamatan, lalu klik kecamatan
           untuk melihat desa/kelurahan. Angka selesai = target dikurangi sisa;
           nilai dapat turun bila muncul flag baru.

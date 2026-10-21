@@ -97,7 +97,7 @@ def unggah_run(
         None,
         description=(
             "Mode pengembangan/berkas kecil. Proses A: kosongkan (geotag master "
-            "dipakai otomatis). Proses B: berkas GPKG hasil edit Proses A."
+            "dipakai otomatis). Proses B: berkas GPKG/GeoJSON hasil edit Proses A."
         ),
     ),
     peta: UploadFile | None = File(

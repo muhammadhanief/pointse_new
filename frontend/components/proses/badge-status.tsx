@@ -17,14 +17,20 @@ const GAYA: Record<StatusRun, string> = {
 export function BadgeStatus({
   status,
   terhenti = false,
+  rata = "end",
 }: {
   status: StatusRun;
   terhenti?: boolean;
+  rata?: "start" | "end";
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2">
+    <div
+      className={`flex flex-wrap items-center gap-field ${
+        rata === "start" ? "justify-start" : "justify-end"
+      }`}
+    >
       <span
-        className={`inline-flex min-h-7 items-center rounded-md border px-2.5 text-xs font-semibold ${GAYA[status]}`}
+        className={`inline-flex min-h-7 items-center rounded-md border px-2 text-xs font-semibold ${GAYA[status]}`}
       >
         {LABEL[status]}
       </span>

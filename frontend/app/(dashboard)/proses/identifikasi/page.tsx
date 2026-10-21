@@ -4,16 +4,13 @@ import { PageHeader } from "@/components/dashboard/ui";
 import { ProsesWorkspace } from "@/components/proses/workspace";
 
 export const metadata: Metadata = {
-  title: "1. Identifikasi Titik",
+  title: "1. Unggah Peta SLS/SubSLS Final",
 };
 
 export default function IdentifikasiPage() {
   return (
-    <div className="space-y-6">
-      <PageHeader
-        judul="1. Identifikasi Titik"
-        deskripsi="Unggah peta batas Wilkerstat. Titik dari geotag master dicocokkan ke poligon, lalu flag awal dihitung."
-      />
+    <div className="space-y-field">
+      <PageHeader judul="1. Unggah Peta SLS/SubSLS Final" />
       <ProsesWorkspace tipe="A" />
     </div>
   );

@@ -46,7 +46,7 @@ const LANGKAH = [
     ),
   },
   {
-    judul: 'Sistem menjalankan model "01 Identifikasi Titik.model3"',
+    judul: '[BY SYSTEM OTOMATIS] Sistem menjalankan model "01 Identifikasi Titik.model3"',
     isi: "Master Landmark (1) dan Peta Digital (2) diproses otomatis; hasilnya Hasil Identifikasi Titik (.gpkg).",
   },
   {
@@ -55,10 +55,17 @@ const LANGKAH = [
   },
   {
     judul: "Kabupaten/Kota unggah titik hasil perbaikan",
-    isi: "Unggah kembali .gpkg hasil edit di QGIS untuk dicek.",
+    isi: (
+      <>
+        Unggah kembali .gpkg hasil edit di QGIS untuk dicek.{" "}
+        <TautanAksi href="/proses/pengecekan" ringkas>
+          Unggah
+        </TautanAksi>
+      </>
+    ),
   },
   {
-    judul: 'Sistem menjalankan model "02 Pengecekan Titik.model3"',
+    judul: '[BY SYSTEM OTOMATIS] Sistem menjalankan model "02 Pengecekan Titik.model3"',
     isi: "Titik hasil perbaikan (4) dan Peta Digital (2) diproses otomatis; hasilnya Hasil Pengecekan Titik (.gpkg).",
   },
   {
@@ -86,14 +93,14 @@ export default async function BerandaPage() {
   const admin = sesi.peran === PERAN_ADMIN_PROVINSI;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-field">
       <h1 className="sr-only">Beranda</h1>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,1fr)]">
+      <div className="grid gap-field xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,1fr)]">
         <Panel judul="Alur kerja">
-          <ol className="mt-4 space-y-3">
+          <ol className="mt-3 space-y-field">
             {LANGKAH.map((langkah, indeks) => (
-              <li key={langkah.judul} className="flex gap-3">
+              <li key={langkah.judul} className="flex gap-field">
                 <span
                   aria-hidden="true"
                   className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line bg-paper text-xs font-semibold tabular-nums text-muted"

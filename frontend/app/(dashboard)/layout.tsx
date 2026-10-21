@@ -29,6 +29,7 @@ export default async function DashboardLayout({
         peran: sesi.peran,
         kdprov: sesi.kdprov,
         kdkab: sesi.kdkab,
+        foto_url: sesi.foto_url,
       }}
     >
       {children}

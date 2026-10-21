@@ -427,3 +427,40 @@ class WorkerEvent(Base):
     jenis: Mapped[str] = mapped_column(String(32))
     pesan: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+
+
+#: Pengguna dianggap online bila heartbeat terakhirnya masih dalam rentang ini.
+PENGGUNA_ONLINE_DETIK = 120
+#: Jeda tanpa heartbeat yang dianggap sesi baru saat pengguna kembali aktif.
+PENGGUNA_LOGIN_BARU_MENIT = 30
+
+
+class PenggunaAktif(Base):
+    """Kehadiran pengguna yang pernah masuk ke PointSE.
+
+    Satu baris per ``sub`` SSO. Baris diperbarui oleh heartbeat dari shell
+    dashboard (bukan setiap request API) agar beban tulis tetap kecil. Data ini
+    hanya untuk pemantauan admin provinsi; bukan sumber otorisasi.
+    """
+
+    __tablename__ = "pengguna_aktif"
+    __table_args__ = (
+        Index(
+            "ix_pengguna_aktif_kdprov_terakhir",
+            "kdprov",
+            "terakhir_aktif",
+        ),
+    )
+
+    sub: Mapped[str] = mapped_column(String(128), primary_key=True)
+    username: Mapped[str] = mapped_column(String(64))
+    nama: Mapped[str] = mapped_column(String(128))
+    nip: Mapped[str | None] = mapped_column(String(32))
+    email: Mapped[str | None] = mapped_column(String(128))
+    org: Mapped[str] = mapped_column(String(8))
+    peran: Mapped[str] = mapped_column(String(32))
+    kdprov: Mapped[str] = mapped_column(String(4))
+    kdkab: Mapped[str | None] = mapped_column(String(4))
+    foto_url: Mapped[str | None] = mapped_column(Text)
+    login_pada: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+    terakhir_aktif: Mapped[datetime] = mapped_column(DateTime, default=sekarang)

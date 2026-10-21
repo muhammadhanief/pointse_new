@@ -24,7 +24,7 @@ export default async function MasterGeotagPage() {
 
   if (!admin) {
     return (
-      <div className="space-y-8">
+      <div className="space-y-field">
         <PageHeader
           judul="Master geotag"
           deskripsi="Master geotag disiapkan admin provinsi untuk setiap kabupaten/kota."
@@ -47,14 +47,14 @@ export default async function MasterGeotagPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-field">
       <PageHeader
         judul="Master geotag"
         deskripsi="Simpan geotag asli per kabupaten/kota. Versi lama tetap disimpan karena masih dirujuk proses yang sudah berjalan."
         meta={
           <div className="sm:text-right">
             <p className="font-semibold text-ink">Admin Provinsi</p>
-            <p className="mt-0.5 text-xs">
+            <p className="mt-1 text-xs">
               {labelWilayah(sesi.kdprov, sesi.kdkab)}
             </p>
           </div>
@@ -62,26 +62,6 @@ export default async function MasterGeotagPage() {
       />
 
       <MasterClient kdprov={sesi.kdprov} />
-
-      <Panel
-        judul="Pemeriksaan berkas"
-        deskripsi="Aturan ini dipakai saat master diunggah agar kode wilayah tidak tercampur."
-      >
-        <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-6 text-muted marker:text-muted">
-          <li>Kode wilayah harus empat digit dan diawali kode provinsi.</li>
-          <li>
-            Semua <span className="font-mono text-xs">level_6_full_code</span>{" "}
-            harus milik kabupaten/kota yang sama.
-          </li>
-          <li>
-            Berkas ditolak bila tidak ada satu pun kode yang bisa diverifikasi.
-          </li>
-          <li>
-            Versi lama tidak dihapus karena masih dipakai run 1. Identifikasi
-            Titik sebelumnya.
-          </li>
-        </ul>
-      </Panel>
     </div>
   );
 }
