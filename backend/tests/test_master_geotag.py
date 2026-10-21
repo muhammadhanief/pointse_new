@@ -164,6 +164,25 @@ def test_unggah_master_menolak_titik_kabupaten_lain(
     assert sesi.scalar(select(func.count()).select_from(GeotagMaster)) == 0
 
 
+def test_unggah_master_bukan_file_gs_ditolak(
+    klien: TestClient, tmp_path: Path
+) -> None:
+    """File hasil Proses 1/2 ditolak dengan petunjuk memakai file asli GS."""
+    gdf = data_kecil.titik_a(
+        data_kecil.baris_titik_a("1", KODE_A1, 0.2, 0.2)
+    ).drop(columns=["geotag_latitude", "geotag_longitude", "count_usaha"])
+    berkas = data_kecil.tulis(gdf, tmp_path / "masukan" / "bukan_gs.geojson")
+
+    resp = unggah_master(klien, berkas)
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "asli dari GS" in detail
+    assert "geotag_latitude" in detail
+    assert "geotag_longitude" in detail
+    assert "count_usaha" in detail
+
+
 def test_unggah_peta_tanpa_master_ditolak(klien: TestClient, tmp_path: Path) -> None:
     """Peta Proses A ditolak 409 kalau master kabupaten belum ada."""
     _, peta, _ = tulis_berkas(tmp_path)

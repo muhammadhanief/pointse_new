@@ -200,7 +200,7 @@ def pilih_layer(
         if set(kolom_wajib) <= kolom:
             return nama
 
-    kurang = ", ".join(sorted(set(kolom_wajib)))
+    kurang = ", ".join(sorted(set(kolom_wajib) - kolom))
     raise KesalahanUnggahan(
         f"layer berkas {peran} tidak punya kolom wajib ({kurang}); "
         f"layer tersedia: {', '.join(daftar)}"
@@ -274,7 +274,14 @@ def periksa_master_geotag(
     berkas ditolak karena kabupatennya tidak bisa diverifikasi. Semua kode yang
     terisi harus berawalan kode kabupaten/kota 4 digit (``kode_kab``).
     """
-    nama_layer = pilih_layer(berkas, KOLOM_WAJIB[TIPE_A]["titik"], layer, "geotag")
+    try:
+        nama_layer = pilih_layer(
+            berkas, KOLOM_WAJIB[TIPE_A]["titik"], layer, "geotag"
+        )
+    except KesalahanUnggahan as galat:
+        raise KesalahanUnggahan(
+            f"{galat}. File master harus asli dari GS, bukan hasil Proses 1/2."
+        ) from galat
     kode = _kode_level_6(berkas, nama_layer)
     if not kode:
         raise KesalahanUnggahan(

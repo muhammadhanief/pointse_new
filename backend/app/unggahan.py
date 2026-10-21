@@ -466,7 +466,10 @@ def mulai_unggahan(
     """Buat sesi unggahan berpotongan baru."""
     if data.ukuran < 1:
         raise HTTPException(status_code=422, detail="ukuran berkas harus lebih dari 0")
-    if data.ukuran > setelan.unggah_maks_bytes:
+    if (
+        setelan.unggah_maks_bytes > 0
+        and data.ukuran > setelan.unggah_maks_bytes
+    ):
         raise HTTPException(
             status_code=413,
             detail=(
@@ -598,7 +601,10 @@ async def unggah_berkas(
             ) from galat
         if panjang_diharapkan < 0:
             raise HTTPException(status_code=422, detail="content-length tidak valid")
-        if panjang_diharapkan > setelan.unggah_maks_bytes:
+        if (
+            setelan.unggah_maks_bytes > 0
+            and panjang_diharapkan > setelan.unggah_maks_bytes
+        ):
             raise HTTPException(
                 status_code=413,
                 detail=(
@@ -622,7 +628,10 @@ async def unggah_berkas(
                 if not blok:
                     continue
                 ukuran += len(blok)
-                if ukuran > setelan.unggah_maks_bytes:
+                if (
+                    setelan.unggah_maks_bytes > 0
+                    and ukuran > setelan.unggah_maks_bytes
+                ):
                     raise HTTPException(
                         status_code=413,
                         detail=(

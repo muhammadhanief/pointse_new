@@ -146,25 +146,29 @@ def _proses_a_inti(
     titik_urut["_urut"] = range(urut_awal, urut_awal + len(titik_urut))
 
     # Poligon diberi nomor urut; join memakai kolom wilayah saja (JOIN_FIELDS).
+    # Kolom peta diberi awalan supaya tidak bentrok dengan kolom titik masukan
+    # (mis. geotag dari GS yang sudah membawa kdprov). Nilai yang dipakai tetap
+    # nilai dari peta, sama seperti refactor fields model QGIS.
     nama_geom_peta = peta_4326.geometry.name
     peta_urut = peta_4326.reset_index(drop=True)[list(KOLOM_PETA) + [nama_geom_peta]].copy()
-    peta_urut["_posisi"] = range(len(peta_urut))
+    peta_urut = peta_urut.rename(columns={kol: f"_peta_{kol}" for kol in KOLOM_PETA})
+    peta_urut["_peta_posisi"] = range(len(peta_urut))
 
     # Join attributes by location: intersects, titik tak cocok tetap ada.
     gabung = gpd.sjoin(titik_urut, peta_urut, how="left", predicate="intersects")
 
     # METHOD=1: ambil poligon pertama (urutan peta) untuk tiap titik.
-    gabung = gabung.sort_values(["_urut", "_posisi"], kind="stable")
+    gabung = gabung.sort_values(["_urut", "_peta_posisi"], kind="stable")
     gabung = gabung.drop_duplicates(subset="_urut", keep="first")
 
     # Urutan output joinattributesbylocation (METHOD=1) di QGIS: algoritme
     # mengiterasi peta poligon demi poligon, jadi baris terkelompok per poligon
     # (urutan peta, lalu urutan titik); titik yang tidak cocok ditambahkan
     # paling akhir lewat mergevectorlayers (OUTPUT + NON_MATCHING).
-    cocok = gabung["_posisi"].notna()
+    cocok = gabung["_peta_posisi"].notna()
     gabung = pd.concat(
         [
-            gabung[cocok].sort_values(["_posisi", "_urut"], kind="stable"),
+            gabung[cocok].sort_values(["_peta_posisi", "_urut"], kind="stable"),
             gabung[~cocok].sort_values("_urut", kind="stable"),
         ]
     )
@@ -186,12 +190,15 @@ def _proses_a_inti(
 
     # if("idsubsls" = "level_6_full_code", 0, 1); idsubsls kosong (tak cocok)
     # diperlakukan berbeda dari level_6_full_code → 1, sama seperti QGIS.
-    beda = (gabung["idsubsls"].to_numpy() != gabung["level_6_full_code"].to_numpy())
+    beda = (
+        gabung["_peta_idsubsls"].to_numpy()
+        != gabung["level_6_full_code"].to_numpy()
+    )
     hasil["flag_repair_initial"] = beda.astype("int8")
     hasil["flag_repair"] = beda.astype("int8")
 
     hasil["level_6_full_code"] = gabung["level_6_full_code"].to_numpy()
-    hasil["idsubsls_origin"] = gabung["idsubsls"].to_numpy()
+    hasil["idsubsls_origin"] = gabung["_peta_idsubsls"].to_numpy()
     hasil["latitude_origin"] = _angka(gabung["geotag_latitude"]).to_numpy()
     hasil["longitude_origin"] = _angka(gabung["geotag_longitude"]).to_numpy()
     hasil["no_bang"] = gabung["no_bang"].to_numpy()
@@ -200,15 +207,15 @@ def _proses_a_inti(
     hasil["ada_bang_usaha_value"] = gabung["ada_bang_usaha_value"].to_numpy()
     hasil["jumlah_usaha_ditemukan"] = gabung["count_usaha"].to_numpy()
 
-    hasil["kdprov"] = gabung["kdprov"].to_numpy()
-    hasil["nmprov"] = gabung["nmprov"].to_numpy()
-    hasil["kdkab"] = gabung["kdkab"].to_numpy()
-    hasil["nmkab"] = gabung["nmkab"].to_numpy()
-    hasil["kdkec"] = gabung["kdkec"].to_numpy()
-    hasil["nmkec"] = gabung["nmkec"].to_numpy()
-    hasil["kddesa"] = gabung["kddesa"].to_numpy()
-    hasil["nmdesa"] = gabung["nmdesa"].to_numpy()
-    hasil["nmsls"] = gabung["nmsls"].to_numpy()
+    hasil["kdprov"] = gabung["_peta_kdprov"].to_numpy()
+    hasil["nmprov"] = gabung["_peta_nmprov"].to_numpy()
+    hasil["kdkab"] = gabung["_peta_kdkab"].to_numpy()
+    hasil["nmkab"] = gabung["_peta_nmkab"].to_numpy()
+    hasil["kdkec"] = gabung["_peta_kdkec"].to_numpy()
+    hasil["nmkec"] = gabung["_peta_nmkec"].to_numpy()
+    hasil["kddesa"] = gabung["_peta_kddesa"].to_numpy()
+    hasil["nmdesa"] = gabung["_peta_nmdesa"].to_numpy()
+    hasil["nmsls"] = gabung["_peta_nmsls"].to_numpy()
 
     hasil["kk"] = _flag(gabung["ada_keluarga_value"], NILAI_KK).to_numpy()
     hasil["btt"] = _flag(gabung["kode_bang_value"], NILAI_BTT).to_numpy()
@@ -219,7 +226,7 @@ def _proses_a_inti(
     hasil["nama_usaha_bang"] = gabung["nama_usaha_bang"].to_numpy()
 
     # Kolom bantu untuk penggabungan potongan (tidak ikut keluaran proses_a).
-    hasil["_posisi"] = gabung["_posisi"].to_numpy()
+    hasil["_posisi"] = gabung["_peta_posisi"].to_numpy()
     hasil["_urut"] = gabung["_urut"].to_numpy()
 
     hasil = gpd.GeoDataFrame(

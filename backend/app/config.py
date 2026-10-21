@@ -49,7 +49,8 @@ class Settings(BaseSettings):
     dir_master: str = "data/master"
 
     # Unggahan body mentah: batas ukuran per berkas dan umur berkas sementara.
-    unggah_maks_bytes: int = Field(300 * 1024**2, ge=1_048_576)
+    # 0 = tanpa batas total; potongan tetap dibatasi proxy.
+    unggah_maks_bytes: int = Field(0, ge=0)
     #: Ukuran satu potongan. Di atas 100 MiB ditolak saat startup karena body
     #: request dibatasi proxy pusat 128 MiB.
     unggah_potongan_bytes: int = Field(

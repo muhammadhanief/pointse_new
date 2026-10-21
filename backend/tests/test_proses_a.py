@@ -80,6 +80,20 @@ def test_titik_di_dalam_poligon() -> None:
     assert baris["flag_repair"] == 0
 
 
+def test_kolom_titik_bentrok_dengan_peta_tidak_error() -> None:
+    """Kolom wilayah bawaan file titik tidak boleh menimpa kolom dari peta."""
+    titik = buat_titik([{"assignment_id": "a1", "x": 0.5, "y": 0.5}])
+    titik["kdprov"] = "99"
+    titik["kdkab"] = "99"
+    titik["idsubsls"] = "BUKAN-DARI-PETA"
+
+    hasil = proses_a(titik, PETA_DUA)
+    baris = hasil.iloc[0]
+    assert baris["kdprov"] == "33"
+    assert baris["kdkab"] == "07"
+    assert baris["idsubsls_origin"] == "3307070005001400"
+
+
 def test_titik_di_luar_peta_tetap_ada() -> None:
     """Titik tak cocok tetap dipertahankan; kolom wilayah kosong dan flag_repair 1."""
     hasil = proses_a(buat_titik([{"assignment_id": "a1", "x": 9.0, "y": 9.0}]), PETA_DUA)
