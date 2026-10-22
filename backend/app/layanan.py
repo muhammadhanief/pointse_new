@@ -11,14 +11,14 @@ yang detail titiknya masih disimpan (baseline dan sukses terakhir per kabupaten/
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
 import pyogrio
-from sqlalchemy import and_, func, null, or_, select, union_all
+from sqlalchemy import String, and_, cast, func, null, or_, select, union_all
 from sqlalchemy.orm import Session, aliased
 
 from app import rekap as modul_rekap
@@ -32,6 +32,7 @@ from app.models import (
     GeotagMaster,
     RekapDesa,
     RekapKabupaten,
+    RekapSubsls,
     Run,
     TitikHasil,
     Wilayah,
@@ -480,6 +481,71 @@ def jumlah_tersimpan(sesi: Session, run_id: int) -> int:
     )
 
 
+def saring_pencarian_run(teks: str) -> Any:
+    """Penyaring pencarian teks di semua kolom riwayat yang ditampilkan.
+
+    Nama wilayah diambil dari tabel ``wilayah`` karena ``runs`` hanya menyimpan
+    kode. Kode kabupaten bisa tersimpan 2 digit atau 4 digit, jadi keduanya
+    dicocokkan.
+    """
+    pola = f"%{teks}%"
+    dalam = aliased(Run)
+    nomor = (
+        select(func.count())
+        .select_from(dalam)
+        .where(
+            dalam.kdprov == Run.kdprov,
+            dalam.kdkab == Run.kdkab,
+            dalam.tipe == Run.tipe,
+            dalam.id <= Run.id,
+        )
+        .correlate(Run)
+        .scalar_subquery()
+    )
+    kdkab_pendek = func.substr(Run.kdkab, func.length(Run.kdkab) - 1, 2)
+    saring_wilayah = or_(
+        Wilayah.kdkab == Run.kdkab,
+        Wilayah.kdkab == kdkab_pendek,
+    )
+    nmkab = (
+        select(Wilayah.nmkab)
+        .where(Wilayah.kdprov == Run.kdprov, saring_wilayah)
+        .order_by(Wilayah.id)
+        .limit(1)
+        .correlate(Run)
+        .scalar_subquery()
+    )
+    nmprov = (
+        select(Wilayah.nmprov)
+        .where(Wilayah.kdprov == Run.kdprov)
+        .order_by(Wilayah.id)
+        .limit(1)
+        .correlate(Run)
+        .scalar_subquery()
+    )
+
+    return or_(
+        cast(Run.id, String).ilike(pola),
+        cast(nomor, String).ilike(pola),
+        Run.tipe.ilike(pola),
+        Run.kdprov.ilike(pola),
+        Run.kdkab.ilike(pola),
+        Run.user.ilike(pola),
+        Run.status.ilike(pola),
+        Run.nama_file_input.ilike(pola),
+        Run.nama_file_peta.ilike(pola),
+        Run.layer_input.ilike(pola),
+        Run.layer_peta.ilike(pola),
+        Run.pesan.ilike(pola),
+        cast(Run.jumlah_baris, String).ilike(pola),
+        cast(Run.jumlah_tanpa_wilayah, String).ilike(pola),
+        cast(Run.tanggal_data, String).ilike(pola),
+        cast(Run.created_at, String).ilike(pola),
+        nmkab.ilike(pola),
+        nmprov.ilike(pola),
+    )
+
+
 def daftar_run(
     sesi: Session,
     *,
@@ -487,6 +553,7 @@ def daftar_run(
     status: str | None = None,
     kdprov: str | None = None,
     kdkab: str | None = None,
+    q: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[int, list[Run]]:
@@ -500,6 +567,8 @@ def daftar_run(
         saring.append(Run.kdprov == kdprov)
     if kdkab is not None:
         saring.append(Run.kdkab.in_(kandidat_kdkab(kdprov, kdkab)))
+    if q:
+        saring.append(saring_pencarian_run(q))
 
     total = int(sesi.scalar(select(func.count()).select_from(Run).where(*saring)) or 0)
     baris = list(
@@ -1002,6 +1071,210 @@ def _metrik_progres(
     return int(run.jumlah_baris or jumlah_detail), int(belum)
 
 
+def _metrik_subsls(
+    sesi: Session, run: Run | None, dasar: str
+) -> dict[tuple[str | None, int | None], dict[str, object]]:
+    """Baca snapshot level 6 untuk satu run, beserta dimensi wilayahnya.
+
+    Kunci baris adalah ``(level_6_full_code, wilayah_id)``. Kode tetap disimpan
+    walau tidak ada di peta; ``kdkab`` memakai kabupaten run sebagai cadangan
+    supaya baris "(tanpa wilayah)" tetap masuk total kabupaten.
+    """
+    if run is None:
+        return {}
+    hasil = sesi.execute(
+        select(
+            RekapSubsls.level_6_full_code,
+            RekapSubsls.wilayah_id,
+            func.max(Wilayah.kdkab).label("kdkab"),
+            func.max(Wilayah.kdkec).label("kdkec"),
+            func.max(Wilayah.kddesa).label("kddesa"),
+            *(
+                func.coalesce(func.sum(getattr(RekapSubsls, nama)), 0).label(nama)
+                for nama in KOLOM_HITUNGAN
+            ),
+        )
+        .select_from(RekapSubsls)
+        .join(Wilayah, Wilayah.id == RekapSubsls.wilayah_id, isouter=True)
+        .where(RekapSubsls.run_id == run.id, RekapSubsls.dasar == dasar)
+        .group_by(RekapSubsls.level_6_full_code, RekapSubsls.wilayah_id)
+    ).mappings()
+
+    keluaran: dict[tuple[str | None, int | None], dict[str, object]] = {}
+    for satu in hasil:
+        kode = None if satu["level_6_full_code"] in (None, "") else str(satu["level_6_full_code"])
+        kunci = (kode, None if satu["wilayah_id"] is None else int(satu["wilayah_id"]))
+        kdkab = satu["kdkab"] if satu["kdkab"] is not None else run.kdkab
+        keluaran[kunci] = {
+            "kode": kode,
+            "wilayah_id": kunci[1],
+            "kdkab": kode_kabupaten(run.kdprov, str(kdkab)),
+            "kdkec": None if satu["kdkec"] is None else str(satu["kdkec"]),
+            "kddesa": None if satu["kddesa"] is None else str(satu["kddesa"]),
+            **{nama: int(satu[nama]) for nama in KOLOM_HITUNGAN},
+        }
+    return keluaran
+
+
+def _progres_level6(
+    sesi: Session, run_a: Run | None, run_b: Run | None, dasar: str
+) -> dict[tuple[str | None, int | None], dict[str, object]]:
+    """Hitung capaian B per level 6 terhadap target A.
+
+    ``selesai`` = titik flag 0 pada B dikurangi titik flag 0 pada A, dibatasi
+    ``0..target``. Titik flag 0 adalah ``jumlah - belum`` (termasuk
+    ``benar_awal`` yang tidak disimpan di ``titik_hasil``). B yang tidak memuat
+    kode target dianggap belum selesai, bukan 100%.
+    """
+    target_a = _metrik_subsls(sesi, run_a, dasar)
+    if not target_a:
+        return {}
+    metrik_b = _metrik_subsls(sesi, run_b, dasar) if run_b is not None else {}
+
+    keluaran: dict[tuple[str | None, int | None], dict[str, object]] = {}
+    for kunci, a in target_a.items():
+        b = metrik_b.get(kunci)
+        jumlah_a = int(a["jumlah"])
+        target = int(a["belum"])
+        flag0_a = jumlah_a - target
+        ada_b = b is not None
+        lengkap = False
+        mundur = False
+        if b is None:
+            selesai = 0
+            sisa = target
+        else:
+            jumlah_b = int(b["jumlah"])
+            belum_b = int(b["belum"])
+            flag0_b = jumlah_b - belum_b
+            selisih = flag0_b - flag0_a
+            selesai = max(0, min(target, selisih))
+            sisa = target - selesai
+            lengkap = jumlah_b == jumlah_a
+            mundur = belum_b > target or selisih < 0
+        keluaran[kunci] = {
+            **a,
+            "target": target,
+            "selesai": selesai,
+            "sisa": sisa,
+            "ada_b": ada_b,
+            "lengkap": lengkap,
+            "mundur": mundur,
+        }
+    return keluaran
+
+
+def _status_agregat(units: Sequence[Mapping[str, object]], target: int, sisa: int) -> str:
+    """Status satu baris tabulasi dari status level 6 penyusunnya."""
+    if target <= 0:
+        return "tanpa_target"
+    ada_b = any(bool(unit["ada_b"]) for unit in units)
+    if not ada_b:
+        return "belum_b"
+    if any(unit["target"] and bool(unit["mundur"]) for unit in units):
+        return "mundur"
+    if any(unit["target"] and not unit["ada_b"] for unit in units):
+        return "parsial"
+    if any(unit["target"] and unit["ada_b"] and not unit["lengkap"] for unit in units):
+        return "tidak_lengkap"
+    return "selesai" if sisa <= 0 else "berjalan"
+
+
+def _baris_level6(
+    progres: Mapping[tuple[str | None, int | None], Mapping[str, object]],
+    tingkat: str,
+    *,
+    kdprov: str,
+    kdkab: str,
+    kdkec: str | None,
+    peta_nama: Mapping[tuple[str, ...], str],
+    run_b: Run | None,
+    nama_kab: Callable[[str], str | None],
+) -> list[dict[str, object]]:
+    """Agregasi level 6 menjadi baris kabupaten/kecamatan/desa."""
+    if tingkat == "desa" and kdkec:
+        progres = {
+            kunci: unit for kunci, unit in progres.items() if unit["kdkec"] == kdkec
+        }
+    kelompok: dict[tuple[str | None, ...], list[Mapping[str, object]]] = {}
+    for unit in progres.values():
+        if tingkat == "kabupaten":
+            kunci = (str(unit["kdkab"]),)
+        elif tingkat == "kecamatan":
+            kunci = (None if unit["kdkec"] is None else str(unit["kdkec"]),)
+        else:
+            kunci = (
+                None if unit["kdkec"] is None else str(unit["kdkec"]),
+                None if unit["kddesa"] is None else str(unit["kddesa"]),
+            )
+        kelompok.setdefault(kunci, []).append(unit)
+
+    baris: list[dict[str, object]] = []
+    for kunci, units in kelompok.items():
+        jumlah = sum(int(unit["jumlah"]) for unit in units)
+        target = sum(int(unit["target"]) for unit in units)
+        selesai = sum(int(unit["selesai"]) for unit in units)
+        sisa = sum(int(unit["sisa"]) for unit in units)
+        kode = kunci[-1]
+        induk: str | None
+        if tingkat == "kabupaten":
+            induk = None
+            nama = nama_kab(kode) if kode is not None else None
+        elif tingkat == "kecamatan":
+            induk = kdkab
+            nama = peta_nama.get((kode,)) if kode is not None else None
+        else:
+            induk = kunci[0]
+            nama = peta_nama.get((kunci[0], kode)) if kode is not None and kunci[0] else None
+
+        # Cakupan B dihitung pada anak langsung tingkat ini, hanya unit bertarget.
+        anak: set[str] = set()
+        anak_ada: set[str] = set()
+        for unit in units:
+            if int(unit["target"]) <= 0:
+                continue
+            if tingkat == "kabupaten":
+                cucu = unit["kdkec"]
+            elif tingkat == "kecamatan":
+                cucu = unit["kddesa"]
+            else:
+                cucu = unit["kode"]
+            if cucu is None:
+                continue
+            anak.add(str(cucu))
+            if unit["ada_b"]:
+                anak_ada.add(str(cucu))
+
+        baris.append(
+            {
+                "kode": kode,
+                "induk": induk,
+                "nama": NAMA_TANPA_WILAYAH if kode is None else nama,
+                "level": tingkat,
+                "jumlah": jumlah,
+                "target": target,
+                "selesai": selesai,
+                "sisa": sisa,
+                "persen": round(selesai / target * 100, 2) if target else None,
+                "status": _status_agregat(units, target, sisa),
+                "ada_b": any(bool(unit["ada_b"]) for unit in units),
+                "pengunggah": run_b.user if run_b is not None else None,
+                "cakupan_ada": len(anak_ada),
+                "cakupan_total": len(anak),
+                "cakupan_unit": (
+                    "kecamatan"
+                    if tingkat == "kabupaten"
+                    else "desa"
+                    if tingkat == "kecamatan"
+                    else "SubSLS"
+                ),
+            }
+        )
+
+    baris.sort(key=lambda satu: (satu["kode"] is None, str(satu["kode"] or "")))
+    return baris
+
+
 def _pilih_target_a(
     sesi: Session, kdprov: str, kdkab: str, dasar: str
 ) -> tuple[Run | None, tuple[int, int] | None]:
@@ -1114,7 +1387,15 @@ def progres_b(
         metrik = _metrik_progres(sesi, run, dasar)
         if metrik is None:
             continue
-        total, sisa = metrik
+        total, sisa_lama = metrik
+        # Capaian dihitung per level 6 supaya B parsial tidak dianggap selesai
+        # hanya karena ``belum`` snapshotnya nol untuk wilayah yang diunggah.
+        progres = _progres_level6(sesi, run_a, run, dasar)
+        sisa = (
+            sum(int(unit["sisa"]) for unit in progres.values())
+            if progres
+            else sisa_lama
+        )
         if target is None:
             beres = 0
             persen = None
@@ -1254,6 +1535,9 @@ def _baris_kabupaten(
         "status": _status_tabulasi(target, sisa_target, ada_b),
         "ada_b": ada_b,
         "pengunggah": pengunggah,
+        "cakupan_ada": 0,
+        "cakupan_total": 0,
+        "cakupan_unit": "kecamatan",
     }
 
 
@@ -1347,8 +1631,26 @@ def tabulasi_progres(
         baris = []
         for kode in kode_semua:
             target_metrik = target_peta.get(kode)
-            total, target = target_metrik[1] if target_metrik is not None else (0, 0)
             run_b_metrik = b_peta.get(kode)
+            if target_metrik is not None:
+                run_a_satu = target_metrik[0]
+                run_b_satu = run_b_metrik[0] if run_b_metrik is not None else None
+                progres = _progres_level6(sesi, run_a_satu, run_b_satu, dasar)
+                if progres:
+                    baris.extend(
+                        _baris_level6(
+                            progres,
+                            "kabupaten",
+                            kdprov=kdprov,
+                            kdkab=kode,
+                            kdkec=None,
+                            peta_nama={},
+                            run_b=run_b_satu,
+                            nama_kab=nama_kab,
+                        )
+                    )
+                    continue
+            total, target = target_metrik[1] if target_metrik is not None else (0, 0)
             sisa = run_b_metrik[1][1] if run_b_metrik is not None else target
             baris.append(
                 _baris_kabupaten(
@@ -1424,9 +1726,6 @@ def tabulasi_progres(
     if metrik_b is None:
         run_b = None
 
-    target_peta = _metrik_wilayah(sesi, run_a, tingkat, dasar, kdprov, kode_kab, kdkec)
-    b_meter = _metrik_wilayah(sesi, run_b, tingkat, dasar, kdprov, kode_kab, kdkec) if run_b else {}
-
     if tingkat == "kecamatan":
         peta_nama = _peta_nama(sesi, "nmkec", ("kdkec",), saring_nama)
     else:
@@ -1434,37 +1733,62 @@ def tabulasi_progres(
     peta_kec = _peta_nama(sesi, "nmkec", ("kdkec",), saring_nama)
     nmkec = peta_kec.get((kdkec,)) if kdkec else None
 
-    baris = []
-    for kunci in sorted(set(target_peta) | set(b_meter), key=lambda satu: (satu[0] is None, *satu)):
-        target_metrik = target_peta.get(kunci)
-        b_metrik = b_meter.get(kunci)
-        target = target_metrik["belum"] if target_metrik is not None else 0
-        sisa = b_metrik["belum"] if b_metrik is not None else target
-        selesai = target - sisa
-        kode = kunci[-1]
-        induk = kunci[0] if tingkat == "desa" else kode_kabupaten(kdprov, kdkab)
-        if kode is None:
-            nama = NAMA_TANPA_WILAYAH
-        elif tingkat == "kecamatan":
-            nama = peta_nama.get((kode,))
-        else:
-            nama = peta_nama.get((kunci[0], kode)) if kunci[0] is not None else None
-        baris.append(
-            {
-                "kode": kode,
-                "induk": induk,
-                "nama": nama,
-                "level": tingkat,
-                "jumlah": target_metrik["jumlah"] if target_metrik is not None else 0,
-                "target": target,
-                "selesai": selesai,
-                "sisa": sisa,
-                "persen": round(selesai / target * 100, 2) if target else None,
-                "status": _status_tabulasi(target, sisa, b_metrik is not None),
-                "ada_b": b_metrik is not None,
-                "pengunggah": run_b.user if run_b is not None else None,
-            }
+    progres = _progres_level6(sesi, run_a, run_b, dasar)
+    if progres:
+        baris = _baris_level6(
+            progres,
+            tingkat,
+            kdprov=kdprov,
+            kdkab=kode_kabupaten(kdprov, kdkab),
+            kdkec=kdkec,
+            peta_nama=peta_nama,
+            run_b=run_b,
+            nama_kab=nama_kab,
         )
+    else:
+        # Cadangan untuk run lama yang belum punya snapshot level 6.
+        target_peta = _metrik_wilayah(sesi, run_a, tingkat, dasar, kdprov, kode_kab, kdkec)
+        b_meter = (
+            _metrik_wilayah(sesi, run_b, tingkat, dasar, kdprov, kode_kab, kdkec)
+            if run_b
+            else {}
+        )
+        baris = []
+        for kunci in sorted(
+            set(target_peta) | set(b_meter), key=lambda satu: (satu[0] is None, *satu)
+        ):
+            target_metrik = target_peta.get(kunci)
+            b_metrik = b_meter.get(kunci)
+            target = target_metrik["belum"] if target_metrik is not None else 0
+            sisa = b_metrik["belum"] if b_metrik is not None else target
+            selesai = target - sisa
+            kode = kunci[-1]
+            induk = kunci[0] if tingkat == "desa" else kode_kabupaten(kdprov, kdkab)
+            if kode is None:
+                nama = NAMA_TANPA_WILAYAH
+            elif tingkat == "kecamatan":
+                nama = peta_nama.get((kode,))
+            else:
+                nama = peta_nama.get((kunci[0], kode)) if kunci[0] is not None else None
+            baris.append(
+                {
+                    "kode": kode,
+                    "induk": induk,
+                    "nama": nama,
+                    "level": tingkat,
+                    "jumlah": target_metrik["jumlah"] if target_metrik is not None else 0,
+                    "target": target,
+                    "selesai": selesai,
+                    "sisa": sisa,
+                    "persen": round(selesai / target * 100, 2) if target else None,
+                    "status": _status_tabulasi(target, sisa, b_metrik is not None),
+                    "ada_b": b_metrik is not None,
+                    "pengunggah": run_b.user if run_b is not None else None,
+                    "cakupan_ada": 0,
+                    "cakupan_total": 0,
+                    "cakupan_unit": "kecamatan" if tingkat == "kecamatan" else "desa",
+                }
+            )
 
     semua = [run for run in (run_a, run_b) if run is not None]
     nomor = nomor_urut_run(sesi, semua)

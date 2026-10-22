@@ -11,7 +11,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 import data_kecil
-from app.models import STATUS_MENUNGGU, Aktivitas, RekapKabupaten, Run
+from app.models import STATUS_MENUNGGU, Aktivitas, RekapKabupaten, RekapSubsls, Run
 from app.worker import proses_satu_job
 
 # Berkas titik: dua titik di SubSLS A1, satu di A2 (level_6 tetap A1) supaya ada
@@ -42,6 +42,29 @@ BARIS_B = (
     data_kecil.baris_titik_b("1", "A1", 0.2, 0.2),
     data_kecil.baris_titik_b("2", "A1", 0.3, 0.3, latitude=0.9, longitude=2.5),
     data_kecil.baris_titik_b("3", "A1", 0.4, 0.4, flag_repair_initial=1, flag_repair=0),
+)
+
+# Dua target di SubSLS/desa berbeda: A1 dan A2. Titik A1 berada di A2 dan
+# sebaliknya, jadi keduanya flag 1.
+BARIS_A_DUA_TARGET = (
+    data_kecil.baris_titik_a("1", "A1", 0.2, 0.2),
+    data_kecil.baris_titik_a("2", "A2", 0.3, 0.3),
+    data_kecil.baris_titik_a("3", "A1", 0.5, 2.5),
+)
+
+# B parsial per SubSLS: semua titik A1 dikirim, A2 belum ada di B.
+BARIS_B_PARSIAL = (
+    data_kecil.baris_titik_b("1", "A1", 0.2, 0.2),
+    data_kecil.baris_titik_b(
+        "3",
+        "A1",
+        0.5,
+        2.5,
+        latitude=0.5,
+        longitude=0.5,
+        flag_repair_initial=1,
+        flag_repair=0,
+    ),
 )
 
 
@@ -167,6 +190,44 @@ def test_status_dan_daftar_job(
     assert status["jumlah_baris"] == 3
     assert status["jumlah_tanpa_wilayah"] == 0
     assert status["detail_tersedia"] is True
+
+
+def test_daftar_job_paging_dan_pencarian(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Daftar job mendukung paging dan mencari semua kolom yang tampil."""
+    titik, peta = berkas_uji(tmp_path)
+    ids = [
+        unggah(klien, titik, peta, user=f"petugas {nomor}").json()["id"]
+        for nomor in ("satu", "dua", "tiga")
+    ]
+    jalankan(sesi_pabrik)
+
+    halaman = klien.get(
+        "/runs", params={"tipe": "A", "limit": 1, "offset": 1}
+    )
+    assert halaman.status_code == 200
+    assert halaman.json()["total"] == 3
+    assert [baris["id"] for baris in halaman.json()["baris"]] == [ids[1]]
+
+    cari_pengguna = klien.get("/runs", params={"tipe": "A", "q": "dua"})
+    assert cari_pengguna.json()["total"] == 1
+    assert cari_pengguna.json()["baris"][0]["id"] == ids[1]
+
+    # Nama wilayah berasal dari tabel ``wilayah``; pencarian tidak membedakan
+    # huruf besar/kecil.
+    cari_wilayah = klien.get("/runs", params={"tipe": "A", "q": "wonosobo"})
+    assert cari_wilayah.json()["total"] == 3
+
+    cari_status = klien.get("/runs", params={"tipe": "A", "q": "SUKSES"})
+    assert cari_status.json()["total"] == 3
+
+    cari_kode = klien.get("/runs", params={"tipe": "A", "q": "3307"})
+    assert cari_kode.json()["total"] == 3
+
+    kosong = klien.get("/runs", params={"tipe": "A", "q": "tidak-ada"})
+    assert kosong.json()["total"] == 0
+    assert kosong.json()["baris"] == []
 
 
 def test_hasil_job_dengan_paging(
@@ -714,6 +775,97 @@ def test_tabulasi_progres_tanpa_b_dan_input_tidak_lengkap(
     assert tanpa_kec.status_code == 422
     tingkat_asing = klien.get("/tabulasi-progres", params={"tingkat": "sls"})
     assert tingkat_asing.status_code == 422
+
+
+def test_snapshot_level6_dibuat_sebelum_titik_dipangkas(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Titik flag 0 tetap terhitung di rekap_subsls walau sudah dipangkas."""
+    titik, peta = berkas_uji(tmp_path)
+    id_a = unggah(klien, titik, peta).json()["id"]
+    jalankan(sesi_pabrik)
+
+    with sesi_pabrik() as sesi:
+        baris = sesi.scalars(
+            select(RekapSubsls).where(
+                RekapSubsls.run_id == id_a, RekapSubsls.dasar == "tugas"
+            )
+        ).all()
+        assert len(baris) == 1
+        assert (baris[0].level_6_full_code, baris[0].jumlah, baris[0].belum) == ("A1", 3, 1)
+        run = sesi.get(Run, id_a)
+        assert run is not None and run.detail_tersedia == 1
+
+
+def test_tabulasi_b_parsial_per_level6(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """B yang hanya memuat sebagian SubSLS tidak boleh dianggap selesai 100%."""
+    titik, peta = berkas_uji(tmp_path, BARIS_A_DUA_TARGET)
+    id_a = unggah(klien, titik, peta, tanggal_data="2026-01-01").json()["id"]
+    jalankan(sesi_pabrik)
+
+    titik_b, peta_b = berkas_uji_b(tmp_path, BARIS_B_PARSIAL)
+    id_b = unggah(klien, titik_b, peta_b, tipe="B", tanggal_data="2026-01-03").json()["id"]
+    jalankan(sesi_pabrik)
+
+    kabupaten = klien.get(
+        "/tabulasi-progres", params={"tingkat": "kabupaten", "kdkab": "3307"}
+    ).json()
+    kab = kabupaten["baris"][0]
+    assert (kab["target"], kab["selesai"], kab["sisa"], kab["persen"]) == (2, 1, 1, 50.0)
+    assert kab["status"] == "parsial"
+    assert (kab["cakupan_ada"], kab["cakupan_total"], kab["cakupan_unit"]) == (
+        1,
+        1,
+        "kecamatan",
+    )
+
+    kecamatan = klien.get(
+        "/tabulasi-progres", params={"tingkat": "kecamatan", "kdkab": "3307"}
+    ).json()["baris"][0]
+    assert (kecamatan["cakupan_ada"], kecamatan["cakupan_total"], kecamatan["cakupan_unit"]) == (
+        1,
+        2,
+        "desa",
+    )
+
+    desa = klien.get(
+        "/tabulasi-progres",
+        params={"tingkat": "desa", "kdkab": "3307", "kdkec": "330701"},
+    ).json()["baris"]
+    assert [(satu["kode"], satu["target"], satu["selesai"], satu["status"]) for satu in desa] == [
+        ("330701001", 1, 1, "selesai"),
+        ("330701002", 1, 0, "belum_b"),
+    ]
+
+    perjalanan = klien.get("/progres-b", params={"kdkab": "3307"}).json()
+    assert perjalanan["baris"][0]["run_id"] == id_b
+    assert (perjalanan["baris"][0]["sisa_flag_1"], perjalanan["baris"][0]["beres"]) == (1, 1)
+    assert perjalanan["target"]["run_a_id"] == id_a
+
+
+def test_tabulasi_tanpa_wilayah_rekonsiliasi_kabupaten_kecamatan(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Target kode yang tidak ada di peta tetap masuk total dan baris kecamatan."""
+    baris_a = BARIS_A + (data_kecil.baris_titik_a("4", "A9", 0.2, 0.2),)
+    titik, peta = berkas_uji(tmp_path, baris_a)
+    unggah(klien, titik, peta)
+    jalankan(sesi_pabrik)
+
+    kabupaten = klien.get(
+        "/tabulasi-progres", params={"tingkat": "kabupaten", "kdkab": "3307"}
+    ).json()["baris"][0]
+    kecamatan = klien.get(
+        "/tabulasi-progres", params={"tingkat": "kecamatan", "kdkab": "3307"}
+    ).json()["baris"]
+
+    assert kabupaten["target"] == sum(satu["target"] for satu in kecamatan)
+    assert kabupaten["sisa"] == sum(satu["sisa"] for satu in kecamatan)
+    tanpa = [satu for satu in kecamatan if satu["kode"] is None]
+    assert len(tanpa) == 1
+    assert (tanpa[0]["nama"], tanpa[0]["target"]) == ("(tanpa wilayah)", 1)
 
 
 def test_perubahan_selisih_rekap_dan_per_titik(

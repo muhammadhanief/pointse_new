@@ -476,6 +476,7 @@ def daftar_run(
     status: str | None = Query(None, description="menunggu/jalan/sukses/gagal"),
     kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
     kdkab: str | None = Query(None, description="Kode kabupaten/kota, mis. 07"),
+    q: str | None = Query(None, max_length=100, description="Cari semua kolom riwayat"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     sesi: Session = Depends(get_session),
@@ -489,6 +490,7 @@ def daftar_run(
         status=status,
         kdprov=kdprov,
         kdkab=kdkab,
+        q=q.strip() if q else None,
         limit=limit,
         offset=offset,
     )

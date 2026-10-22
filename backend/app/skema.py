@@ -311,6 +311,10 @@ class TabulasiProgresBarisOut(BaseModel):
     ada_b: bool
     #: Nama pengunggah Proses B terakhir untuk wilayah/kabupaten ini.
     pengunggah: str | None = None
+    #: Cakupan B pada anak langsung baris ini (mis. 5 dari 18 kecamatan).
+    cakupan_ada: int = 0
+    cakupan_total: int = 0
+    cakupan_unit: str | None = None
 
 
 class TabulasiProgresOut(BaseModel):

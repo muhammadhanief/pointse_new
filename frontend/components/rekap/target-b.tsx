@@ -8,7 +8,6 @@ import type { ProgresB, Rekap, RekapBaris } from "@/lib/api/types";
 import { formatAngka } from "@/lib/format";
 
 type Tingkat = "kecamatan" | "desa";
-type Batas = 25 | 50 | 0;
 
 function porsi(belum: number, jumlah: number): string {
   return jumlah > 0 ? `${formatAngka(Math.round((belum / jumlah) * 1000) / 10)}%` : "-";
@@ -19,7 +18,6 @@ export function TargetB({ kdkab }: { kdkab: string }) {
   const [rekap, setRekap] = useState<Rekap | null>(null);
   const [tingkat, setTingkat] = useState<Tingkat>("desa");
   const [cari, setCari] = useState("");
-  const [batas, setBatas] = useState<Batas>(25);
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
@@ -77,7 +75,7 @@ export function TargetB({ kdkab }: { kdkab: string }) {
     return [...baris].sort((a, b) => b.belum - a.belum || (a.nama ?? "").localeCompare(b.nama ?? ""));
   }, [rekap, cari]);
 
-  const tampil = batas === 0 ? tersaring : tersaring.slice(0, batas);
+  const tampil = tersaring;
 
   if (!kdkab) {
     return (
@@ -207,18 +205,6 @@ export function TargetB({ kdkab }: { kdkab: string }) {
               className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
             />
           </label>
-          <label className="text-sm font-medium text-ink">
-            Tampilkan
-            <select
-              value={batas}
-              onChange={(event) => setBatas(Number(event.target.value) as Batas)}
-              className="mt-label block min-h-9 rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
-            >
-              <option value={25}>25 baris</option>
-              <option value={50}>50 baris</option>
-              <option value={0}>Semua</option>
-            </select>
-          </label>
         </div>
 
         {memuat ? (
@@ -255,11 +241,6 @@ export function TargetB({ kdkab }: { kdkab: string }) {
                 </tbody>
               </table>
             </div>
-            {batas !== 0 && tersaring.length > batas ? (
-              <p className="mt-1 text-xs text-muted">
-                Menampilkan {batas} dari {formatAngka(tersaring.length)} wilayah.
-              </p>
-            ) : null}
           </>
         )}
       </Panel>

@@ -8,6 +8,7 @@ Rekap **selalu** dihitung di basis data dengan satu query GROUP BY (PRD §7: "re
 dihitung lewat query GROUP BY di basis data"), bukan baris per baris di Python:
 
 - :func:`kueri_rekap_desa` -- per desa (``kdprov``+``kdkab``+``kdkec``+``kddesa``);
+- :func:`kueri_rekap_subsls` -- per level 6/SubSLS (satuan hitung target vs B);
 - :func:`kueri_rekap_kabupaten` -- dijumlahkan per kabupaten/kota (``kdprov``+``kdkab``).
 
 Titik yang tidak bisa dipetakan ke wilayah pada dasar itu dihitung pada baris
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import Select, and_, case, delete, func, insert, literal, or_, select, update
+from sqlalchemy import Select, and_, case, delete, func, insert, inspect, literal, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -29,6 +30,7 @@ from app.models import (
     STATUS_SUKSES,
     RekapDesa,
     RekapKabupaten,
+    RekapSubsls,
     Run,
     TitikHasil,
     Wilayah,
@@ -54,6 +56,15 @@ KOLOM_REKAP_KABUPATEN: tuple[str, ...] = (
     "dasar",
     "kdprov",
     "kdkab",
+    *KOLOM_HITUNGAN,
+)
+
+#: Kolom tujuan ``rekap_subsls`` (untuk ``insert().from_select``).
+KOLOM_REKAP_SUBSLS: tuple[str, ...] = (
+    "run_id",
+    "dasar",
+    "level_6_full_code",
+    "wilayah_id",
     *KOLOM_HITUNGAN,
 )
 
@@ -169,8 +180,54 @@ def kueri_rekap_kabupaten(run: Run, dasar: str) -> Select[tuple[object, ...]]:
     )
 
 
+def kueri_rekap_subsls(run: Run, dasar: str) -> Select[tuple[object, ...]]:
+    """Query snapshot satu dasar per level 6/SubSLS.
+
+    Untuk ``dasar=tugas`` kuncinya adalah kode penugasan
+    ``titik_hasil.level_6_full_code``; untuk ``dasar=posisi`` kuncinya adalah
+    SubSLS hasil join peta. Kode tetap disimpan walau tidak ada di ``wilayah``
+    supaya titik di luar peta tidak hilang dari total.
+    """
+    if dasar == DASAR_TUGAS:
+        kode_level6 = TitikHasil.level_6_full_code
+    elif dasar == DASAR_POSISI:
+        kode_level6 = Wilayah.idsubsls
+    else:
+        raise ValueError(f"dasar harus '{DASAR_TUGAS}' atau '{DASAR_POSISI}', bukan '{dasar}'")
+
+    return (
+        select(
+            literal(run.id),
+            literal(dasar),
+            kode_level6,
+            Wilayah.id,
+            *kolom_hitungan(),
+        )
+        .select_from(TitikHasil)
+        .join(Wilayah, klausa_wilayah(dasar), isouter=True)
+        .where(TitikHasil.run_id == run.id)
+        .group_by(kode_level6, Wilayah.id)
+    )
+
+
+def _rekap_subsls_level6_siap(sesi: Session) -> bool:
+    """Apakah ``rekap_subsls`` sudah berbentuk baru (punya kode level 6)?
+
+    Migrasi 0005 memanggil fungsi ini saat tabel ``rekap_subsls`` lama masih
+    berbentuk 0004 (hanya ``wilayah_id``). Saat itu snapshot level 6 dilewati;
+    migrasi 0012 akan membuat tabel baru untuk job berikutnya.
+    """
+    try:
+        kolom = {
+            satu["name"] for satu in inspect(sesi.get_bind()).get_columns("rekap_subsls")
+        }
+    except Exception:  # noqa: BLE001 - tabel bisa belum ada saat migrasi awal
+        return False
+    return "level_6_full_code" in kolom
+
+
 def simpan_rekap(sesi: Session, run: Run) -> None:
-    """Isi ``rekap_desa`` dan ``rekap_kabupaten`` run ini dari ``titik_hasil``.
+    """Isi ``rekap_desa``, ``rekap_subsls``, dan ``rekap_kabupaten`` run ini.
 
     Dipanggil di akhir job sukses **sebelum** titik ``benar_awal`` dibuang: rekap
     tetap memuat semua titik, sementara ``titik_hasil`` hanya menyimpan yang perlu
@@ -179,6 +236,9 @@ def simpan_rekap(sesi: Session, run: Run) -> None:
     """
     sesi.execute(delete(RekapDesa).where(RekapDesa.run_id == run.id))
     sesi.execute(delete(RekapKabupaten).where(RekapKabupaten.run_id == run.id))
+    pakai_subsls = _rekap_subsls_level6_siap(sesi)
+    if pakai_subsls:
+        sesi.execute(delete(RekapSubsls).where(RekapSubsls.run_id == run.id))
 
     for dasar in DASAR:
         sesi.execute(
@@ -189,6 +249,12 @@ def simpan_rekap(sesi: Session, run: Run) -> None:
                 KOLOM_REKAP_KABUPATEN, kueri_rekap_kabupaten(run, dasar)
             )
         )
+        if pakai_subsls:
+            sesi.execute(
+                insert(RekapSubsls).from_select(
+                    KOLOM_REKAP_SUBSLS, kueri_rekap_subsls(run, dasar)
+                )
+            )
 
 
 def _syarat_sekelompok(run: Run) -> tuple[object, ...]:

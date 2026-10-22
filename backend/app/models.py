@@ -16,13 +16,16 @@ Tujuh tabel:
   (``rekap_desa``/``rekap_kabupaten``);
 - ``rekap_desa``   : snapshot rekap progres per **desa** (``kdprov``+``kdkab``+
   ``kdkec``+``kddesa``) per job per dasar, plus satu baris "(tanpa wilayah)";
+- ``rekap_subsls`` : snapshot rekap per **level 6/SubSLS** per job per dasar,
+  disimpan **sebelum** titik ``benar_awal`` dipangkas. Ini satuan hitung target
+  vs hasil B supaya kabupaten, kecamatan, dan desa selalu rekonsiliasi;
 - ``rekap_kabupaten``: rekap yang sama dijumlahkan per **kabupaten/kota**
   (``kdprov``+``kdkab``) per job per dasar; dibaca untuk ringkasan dan tren;
 - ``geotag_master``: geotag asli per kabupaten/kota yang diunggah admin provinsi.
   Berkasnya disimpan permanen (tidak ikut pemangkasan) dan dipakai ulang oleh
   banyak job Proses A. Versi lama tidak dihapus; job A mencatat versi yang dipakai.
 
-Dua tabel rekap memakai kolom hitungan yang sama, dua dasar
+Tiga tabel rekap memakai kolom hitungan yang sama, dua dasar
 (``DASAR_TUGAS``/``DASAR_POSISI``), dihitung lewat query GROUP BY di DB:
 ``jumlah``, ``belum``, ``benar_awal``, ``ditindak_posisi_benar``,
 ``ditindak_posisi_salah``, ``digeser``, ``tanpa_wilayah``.
@@ -84,7 +87,7 @@ WORKER_MENANGGUR = "menganggur"
 WORKER_JALAN = "jalan"
 WORKER_BERHENTI = "berhenti"
 
-#: Kolom hitungan kedua tabel rekap (selain kunci dan kode wilayah).
+#: Kolom hitungan tabel rekap (selain kunci dan kode wilayah).
 KOLOM_HITUNGAN: tuple[str, ...] = (
     "jumlah",
     "belum",
@@ -334,6 +337,48 @@ class RekapDesa(Base):
     kdkab: Mapped[str | None] = mapped_column(String(4))
     kdkec: Mapped[str | None] = mapped_column(String(8))
     kddesa: Mapped[str | None] = mapped_column(String(16))
+
+    jumlah: Mapped[int] = mapped_column(Integer)
+    belum: Mapped[int] = mapped_column(Integer)
+    benar_awal: Mapped[int] = mapped_column(Integer)
+    ditindak_posisi_benar: Mapped[int] = mapped_column(Integer)
+    ditindak_posisi_salah: Mapped[int] = mapped_column(Integer)
+    digeser: Mapped[int] = mapped_column(Integer)
+    tanpa_wilayah: Mapped[int] = mapped_column(Integer)
+
+
+class RekapSubsls(Base):
+    """Snapshot rekap progres per **level 6/SubSLS** per job, dipisah per ``dasar``.
+
+    Tabel ini adalah satuan hitung target A vs capaian B. Satu baris = satu kode
+    level 6 untuk ``dasar=tugas`` (kode penugasan titik), atau satu SubSLS posisi
+    untuk ``dasar=posisi``. Baris dengan ``level_6_full_code`` NULL adalah
+    kategori "(tanpa wilayah)".
+
+    Snapshot diisi di akhir job sukses **sebelum** ``titik_hasil`` dirampingkan.
+    Tanpa snapshot ini, titik ``flag_repair=0`` sudah hilang saat rekap dibaca,
+    sehingga B parsial bisa terlihat 100%.
+    """
+
+    __tablename__ = "rekap_subsls"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "dasar",
+            "level_6_full_code",
+            name="uq_rekap_subsls_run_dasar_level6",
+        ),
+        Index("ix_rekap_subsls_run_dasar", "run_id", "dasar"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    dasar: Mapped[str] = mapped_column(String(8))
+
+    #: Kode level 6 penugasan (tugas) atau SubSLS posisi (posisi).
+    level_6_full_code: Mapped[str | None] = mapped_column(String(16))
+    #: Wilayah hasil join; NULL untuk kode yang tidak ada di peta.
+    wilayah_id: Mapped[int | None] = mapped_column(ForeignKey("wilayah.id"))
 
     jumlah: Mapped[int] = mapped_column(Integer)
     belum: Mapped[int] = mapped_column(Integer)

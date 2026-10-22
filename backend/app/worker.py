@@ -87,6 +87,7 @@ from app.models import (
     WORKER_MENANGGUR,
     RekapDesa,
     RekapKabupaten,
+    RekapSubsls,
     Run,
     TitikHasil,
     Wilayah,
@@ -657,6 +658,7 @@ def bersihkan_hasil(sesi: Session, run_id: int) -> None:
     sesi.execute(delete(TitikHasil).where(TitikHasil.run_id == run_id))
     sesi.execute(delete(RekapDesa).where(RekapDesa.run_id == run_id))
     sesi.execute(delete(RekapKabupaten).where(RekapKabupaten.run_id == run_id))
+    sesi.execute(delete(RekapSubsls).where(RekapSubsls.run_id == run_id))
 
 
 def tandai_job_terhenti(

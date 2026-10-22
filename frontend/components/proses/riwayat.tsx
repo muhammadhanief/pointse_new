@@ -26,6 +26,31 @@ const TAB: { tipe: TipeRun; label: string }[] = [
   { tipe: "B", label: "2. Titik Hasil Perbaikan" },
 ];
 
+const UKURAN_HALAMAN = 20;
+
+/** Nomor halaman yang ditampilkan; ``null`` berarti elipsis. */
+function daftarHalaman(total: number, aktif: number): (number | null)[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, index) => index + 1);
+  }
+
+  const dipilih = new Set([1, total, aktif - 1, aktif, aktif + 1]);
+  const nomor = [...dipilih]
+    .filter((nilai) => nilai >= 1 && nilai <= total)
+    .sort((kiri, kanan) => kiri - kanan);
+
+  const hasil: (number | null)[] = [];
+  let sebelumnya = 0;
+  for (const satu of nomor) {
+    if (sebelumnya > 0 && satu - sebelumnya > 1) {
+      hasil.push(null);
+    }
+    hasil.push(satu);
+    sebelumnya = satu;
+  }
+  return hasil;
+}
+
 type KolomSort =
   | "job"
   | "wilayah"
@@ -122,6 +147,9 @@ export function RiwayatWorkspace() {
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort | null>(null);
   const [dipilih, setDipilih] = useState<Run | null>(null);
+  const [halaman, setHalaman] = useState(0);
+  const [cari, setCari] = useState("");
+  const [cariAktif, setCariAktif] = useState("");
 
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -136,9 +164,18 @@ export function RiwayatWorkspace() {
         setGalat(null);
       }
 
+      const parameter = new URLSearchParams({
+        tipe,
+        limit: String(UKURAN_HALAMAN),
+        offset: String(halaman * UKURAN_HALAMAN),
+      });
+      if (cariAktif) {
+        parameter.set("q", cariAktif);
+      }
+
       const [hasilRun, hasilJalan, hasilMenunggu] =
         await Promise.allSettled([
-          ambilJson<DaftarRun>(`/runs?tipe=${tipe}&limit=20`, {
+          ambilJson<DaftarRun>(`/runs?${parameter.toString()}`, {
             signal: controller.signal,
           }),
           ambilJson<DaftarRun>(`/runs?tipe=${tipe}&status=jalan&limit=1`, {
@@ -160,11 +197,24 @@ export function RiwayatWorkspace() {
           : null;
 
       if (hasilRun.status === "fulfilled") {
+        const totalBaru = hasilRun.value.total;
+        const halamanTerakhir = Math.max(
+          0,
+          Math.ceil(totalBaru / UKURAN_HALAMAN) - 1,
+        );
+        if (halaman > halamanTerakhir) {
+          setHalaman(halamanTerakhir);
+          setRuns([]);
+          setTotal(totalBaru);
+          setMemuat(false);
+          return;
+        }
+
         const aktifDiDaftar = hasilRun.value.baris.filter(
           (run) => run.status === "menunggu" || run.status === "jalan",
         ).length;
         setRuns(hasilRun.value.baris);
-        setTotal(hasilRun.value.total);
+        setTotal(totalBaru);
         setAktif(aktifTerhitung ?? aktifDiDaftar);
         setGalat(null);
         setDiperbarui(formatWaktu(new Date().toISOString()));
@@ -177,7 +227,7 @@ export function RiwayatWorkspace() {
 
       setMemuat(false);
     },
-    [tipe],
+    [tipe, halaman, cariAktif],
   );
 
   useEffect(() => {
@@ -204,6 +254,13 @@ export function RiwayatWorkspace() {
   }, [muat]);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setCariAktif(cari.trim());
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [cari]);
+
+  useEffect(() => {
     if (!dipilih) {
       return;
     }
@@ -226,6 +283,14 @@ export function RiwayatWorkspace() {
     setDiperbarui(null);
     setSort(null);
     setDipilih(null);
+    setHalaman(0);
+    setCari("");
+    setCariAktif("");
+  }
+
+  function gantiCari(nilai: string) {
+    setCari(nilai);
+    setHalaman(0);
   }
 
   function gantiSort(kolom: KolomSort) {
@@ -274,6 +339,10 @@ export function RiwayatWorkspace() {
     tipe === "A" ? "Peta SLS/SubSLS Final" : "Titik Hasil Perbaikan";
   const jalurUnggah =
     tipe === "A" ? "/proses/identifikasi" : "/proses/pengecekan";
+  const totalHalaman = Math.max(1, Math.ceil(total / UKURAN_HALAMAN));
+  const nomorHalaman = daftarHalaman(totalHalaman, halaman + 1);
+  const mulai = total === 0 ? 0 : halaman * UKURAN_HALAMAN + 1;
+  const akhir = Math.min((halaman + 1) * UKURAN_HALAMAN, total);
 
   return (
     <div className="space-y-field">
@@ -317,16 +386,28 @@ export function RiwayatWorkspace() {
           role="tabpanel"
           aria-labelledby={`tab-riwayat-${tipe}`}
         >
-          <div className="mt-3 flex flex-wrap items-start justify-between gap-field">
+          <div className="mt-3 flex flex-col gap-field sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-sm font-semibold text-ink" aria-live="polite">
                 {aktif > 0 ? `${aktif} job aktif` : "Tidak ada job aktif"}
               </p>
               <p className="mt-1 text-xs text-muted">
-                {total} job total
+                {total} job{total === 1 ? "" : " total"}
+                {cariAktif ? ` cocok dengan "${cariAktif}"` : ""}
                 {diperbarui ? `. Diperbarui ${diperbarui}` : ""}.
               </p>
             </div>
+            <label className="w-full text-sm font-medium text-ink sm:w-80">
+              Cari riwayat
+              <input
+                type="search"
+                value={cari}
+                maxLength={100}
+                onChange={(event) => gantiCari(event.target.value)}
+                placeholder="Job, wilayah, pengunggah, status..."
+                className="mt-1 min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
+              />
+            </label>
           </div>
 
           {galat ? (
@@ -352,25 +433,32 @@ export function RiwayatWorkspace() {
           ) : null}
 
           {!memuat && !galat && runs.length === 0 ? (
-            <EmptyState
-              judul={`Belum ada unggahan ${labelAktif}`}
-              aksi={
-                <TautanAksi href={jalurUnggah} ringkas>
-                  Buka halaman unggah
-                </TautanAksi>
-              }
-            >
-              {tipe === "A"
-                ? "Unggah peta SLS/SubSLS final untuk membuat job identifikasi pertama."
-                : "Selesaikan langkah 1, edit GPKG di QGIS, lalu unggah hasil perbaikan titik."}
-            </EmptyState>
+            cariAktif ? (
+              <EmptyState judul={`Tidak ada hasil untuk "${cariAktif}"`}>
+                Coba kata kunci lain, atau hapus pencarian untuk melihat semua job.
+              </EmptyState>
+            ) : (
+              <EmptyState
+                judul={`Belum ada unggahan ${labelAktif}`}
+                aksi={
+                  <TautanAksi href={jalurUnggah} ringkas>
+                    Buka halaman unggah
+                  </TautanAksi>
+                }
+              >
+                {tipe === "A"
+                  ? "Unggah peta SLS/SubSLS final untuk membuat job identifikasi pertama."
+                  : "Selesaikan langkah 1, edit GPKG di QGIS, lalu unggah hasil perbaikan titik."}
+              </EmptyState>
+            )
           ) : null}
 
           {urut.length > 0 ? (
             <div className="relative mt-3 max-h-[70vh] overflow-auto overscroll-contain">
               <table className="w-full min-w-[56rem] border-collapse text-[13px]">
                 <caption className="sr-only">
-                  Riwayat {labelAktif}. Klik judul kolom untuk mengurutkan.
+                  Riwayat {labelAktif}. Klik judul kolom untuk mengurutkan
+                  halaman ini.
                 </caption>
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-wide text-muted">
@@ -475,15 +563,70 @@ export function RiwayatWorkspace() {
             </div>
           ) : null}
 
-          {total > runs.length ? (
-            <p className="mt-bantuan text-xs leading-5 text-muted">
-              Menampilkan {runs.length} job terbaru dari {total} job.
-            </p>
+          {total > 0 ? (
+            <div className="mt-3 flex flex-col gap-2 border-t border-line pt-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs leading-5 text-muted">
+                Menampilkan {mulai}–{akhir} dari {total} job
+                {cariAktif ? ` untuk "${cariAktif}"` : ""}.
+              </p>
+              {totalHalaman > 1 ? (
+                <nav
+                  aria-label="Halaman riwayat"
+                  className="flex flex-wrap items-center gap-1"
+                >
+                  <TombolAksi
+                    varian="sekunder"
+                    className="min-h-8 px-3 text-xs"
+                    disabled={halaman === 0}
+                    onClick={() =>
+                      setHalaman((lama) => Math.max(0, lama - 1))
+                    }
+                  >
+                    Sebelumnya
+                  </TombolAksi>
+                  {nomorHalaman.map((nomor, index) =>
+                    nomor === null ? (
+                      <span
+                        key={`elipsis-${index}`}
+                        aria-hidden="true"
+                        className="px-1 text-xs text-muted"
+                      >
+                        …
+                      </span>
+                    ) : (
+                      <TombolAksi
+                        key={nomor}
+                        varian={nomor === halaman + 1 ? "utama" : "sekunder"}
+                        className="min-h-8 min-w-8 px-2 text-xs"
+                        aria-current={
+                          nomor === halaman + 1 ? "page" : undefined
+                        }
+                        onClick={() => setHalaman(nomor - 1)}
+                      >
+                        {nomor}
+                      </TombolAksi>
+                    ),
+                  )}
+                  <TombolAksi
+                    varian="sekunder"
+                    className="min-h-8 px-3 text-xs"
+                    disabled={halaman >= totalHalaman - 1}
+                    onClick={() =>
+                      setHalaman((lama) =>
+                        Math.min(totalHalaman - 1, lama + 1),
+                      )
+                    }
+                  >
+                    Berikutnya
+                  </TombolAksi>
+                </nav>
+              ) : null}
+            </div>
           ) : null}
 
           {aktif > aktifDiDaftar ? (
             <p className="mt-bantuan text-xs leading-5 text-muted">
-              {aktif - aktifDiDaftar} job aktif berada di luar daftar 20 terbaru.
+              {aktif - aktifDiDaftar} job aktif berada di halaman lain.
             </p>
           ) : null}
         </div>

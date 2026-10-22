@@ -45,6 +45,8 @@ type Sort = { kolom: KolomSort; arah: ArahSort };
 const LABEL_STATUS: Record<string, string> = {
   belum_b: "Belum Unggah Titik Hasil Perbaikan",
   berjalan: "Berjalan",
+  parsial: "B Parsial",
+  tidak_lengkap: "B Tidak Lengkap",
   selesai: "Selesai",
   mundur: "Mundur",
   tanpa_target: "Belum Unggah Peta SLS/SubSLS Final",
@@ -56,6 +58,9 @@ function gayaStatus(status: string): string {
       return "border-success/30 bg-success-soft text-success";
     case "berjalan":
       return "border-brand/25 bg-brand-soft text-brand-strong";
+    case "parsial":
+    case "tidak_lengkap":
+      return "border-accent/30 bg-accent-soft text-accent-strong";
     case "mundur":
       return "border-danger/30 bg-danger-soft text-danger";
     case "tanpa_target":
@@ -63,6 +68,17 @@ function gayaStatus(status: string): string {
     default:
       return "border-accent/30 bg-accent-soft text-accent-strong";
   }
+}
+
+function labelStatus(baris: TabulasiProgresBaris): string {
+  const label = LABEL_STATUS[baris.status] ?? baris.status;
+  if (
+    (baris.status === "parsial" || baris.status === "tidak_lengkap") &&
+    baris.cakupan_total > 0
+  ) {
+    return `${label} ${baris.cakupan_ada}/${baris.cakupan_total} ${baris.cakupan_unit ?? "wilayah"}`;
+  }
+  return label;
 }
 
 function formatPersen(nilai: number | null): string {
@@ -135,7 +151,7 @@ function nilaiSort(
     case "pengunggah":
       return baris.pengunggah ?? "";
     case "status":
-      return LABEL_STATUS[baris.status] ?? baris.status;
+      return labelStatus(baris);
     default:
       return "";
   }
@@ -203,6 +219,9 @@ function barisKosong(kode: string, nama: string): TabulasiProgresBaris {
     status: "tanpa_target",
     ada_b: false,
     pengunggah: null,
+    cakupan_ada: 0,
+    cakupan_total: 0,
+    cakupan_unit: null,
   };
 }
 
@@ -477,7 +496,7 @@ export function TabulasiRekap({
           },
           { value: baris.pengunggah ?? "-", ...kiri },
           {
-            value: LABEL_STATUS[baris.status] ?? baris.status,
+            value: labelStatus(baris),
             ...kiri,
           },
         ]);
@@ -803,7 +822,7 @@ export function TabulasiRekap({
                         <span
                           className={`inline-flex min-h-6 items-center whitespace-nowrap rounded-full border px-2 text-xs font-semibold ${gayaStatus(baris.status)}`}
                         >
-                          {LABEL_STATUS[baris.status] ?? baris.status}
+                          {labelStatus(baris)}
                         </span>
                       </td>
                     </tr>
@@ -837,8 +856,9 @@ export function TabulasiRekap({
 
         <p className="border-t border-line px-3 py-2 text-xs leading-5 text-muted sm:px-3">
           Klik baris kabupaten/kota untuk melihat kecamatan, lalu klik kecamatan
-          untuk melihat desa/kelurahan. Angka selesai = target dikurangi sisa;
-          nilai dapat turun bila muncul flag baru.
+          untuk melihat desa/kelurahan. Selesai dihitung per SubSLS; wilayah yang
+          belum ada di Proses B tetap dihitung belum selesai. Nilai dapat turun
+          bila muncul flag baru.
         </p>
       </div>
     </section>

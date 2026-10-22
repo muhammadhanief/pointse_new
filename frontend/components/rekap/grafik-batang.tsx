@@ -37,6 +37,8 @@ function warnaBatang(status: string): string {
     case "mundur":
       return "var(--danger)";
     case "belum_b":
+    case "parsial":
+    case "tidak_lengkap":
       return "var(--accent)";
     default:
       return "var(--line-strong)";

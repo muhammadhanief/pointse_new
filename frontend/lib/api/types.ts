@@ -185,6 +185,9 @@ export type TabulasiProgresBaris = {
   status: string;
   ada_b: boolean;
   pengunggah: string | null;
+  cakupan_ada: number;
+  cakupan_total: number;
+  cakupan_unit: string | null;
 };
 
 export type TabulasiProgres = {

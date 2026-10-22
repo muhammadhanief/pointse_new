@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect, select, text
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -22,6 +22,7 @@ from app.models import (
     GeotagMaster,
     RekapDesa,
     RekapKabupaten,
+    RekapSubsls,
     Run,
     TitikHasil,
     Wilayah,
@@ -262,8 +263,8 @@ def test_migrasi_0005_mengisi_rekap_dari_data_lama(tmp_path: Path) -> None:
 
     Data lama dibangun persis seperti skema 0004 (termasuk snapshot
     ``rekap_subsls``), lalu di-upgrade: angka rekapnya harus sama dengan snapshot
-    lama, ``titik_hasil`` dirampingkan, ``rekap_subsls`` dihapus, dan
-    ``runs.kdprov``/``tanggal_data`` diisi dari data yang ada.
+    lama, ``titik_hasil`` dirampingkan, ``rekap_subsls`` lama diganti tabel level
+    6 yang kosong, dan ``runs.kdprov``/``tanggal_data`` diisi dari data yang ada.
     """
     url = f"sqlite+pysqlite:///{tmp_path / 'migrasi_lama.sqlite3'}"
     konfigurasi = Config(str(AKAR_BACKEND / "alembic.ini"))
@@ -388,8 +389,12 @@ def test_migrasi_0005_mengisi_rekap_dari_data_lama(tmp_path: Path) -> None:
             assert tersisa == ["3", "4", "5"]
 
         sisa_tabel = set(inspect(mesin).get_table_names())
-        assert "rekap_subsls" not in sisa_tabel
-        assert {"rekap_desa", "rekap_kabupaten"} <= sisa_tabel
+        assert {"rekap_desa", "rekap_kabupaten", "rekap_subsls"} <= sisa_tabel
+        assert "level_6_full_code" in {
+            kolom["name"] for kolom in inspect(mesin).get_columns("rekap_subsls")
+        }
+        with Session(mesin) as sesi:
+            assert sesi.scalar(select(func.count()).select_from(RekapSubsls)) == 0
     finally:
         mesin.dispose()
 
@@ -414,9 +419,9 @@ def test_migrasi_alembic_sesuai_model(tmp_path: Path) -> None:
             "titik_hasil",
             "rekap_desa",
             "rekap_kabupaten",
+            "rekap_subsls",
             "geotag_master",
         } <= set(pemeriksa.get_table_names())
-        assert "rekap_subsls" not in set(pemeriksa.get_table_names())
 
         for tabel, model in (
             ("titik_hasil", TitikHasil),
@@ -424,6 +429,7 @@ def test_migrasi_alembic_sesuai_model(tmp_path: Path) -> None:
             ("wilayah", Wilayah),
             ("rekap_desa", RekapDesa),
             ("rekap_kabupaten", RekapKabupaten),
+            ("rekap_subsls", RekapSubsls),
             ("geotag_master", GeotagMaster),
         ):
             assert {kolom["name"] for kolom in pemeriksa.get_columns(tabel)} == set(
