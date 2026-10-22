@@ -330,6 +330,56 @@ def test_pulihkan_run_gagal(sesi: Session, siapkan: dict[str, Any]) -> None:
     assert not catatan
 
 
+def test_antrean_lebih_dulu_menolak_proses(
+    sesi: Session,
+    sesi_pabrik: sessionmaker[Session],
+    siapkan: dict[str, Any],
+) -> None:
+    """Job menunggu dengan id lebih kecil akan diklaim worker lebih dulu."""
+    run_a: Run = siapkan["run_a"]
+    run_b: Run = siapkan["run_b"]
+    run_a.status = STATUS_MENUNGGU
+    sesi.commit()
+    with pytest.raises(RuntimeError, match="lebih dulu"):
+        backfill.proses_ulang(
+            sesi_pabrik, siapkan["setelan"], run_b.id, pulihkan=True
+        )
+
+
+def test_antrean_setelahnya_tidak_menghalangi(
+    sesi: Session,
+    sesi_pabrik: sessionmaker[Session],
+    siapkan: dict[str, Any],
+) -> None:
+    """Job antre ber-id lebih besar dibiarkan untuk worker, backfill tetap jalan."""
+    run_b: Run = siapkan["run_b"]
+    sesi.add(
+        Run(
+            tipe=TIPE_A,
+            kdprov=KDPROV,
+            kdkab="3399",
+            status=STATUS_MENUNGGU,
+            tanggal_data=TANGGAL,
+            nama_file_input="x.geojson",
+            nama_file_peta="peta.geojson",
+            berkas_input="x.geojson",
+            berkas_peta="peta.geojson",
+        )
+    )
+    sesi.commit()
+
+    log: list[str] = []
+    kode = backfill.jalankan(
+        siapkan["setelan"],
+        run_ids=[run_b.id],
+        sesi_pabrik=sesi_pabrik,
+        log=log,
+    )
+    assert kode == 0, "\n".join(log)
+    sesi.expire_all()
+    assert sesi.get(Run, run_b.id).status == STATUS_SUKSES
+
+
 def test_pilih_run_mengikuti_aturan_tabulasi(sesi: Session) -> None:
     """A = sukses terbaru; B = sukses terbaru setelah A dengan sumber A sama."""
     def tambah(tipe: str, kode: str = KDKAB, sumber: int | None = None) -> Run:

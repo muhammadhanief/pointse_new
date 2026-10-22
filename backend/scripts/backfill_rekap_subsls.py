@@ -407,9 +407,13 @@ def proses_ulang(
         if run.status != STATUS_SUKSES and not pulihkan:
             raise RuntimeError(f"run {run_id} berstatus {run.status}, bukan sukses")
         lain = antrean_lain(sesi, kecuali=run_id)
-        if lain:
+        # Job antre yang id-nya lebih kecil akan diklaim lebih dulu oleh worker,
+        # jadi run ini belum bisa diproses. Antrean dengan id lebih besar aman:
+        # klaim memakai urutan id, dan tetap dikerjakan worker setelah backfill.
+        if lain and min(lain) < run_id:
             raise RuntimeError(
-                f"masih ada job menunggu {lain}; kosongkan antrean sebelum backfill"
+                f"ada job menunggu lebih dulu {sorted(lain)}; "
+                "kosongkan antrean sebelum backfill"
             )
         run.status = STATUS_MENUNGGU
         run.started_at = None
