@@ -24,6 +24,15 @@ Di server, jalankan sebagai ``pointse`` dan beri ``--env-file`` (jangan
     sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \\
         --env-file /etc/pointse/pointse.env --dry-run --kabupaten 3303
 
+Kalau proses terputus (Ctrl-C/koneksi putus), run yang sedang dikerjakan
+berstatus ``jalan`` dan snapshotnya belum lengkap. Pulihkan dengan memproses
+ulang run itu; hasil separuhnya dibersihkan worker lebih dulu::
+
+    sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \\
+        --env-file /etc/pointse/pointse.env --run 45 --jalankan
+
+Setelah run A pulih, lanjutkan ``--kabupaten 3303 --jalankan`` untuk run B.
+
 Syarat saat ``--jalankan``:
 
 - cadangkan basis data dan folder unggahan lebih dulu (``deploy/backup.sh``);
@@ -295,6 +304,79 @@ def format_rencana(rencana: list[Rencana]) -> list[str]:
     return baris
 
 
+@dataclass
+class Tugas:
+    """Satu run yang akan diproses ulang."""
+
+    run_id: int
+    tipe: str
+    kdprov: str
+    kdkab: str
+    nmkab: str | None
+    tanggal: date
+    status: str
+
+
+def tugas_dari_rencana(rencana: list[Rencana]) -> list[Tugas]:
+    """Daftar tugas dari rencana per kabupaten (status run sudah ``sukses``)."""
+    tugas: list[Tugas] = []
+    for satu in rencana:
+        if not satu.diproses:
+            continue
+        for run in satu.urutan:
+            tugas.append(
+                Tugas(
+                    run_id=run.id,
+                    tipe=run.tipe,
+                    kdprov=run.kdprov,
+                    kdkab=satu.kdkab,
+                    nmkab=satu.nmkab,
+                    tanggal=run.tanggal_data,
+                    status=run.status,
+                )
+            )
+    return tugas
+
+
+def tugas_dari_run(
+    sesi: Session, run_ids: list[int]
+) -> tuple[list[Tugas], list[str]]:
+    """Daftar tugas dari id run eksplisit, termasuk run yang terhenti/gagal."""
+    tugas: list[Tugas] = []
+    catatan: list[str] = []
+    for run_id in run_ids:
+        run = sesi.get(Run, run_id)
+        if run is None:
+            catatan.append(f"run #{run_id} tidak ditemukan")
+            continue
+        kdkab = kode_kabupaten(run)
+        hilang = berkas_hilang(run)
+        if hilang:
+            catatan.append(f"run #{run_id} dilewati: berkas hilang {hilang}")
+            continue
+        tugas.append(
+            Tugas(
+                run_id=run.id,
+                tipe=run.tipe,
+                kdprov=run.kdprov,
+                kdkab=kdkab,
+                nmkab=nama_kabupaten(sesi, run.kdprov, kdkab),
+                tanggal=run.tanggal_data,
+                status=run.status,
+            )
+        )
+    return tugas, catatan
+
+
+def format_tugas(tugas: list[Tugas]) -> list[str]:
+    """Baris laporan tugas eksplisit ``--run``."""
+    return [
+        f"#{satu.run_id} {satu.tipe} {satu.kdkab} {satu.nmkab or '?'} "
+        f"({_tanggal(satu.tanggal)}) status {satu.status} -> PULIHKAN"
+        for satu in tugas
+    ]
+
+
 def antrean_lain(sesi: Session, kecuali: int | None = None) -> list[int]:
     """ID job ``menunggu`` selain run yang sedang diproses."""
     kueri = select(Run.id).where(Run.status == STATUS_MENUNGGU)
@@ -304,16 +386,25 @@ def antrean_lain(sesi: Session, kecuali: int | None = None) -> list[int]:
 
 
 def proses_ulang(
-    sesi_pabrik: sessionmaker[Session], setelan: Settings, run_id: int
+    sesi_pabrik: sessionmaker[Session],
+    setelan: Settings,
+    run_id: int,
+    *,
+    pulihkan: bool = False,
 ) -> Run:
-    """Proses ulang satu run di tempat lewat jalur worker, lalu kembalikan run-nya."""
+    """Proses ulang satu run di tempat lewat jalur worker, lalu kembalikan run-nya.
+
+    ``pulihkan`` mengizinkan run yang tidak berstatus sukses (mis. ``jalan``
+    karena backfill sebelumnya terhenti di tengah jalan). Hasil separuhnya
+    dibersihkan worker sebelum diproses, jadi aman diulang.
+    """
     from app import worker as modul_worker
 
     with sesi_pabrik() as sesi:
         run = sesi.get(Run, run_id)
         if run is None:
             raise RuntimeError(f"run {run_id} tidak ditemukan")
-        if run.status != STATUS_SUKSES:
+        if run.status != STATUS_SUKSES and not pulihkan:
             raise RuntimeError(f"run {run_id} berstatus {run.status}, bukan sukses")
         lain = antrean_lain(sesi, kecuali=run_id)
         if lain:
@@ -432,10 +523,30 @@ def _parse_kabupaten(nilai: list[str] | None) -> list[str] | None:
     return kode or None
 
 
+def _parse_run(nilai: list[str] | None) -> list[int] | None:
+    """Pecah ``--run 45,49`` menjadi daftar id run (tanpa duplikat)."""
+    if not nilai:
+        return None
+    hasil: list[int] = []
+    for satu in nilai:
+        for bagian in satu.replace(";", ",").split(","):
+            bersih = bagian.strip().lstrip("#")
+            if not bersih:
+                continue
+            try:
+                angka = int(bersih)
+            except ValueError as galat:
+                raise ValueError(f"id run tidak valid: {bagian.strip()}") from galat
+            if angka not in hasil:
+                hasil.append(angka)
+    return hasil or None
+
+
 def jalankan(
     setelan: Settings | None = None,
     *,
     kabupaten: list[str] | None = None,
+    run_ids: list[int] | None = None,
     paksa: bool = False,
     sesi_pabrik: sessionmaker[Session] | None = None,
     log: list[str] | None = None,
@@ -449,13 +560,24 @@ def jalankan(
         laporan.append(teks)
         print(teks, flush=True)
 
-    with sesi_pabrik() as sesi:
-        rencana = susun_rencana(sesi, kabupaten=kabupaten, paksa=paksa)
-    for teks in format_rencana(rencana):
+    catatan: list[str] = []
+    if run_ids:
+        with sesi_pabrik() as sesi:
+            tugas, catatan = tugas_dari_run(sesi, run_ids)
+        for teks in format_tugas(tugas):
+            tulis(teks)
+        pulihkan = True
+    else:
+        with sesi_pabrik() as sesi:
+            rencana = susun_rencana(sesi, kabupaten=kabupaten, paksa=paksa)
+        for teks in format_rencana(rencana):
+            tulis(teks)
+        tugas = tugas_dari_rencana(rencana)
+        pulihkan = False
+    for teks in catatan:
         tulis(teks)
-    target = [satu for satu in rencana if satu.diproses]
-    if not target:
-        tulis("tidak ada kabupaten/kota yang perlu diproses ulang")
+    if not tugas:
+        tulis("tidak ada run yang perlu diproses ulang")
         return 0
 
     # Pegang kunci worker selama backfill supaya cron ``worker --once`` tidak
@@ -469,24 +591,30 @@ def jalankan(
         return 1
 
     gagal: list[str] = []
+    kabupaten_diproses: dict[tuple[str, str], str | None] = {}
     try:
-        for satu in target:
-            tulis(f"== {satu.kdkab} {satu.nmkab or ''} ==")
-            for run in satu.urutan:
-                tulis(f"  proses ulang run #{run.id} ({run.tipe}) ...")
-                try:
-                    hasil = proses_ulang(sesi_pabrik, setelan, run.id)
-                    with sesi_pabrik() as sesi:
-                        verifikasi = verifikasi_run(sesi, hasil)
-                    for teks in format_verifikasi(hasil, verifikasi):
-                        tulis(teks)
-                    if not all(item.cocok for item in verifikasi):
-                        gagal.append(f"{satu.kdkab} run #{run.id}: total tidak cocok")
-                except Exception as galat:  # noqa: BLE001 - lanjutkan kabupaten lain
-                    gagal.append(f"{satu.kdkab} run #{run.id}: {galat}")
-                    tulis(f"  GAGAL run #{run.id}: {galat}")
+        for satu in tugas:
+            tulis(
+                f"== run #{satu.run_id} ({satu.tipe}, {satu.kdkab} {satu.nmkab or ''}) =="
+            )
+            try:
+                hasil = proses_ulang(
+                    sesi_pabrik, setelan, satu.run_id, pulihkan=pulihkan
+                )
+                with sesi_pabrik() as sesi:
+                    verifikasi = verifikasi_run(sesi, hasil)
+                for teks in format_verifikasi(hasil, verifikasi):
+                    tulis(teks)
+                if not all(item.cocok for item in verifikasi):
+                    gagal.append(f"{satu.kdkab} run #{satu.run_id}: total tidak cocok")
+                else:
+                    kabupaten_diproses[(satu.kdprov, satu.kdkab)] = satu.nmkab
+            except Exception as galat:  # noqa: BLE001 - lanjutkan run lain
+                gagal.append(f"{satu.kdkab} run #{satu.run_id}: {galat}")
+                tulis(f"  GAGAL run #{satu.run_id}: {galat}")
+        for (kdprov, kdkab), _nmkab in kabupaten_diproses.items():
             with sesi_pabrik() as sesi:
-                for teks in ringkas_tabulasi(sesi, satu.kdprov, satu.kdkab):
+                for teks in ringkas_tabulasi(sesi, kdprov, kdkab):
                     tulis(teks)
     finally:
         kunci.lepas()
@@ -515,6 +643,14 @@ def main(argv: list[str] | None = None) -> int:
         help="batasi ke kode kabupaten/kota (4 digit atau 2 digit), boleh diulang",
     )
     parser.add_argument(
+        "--run",
+        action="append",
+        help=(
+            "proses ulang run tertentu (id, boleh diulang/comma), termasuk run "
+            "yang terhenti/gagal; dipakai untuk memulihkan backfill yang terputus"
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="hanya tampilkan rencana, tanpa mengubah data",
@@ -540,11 +676,24 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     kabupaten = _parse_kabupaten(args.kabupaten)
+    try:
+        run_ids = _parse_run(args.run)
+    except ValueError as galat:
+        parser.error(str(galat))
+    if kabupaten and run_ids:
+        parser.error("--kabupaten dan --run tidak boleh bersamaan")
     if args.jalankan:
-        return jalankan(kabupaten=kabupaten, paksa=args.paksa)
+        return jalankan(kabupaten=kabupaten, run_ids=run_ids, paksa=args.paksa)
 
     try:
         with get_sessionmaker()() as sesi:
+            if run_ids:
+                tugas, catatan = tugas_dari_run(sesi, run_ids)
+                for teks in format_tugas(tugas):
+                    print(teks)
+                for teks in catatan:
+                    print(teks)
+                return 0 if tugas else 1
             rencana = susun_rencana(sesi, kabupaten=kabupaten, paksa=args.paksa)
     except SQLAlchemyError as galat:
         print(f"gagal membaca basis data: {galat}")

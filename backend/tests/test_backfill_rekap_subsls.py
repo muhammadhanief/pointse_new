@@ -16,6 +16,8 @@ from app import layanan
 from app.config import Settings
 from app.models import (
     DASAR_TUGAS,
+    STATUS_GAGAL,
+    STATUS_JALAN,
     STATUS_MENUNGGU,
     STATUS_SUKSES,
     TIPE_A,
@@ -277,6 +279,55 @@ def test_muat_env_mempertahankan_json(monkeypatch: Any, tmp_path: Path) -> None:
     setelan = Settings(_env_file=None)
     assert setelan.cors_origins == ["https://contoh.test"]
     assert setelan.db_host == "127.0.0.9"
+
+
+def test_pulihkan_run_terhenti(
+    sesi: Session,
+    sesi_pabrik: sessionmaker[Session],
+    siapkan: dict[str, Any],
+) -> None:
+    """Backfill yang terputus (Ctrl-C) bisa dilanjutkan lewat ``--run``."""
+    run_a: Run = siapkan["run_a"]
+    run_a.status = STATUS_JALAN
+    run_a.pesan = "proses terputus"
+    sesi.commit()
+
+    # Tanpa izin pemulihan, run berstatus jalan ditolak.
+    with pytest.raises(RuntimeError):
+        backfill.proses_ulang(
+            sesi_pabrik, siapkan["setelan"], run_a.id, pulihkan=False
+        )
+
+    tugas, catatan = backfill.tugas_dari_run(sesi, [run_a.id, 999_999])
+    assert [satu.run_id for satu in tugas] == [run_a.id]
+    assert any("999999" in satu for satu in catatan)
+
+    log: list[str] = []
+    kode = backfill.jalankan(
+        siapkan["setelan"],
+        run_ids=[run_a.id],
+        sesi_pabrik=sesi_pabrik,
+        log=log,
+    )
+    assert kode == 0, "\n".join(log)
+
+    sesi.expire_all()
+    ulang = sesi.get(Run, run_a.id)
+    assert ulang is not None
+    assert ulang.status == STATUS_SUKSES
+    assert ulang.tanggal_data == TANGGAL
+    assert snapshot(sesi, run_a.id) == siapkan["asli_a"]
+
+
+def test_pulihkan_run_gagal(sesi: Session, siapkan: dict[str, Any]) -> None:
+    """Run ``gagal`` tetap bisa dipilih untuk dipulihkan lewat ``--run``."""
+    run_b: Run = siapkan["run_b"]
+    run_b.status = STATUS_GAGAL
+    run_b.pesan = "berkas rusak"
+    sesi.commit()
+    tugas, catatan = backfill.tugas_dari_run(sesi, [run_b.id])
+    assert [satu.run_id for satu in tugas] == [run_b.id]
+    assert not catatan
 
 
 def test_pilih_run_mengikuti_aturan_tabulasi(sesi: Session) -> None:

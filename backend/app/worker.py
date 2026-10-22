@@ -789,10 +789,11 @@ def _jaga_heartbeat(
                 if not hasil.rowcount:
                     return
         except OperationalError as galat:
-            # 1205 = lock wait timeout; wajar saat batch besar masih memegang
-            # lock baris runs. Jangan banjiri log service tiap 15 detik.
+            # 1205 = lock wait timeout, 1213 = deadlock; wajar saat batch besar
+            # masih memegang lock baris runs. Jangan banjiri log tiap 15 detik;
+            # batch utama tetap memperbarui heartbeat.
             kode = getattr(getattr(galat, "orig", None), "args", (None,))[0]
-            if kode == 1205:
+            if kode in (1205, 1213):
                 logger.debug("heartbeat job %s tertunda: %s", run_id, galat)
             else:
                 logger.warning("heartbeat job %s gagal: %s", run_id, galat)

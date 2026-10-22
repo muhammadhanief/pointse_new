@@ -167,6 +167,17 @@ bash membuang tanda kutip di dalam nilai, sehingga `CORS_ORIGINS` yang berformat
 JSON ditolak pydantic-settings. Pakai `--env-file` seperti contoh di atas.
 Jalankan sebagai pengguna `pointse` supaya berkas hasil tidak menjadi milik root.
 
+Jalankan di `tmux`/`nohup`: Proses A Purbalingga bisa puluhan menit. Kalau
+proses terputus, run yang sedang dikerjakan berstatus `jalan` dengan hasil
+separuh. Pulihkan run itu lewat `--run`, lalu lanjutkan seperti biasa:
+
+```bash
+sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
+  --env-file /etc/pointse/pointse.env --run 45 --jalankan
+sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
+  --env-file /etc/pointse/pointse.env --kabupaten 3303 --jalankan
+```
+
 Skrip melewati kabupaten/kota yang berkas mentahnya sudah dipangkas (tidak bisa
 dibangun ulang) dan melaporkannya; kabupaten seperti itu perlu unggah ulang.
 Setiap run diverifikasi: total `rekap_subsls` harus sama dengan
