@@ -52,8 +52,10 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from sqlalchemy import func, or_, select
@@ -69,6 +71,7 @@ from app.kunci import KunciBerkas, jalur_kunci  # noqa: E402
 from app.models import (  # noqa: E402
     DASAR_POSISI,
     DASAR_TUGAS,
+    STATUS_JALAN,
     STATUS_MENUNGGU,
     STATUS_SUKSES,
     TIPE_A,
@@ -77,6 +80,7 @@ from app.models import (  # noqa: E402
     RekapSubsls,
     Run,
     Wilayah,
+    sekarang,
 )
 
 #: Dua dasar rekap; snapshot diisi untuk keduanya.
@@ -388,6 +392,50 @@ def format_tugas(tugas: list[Tugas]) -> list[str]:
     ]
 
 
+def jumlah_aktif(sesi: Session) -> tuple[int, int]:
+    """Jumlah job ``menunggu`` dan ``jalan`` (antrean yang belum selesai)."""
+    menunggu = int(
+        sesi.scalar(
+            select(func.count()).select_from(Run).where(Run.status == STATUS_MENUNGGU)
+        )
+        or 0
+    )
+    jalan = int(
+        sesi.scalar(
+            select(func.count()).select_from(Run).where(Run.status == STATUS_JALAN)
+        )
+        or 0
+    )
+    return menunggu, jalan
+
+
+def tunggu_antrean_kosong(
+    sesi_pabrik: sessionmaker[Session],
+    *,
+    interval: float = 30.0,
+    tulis: Callable[[str], None] | None = None,
+    maks_tunggu: float = 12 * 3600,
+) -> bool:
+    """Tunggu sampai tidak ada job ``menunggu``/``jalan``; ``False`` bila kehabisan waktu.
+
+    Dipakai untuk memisahkan gelombang: gelombang B baru diantrekan setelah
+    seluruh gelombang A selesai, tanpa perlu menunggu di terminal.
+    """
+    tulis = tulis or (lambda teks: print(teks, flush=True))
+    mulai = time.monotonic()
+    while True:
+        with sesi_pabrik() as sesi:
+            menunggu, jalan = jumlah_aktif(sesi)
+        if menunggu == 0 and jalan == 0:
+            tulis("  antrean kosong; melanjutkan")
+            return True
+        if time.monotonic() - mulai > maks_tunggu:
+            tulis(f"  BATAL menunggu: masih {menunggu} menunggu / {jalan} jalan")
+            return False
+        tulis(f"  menunggu antrean kosong: {menunggu} menunggu, {jalan} jalan")
+        time.sleep(interval)
+
+
 def antrean_lain(sesi: Session, kecuali: int | None = None) -> list[int]:
     """ID job ``menunggu`` selain run yang sedang diproses."""
     kueri = select(Run.id).where(Run.status == STATUS_MENUNGGU)
@@ -396,12 +444,35 @@ def antrean_lain(sesi: Session, kecuali: int | None = None) -> list[int]:
     return sorted(int(satu) for satu in sesi.scalars(kueri).all())
 
 
-def siapkan_antrean(sesi_pabrik: sessionmaker[Session], run_id: int) -> str:
-    """Kembalikan satu run ke antrean ``menunggu`` tanpa memprosesnya."""
+#: Job ``jalan`` dianggap masih hidup bila heartbeat-nya lebih baru dari ini.
+BATAS_HIDUP_MENIT = 10
+
+
+def _masih_hidup(run: Run) -> bool:
+    """True kalau job ``jalan`` masih diperbarui worker (heartbeat baru)."""
+    jejak = run.heartbeat_at or run.started_at
+    if jejak is None:
+        return False
+    return jejak >= sekarang() - timedelta(minutes=BATAS_HIDUP_MENIT)
+
+
+def siapkan_antrean(
+    sesi_pabrik: sessionmaker[Session], run_id: int, *, tolak_jalan: bool = True
+) -> str:
+    """Kembalikan satu run ke antrean ``menunggu`` tanpa memprosesnya.
+
+    ``tolak_jalan`` mencegah run yang sedang dikerjakan worker diubah statusnya
+    (bisa menyebabkan dua pemrosesan bersamaan). Mode pemulihan yang memegang
+    kunci worker memakai ``tolak_jalan=False``.
+    """
     with sesi_pabrik() as sesi:
         run = sesi.get(Run, run_id)
         if run is None:
             raise RuntimeError(f"run {run_id} tidak ditemukan")
+        if tolak_jalan and run.status == STATUS_JALAN and _masih_hidup(run):
+            raise RuntimeError(
+                f"run {run_id} sedang diproses worker; tunggu sampai selesai"
+            )
         run.status = STATUS_MENUNGGU
         run.started_at = None
         run.heartbeat_at = None
@@ -441,7 +512,7 @@ def proses_ulang(
                 f"ada job menunggu lebih dulu {sorted(lain)}; "
                 "kosongkan antrean sebelum backfill"
             )
-    siapkan_antrean(sesi_pabrik, run_id)
+    siapkan_antrean(sesi_pabrik, run_id, tolak_jalan=not pulihkan)
 
     if not modul_worker.proses_satu_job(sesi_pabrik, setelan):
         raise RuntimeError(f"run {run_id} tidak terklaim worker")
@@ -634,6 +705,8 @@ def jalankan(
     paksa: bool = False,
     antrekan: bool = False,
     tipe: str | None = None,
+    tunggu: bool = False,
+    interval_tunggu: float = 30.0,
     sesi_pabrik: sessionmaker[Session] | None = None,
     log: list[str] | None = None,
 ) -> int:
@@ -645,6 +718,13 @@ def jalankan(
     def tulis(teks: str) -> None:
         laporan.append(teks)
         print(teks, flush=True)
+
+    if tunggu and not run_ids:
+        tulis("menunggu antrean selesai sebelum menyusun rencana ...")
+        if not tunggu_antrean_kosong(
+            sesi_pabrik, interval=interval_tunggu, tulis=tulis
+        ):
+            return 1
 
     catatan: list[str] = []
     if run_ids:
@@ -669,19 +749,14 @@ def jalankan(
         return 0
 
     if antrekan:
-        kunci = KunciBerkas(jalur_kunci(setelan))
-        if not kunci.ambil():
-            tulis(
-                f"BATAL: worker masih berjalan (kunci {jalur_kunci(setelan)}); "
-                "hentikan dulu service worker"
-            )
-            return 1
-        kunci.lepas()
+        # Tidak perlu memegang kunci worker: mengantrekan hanya mengubah status
+        # run yang belum dikerjakan, dan service worker boleh tetap hidup supaya
+        # langsung mengambil job setelah statusnya berubah.
         gagal: list[str] = []
         for satu in tugas:
             try:
                 siapkan_antrean(sesi_pabrik, satu.run_id)
-                tulis(f"  run #{satu.run_id} ({satu.tipe}) masuk antrean menunggu")
+                tulis(f"  run #{satu.run_id} ({satu.tipe}) masuk antrean")
             except Exception as galat:  # noqa: BLE001 - laporkan semua run
                 gagal.append(f"run #{satu.run_id}: {galat}")
                 tulis(f"  GAGAL mengantrekan run #{satu.run_id}: {galat}")
@@ -690,9 +765,8 @@ def jalankan(
                 tulis(f"  - {satu}")
             return 2
         tulis(
-            "selesai: run diantrekan. Jalankan "
-            "`sudo systemctl start pointse-worker`; worker akan memproses "
-            "berurutan dan mengisi snapshot level 6 sendiri."
+            f"selesai: {len(tugas)} run diantrekan. Worker memproses menurut id "
+            "run dan mengisi snapshot level 6 sendiri; pantau dengan --periksa."
         )
         return 0
 
@@ -787,6 +861,20 @@ def main(argv: list[str] | None = None) -> int:
         help="tampilkan status snapshot level 6 semua kabupaten/kota (baca saja)",
     )
     parser.add_argument(
+        "--tunggu",
+        action="store_true",
+        help=(
+            "tunggu sampai antrean worker kosong sebelum menyusun rencana; "
+            "dipakai untuk mengantrekan gelombang B setelah gelombang A selesai"
+        ),
+    )
+    parser.add_argument(
+        "--interval-tunggu",
+        type=float,
+        default=30.0,
+        help="jeda pemeriksaan antrean saat --tunggu (detik)",
+    )
+    parser.add_argument(
         "--jalankan",
         action="store_true",
         help="benar-benar memproses ulang (tanpa ini hanya laporan)",
@@ -822,7 +910,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--kabupaten dan --run tidak boleh bersamaan")
     if args.jalankan:
         return jalankan(
-            kabupaten=kabupaten, run_ids=run_ids, paksa=args.paksa, tipe=args.tipe
+            kabupaten=kabupaten,
+            run_ids=run_ids,
+            paksa=args.paksa,
+            tipe=args.tipe,
+            tunggu=args.tunggu,
+            interval_tunggu=args.interval_tunggu,
         )
     if args.antrekan:
         return jalankan(
@@ -831,6 +924,8 @@ def main(argv: list[str] | None = None) -> int:
             paksa=args.paksa,
             antrekan=True,
             tipe=args.tipe,
+            tunggu=args.tunggu,
+            interval_tunggu=args.interval_tunggu,
         )
     if args.periksa:
         try:

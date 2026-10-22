@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,7 @@ from app.models import (
     TIPE_B,
     RekapSubsls,
     Run,
+    sekarang,
 )
 from app.worker import proses_satu_job
 from scripts import backfill_rekap_subsls as backfill
@@ -389,6 +390,8 @@ def test_antrekan_mengembalikan_ke_menunggu(
     run_a: Run = siapkan["run_a"]
     run_a.status = STATUS_JALAN
     run_a.pesan = "terputus"
+    # Heartbeat lama = job ditinggalkan proses yang mati, aman diantrekan ulang.
+    run_a.heartbeat_at = sekarang() - timedelta(hours=1)
     sesi.commit()
 
     log: list[str] = []
@@ -483,6 +486,51 @@ def test_tipe_a_tidak_mengulang_snapshot_yang_ada(
     sesi.expire_all()
     assert sesi.get(Run, siapkan["run_a"].id).status == STATUS_SUKSES
     assert sesi.get(Run, siapkan["run_b"].id).status == STATUS_SUKSES
+
+
+def test_antrekan_menolak_run_yang_sedang_jalan(
+    sesi: Session,
+    sesi_pabrik: sessionmaker[Session],
+    siapkan: dict[str, Any],
+) -> None:
+    """Run ``jalan`` yang heartbeat-nya baru tidak boleh diubah jadi menunggu."""
+    run_a: Run = siapkan["run_a"]
+    run_a.status = STATUS_JALAN
+    run_a.heartbeat_at = sekarang()
+    sesi.commit()
+    with pytest.raises(RuntimeError, match="sedang diproses"):
+        backfill.siapkan_antrean(sesi_pabrik, run_a.id)
+
+
+def test_tunggu_antrean_kosong(sesi_pabrik: sessionmaker[Session], sesi: Session) -> None:
+    """``--tunggu`` menunggu selama ada job, lalu lanjut saat kosong."""
+    run = Run(
+        tipe=TIPE_A,
+        kdprov=KDPROV,
+        kdkab="3399",
+        status=STATUS_JALAN,
+        tanggal_data=TANGGAL,
+        nama_file_input="x.geojson",
+        nama_file_peta="p.geojson",
+        berkas_input="x.geojson",
+        berkas_peta="p.geojson",
+    )
+    sesi.add(run)
+    sesi.commit()
+
+    log: list[str] = []
+    assert backfill.jumlah_aktif(sesi) == (0, 1)
+    assert not backfill.tunggu_antrean_kosong(
+        sesi_pabrik, interval=0.01, tulis=log.append, maks_tunggu=0.05
+    )
+
+    run.status = STATUS_SUKSES
+    sesi.commit()
+    log.clear()
+    assert backfill.tunggu_antrean_kosong(
+        sesi_pabrik, interval=0.01, tulis=log.append
+    )
+    assert any("antrean kosong" in satu for satu in log)
 
 
 def test_pilih_run_mengikuti_aturan_tabulasi(sesi: Session) -> None:

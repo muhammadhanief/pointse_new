@@ -153,11 +153,9 @@ sudo deploy/backup.sh
 sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
   --env-file /etc/pointse/pointse.env --dry-run --kabupaten 3303
 
-# 2) Hentikan worker agar run yang dipilih pasti diproses (antrean harus kosong)
-sudo systemctl stop pointse-worker
+# 2) Antrekan ke worker (worker tetap hidup; tidak perlu stop/start)
 sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
-  --env-file /etc/pointse/pointse.env --kabupaten 3303 --jalankan
-sudo systemctl start pointse-worker
+  --env-file /etc/pointse/pointse.env --kabupaten 3303 --antrekan
 
 # 3) Setelah angka Purbalingga benar, ulangi tanpa --kabupaten untuk semua
 ```
@@ -167,21 +165,19 @@ bash membuang tanda kutip di dalam nilai, sehingga `CORS_ORIGINS` yang berformat
 JSON ditolak pydantic-settings. Pakai `--env-file` seperti contoh di atas.
 Jalankan sebagai pengguna `pointse` supaya berkas hasil tidak menjadi milik root.
 
-Jalankan di `tmux`/`nohup` bila memakai `--jalankan`: Proses A Purbalingga bisa
-puluhan menit. Cara yang lebih nyaman adalah `--antrekan`: run dipulihkan ke
-antrean, lalu service worker yang memproses (progress terlihat di halaman Job),
-sehingga tidak perlu menunggu di terminal:
+Cara yang disarankan adalah `--antrekan`: run dikembalikan ke antrean, lalu
+service worker yang memproses (progress terlihat di halaman Job), sehingga tidak
+perlu menunggu di terminal dan worker tidak perlu dimatikan:
 
 ```bash
-sudo systemctl stop pointse-worker
 sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
   --env-file /etc/pointse/pointse.env --run 45,49 --antrekan
-sudo systemctl start pointse-worker
 ```
 
-Worker memproses berurutan menurut id (A dulu, lalu B) dan mengisi snapshot
-level 6 sendiri saat sukses. Kalau proses terputus saat `--jalankan`, ulangi
-dengan `--run <id> --antrekan`.
+Worker memproses menurut id run dan mengisi snapshot level 6 sendiri saat
+sukses. `--jalankan` hanya untuk memproses langsung di depan layar; mode itu
+memegang kunci worker sehingga service harus berhenti dulu (pakai `tmux`/`nohup`
+karena bisa puluhan menit).
 
 ### 6b. Backfill semua kabupaten/kota (dua gelombang)
 
@@ -190,25 +186,26 @@ antrekan **semua B terakhir**. Run yang snapshot level 6-nya sudah ada otomatis
 dilewati (kecuali `--paksa`).
 
 ```bash
-# Gelombang 1: semua A terakhir
+# Gelombang 1: semua A terakhir (worker tetap hidup)
 sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
   --env-file /etc/pointse/pointse.env --dry-run --tipe A
-sudo systemctl stop pointse-worker
 sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
   --env-file /etc/pointse/pointse.env --tipe A --antrekan
-sudo systemctl start pointse-worker
-# tunggu sampai semua A sukses (pantau_worker.py atau halaman Job)
 
-# Gelombang 2: semua B terakhir
-sudo systemctl stop pointse-worker
-sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
-  --env-file /etc/pointse/pointse.env --tipe B --antrekan
-sudo systemctl start pointse-worker
+# Gelombang 2: semua B terakhir, otomatis menunggu gelombang A selesai
+sudo -u pointse nohup .venv/bin/python scripts/backfill_rekap_subsls.py \
+  --env-file /etc/pointse/pointse.env --tipe B --antrekan --tunggu \
+  > /home/pointse-data/backfill-b.log 2>&1 &
 
-# Periksa hasil (baca saja)
+# Periksa hasil (baca saja, kapan saja)
 sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
   --env-file /etc/pointse/pointse.env --periksa
 ```
+
+`--tunggu` memeriksa antrean tiap `--interval-tunggu` detik (default 30) dan
+baru mengantrekan B setelah tidak ada job `menunggu`/`jalan`. Aman ditinggal:
+worker tidak perlu dihentikan, dan `--antrekan` menolak run yang sedang
+dikerjakan (heartbeat baru) supaya tidak terjadi pemrosesan ganda.
 
 `--periksa` menampilkan run **terakhir** per tipe beserta statusnya. Run yang
 sedang menunggu/diproses wajar masih `snapshot=0`; laporan baru bermakna setelah
