@@ -136,6 +136,37 @@ cd /opt/pointse/backend
 Atau jalankan `deploy/deploy.sh` (pull, install, migrasi, restart). Pastikan
 script executable: `chmod +x deploy/deploy.sh deploy/backup.sh`.
 
+## 6a. Backfill snapshot level 6 (sekali setelah migrasi 0012)
+
+Migrasi `0012` menambah tabel `rekap_subsls`. Run yang diproses sebelum migrasi
+belum punya snapshot level 6, sehingga tabulasi progres belum bisa menghitung
+target per SubSLS. Isi snapshot itu dengan memproses ulang **run A terbaru dan
+run B terbaru setelahnya** dari berkas mentah yang masih tersimpan; `runs.id`
+dan `runs.tanggal_data` tidak berubah.
+
+```bash
+cd /opt/pointse/backend
+# 0) Cadangkan DB + folder unggahan; pemrosesan ulang menghapus hasil lama run
+sudo deploy/backup.sh
+
+# 1) Lihat rencana (tidak mengubah data); uji satu kabupaten dulu, mis. Purbalingga
+.venv/bin/python scripts/backfill_rekap_subsls.py --dry-run --kabupaten 3303
+
+# 2) Hentikan worker agar run yang dipilih pasti diproses (antrean harus kosong)
+sudo systemctl stop pointse-worker
+.venv/bin/python scripts/backfill_rekap_subsls.py --kabupaten 3303 --jalankan
+sudo systemctl start pointse-worker
+
+# 3) Setelah angka Purbalingga benar, ulangi tanpa --kabupaten untuk semua
+```
+
+Skrip melewati kabupaten/kota yang berkas mentahnya sudah dipangkas (tidak bisa
+dibangun ulang) dan melaporkannya; kabupaten seperti itu perlu unggah ulang.
+Setiap run diverifikasi: total `rekap_subsls` harus sama dengan
+`rekap_kabupaten` untuk dasar `tugas` dan `posisi`. Jalankan di luar jam unggah
+karena satu run bisa memakan waktu dan RAM seperti pemrosesan biasa
+(`WORKER_MEM_BUDGET_MB` tetap berlaku).
+
 ## 7. Backup
 
 Tambahkan cron harian:
