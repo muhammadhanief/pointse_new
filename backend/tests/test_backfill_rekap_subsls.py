@@ -380,6 +380,35 @@ def test_antrean_setelahnya_tidak_menghalangi(
     assert sesi.get(Run, run_b.id).status == STATUS_SUKSES
 
 
+def test_antrekan_mengembalikan_ke_menunggu(
+    sesi: Session,
+    sesi_pabrik: sessionmaker[Session],
+    siapkan: dict[str, Any],
+) -> None:
+    """Mode ``--antrekan`` hanya mengubah status; worker service yang memproses."""
+    run_a: Run = siapkan["run_a"]
+    run_a.status = STATUS_JALAN
+    run_a.pesan = "terputus"
+    sesi.commit()
+
+    log: list[str] = []
+    kode = backfill.jalankan(
+        siapkan["setelan"],
+        run_ids=[run_a.id],
+        antrekan=True,
+        sesi_pabrik=sesi_pabrik,
+        log=log,
+    )
+    assert kode == 0, "\n".join(log)
+    sesi.expire_all()
+    ulang = sesi.get(Run, run_a.id)
+    assert ulang is not None
+    assert ulang.status == STATUS_MENUNGGU
+    assert ulang.pesan is None
+    # Belum diproses: snapshot tetap kosong sampai worker jalan.
+    assert backfill.jumlah_snapshot(sesi, run_a.id) == 0
+
+
 def test_pilih_run_mengikuti_aturan_tabulasi(sesi: Session) -> None:
     """A = sukses terbaru; B = sukses terbaru setelah A dengan sumber A sama."""
     def tambah(tipe: str, kode: str = KDKAB, sumber: int | None = None) -> Run:

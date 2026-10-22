@@ -167,16 +167,21 @@ bash membuang tanda kutip di dalam nilai, sehingga `CORS_ORIGINS` yang berformat
 JSON ditolak pydantic-settings. Pakai `--env-file` seperti contoh di atas.
 Jalankan sebagai pengguna `pointse` supaya berkas hasil tidak menjadi milik root.
 
-Jalankan di `tmux`/`nohup`: Proses A Purbalingga bisa puluhan menit. Kalau
-proses terputus, run yang sedang dikerjakan berstatus `jalan` dengan hasil
-separuh. Pulihkan run itu lewat `--run`, lalu lanjutkan seperti biasa:
+Jalankan di `tmux`/`nohup` bila memakai `--jalankan`: Proses A Purbalingga bisa
+puluhan menit. Cara yang lebih nyaman adalah `--antrekan`: run dipulihkan ke
+antrean, lalu service worker yang memproses (progress terlihat di halaman Job),
+sehingga tidak perlu menunggu di terminal:
 
 ```bash
+sudo systemctl stop pointse-worker
 sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
-  --env-file /etc/pointse/pointse.env --run 45 --jalankan
-sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
-  --env-file /etc/pointse/pointse.env --kabupaten 3303 --jalankan
+  --env-file /etc/pointse/pointse.env --run 45,49 --antrekan
+sudo systemctl start pointse-worker
 ```
+
+Worker memproses berurutan menurut id (A dulu, lalu B) dan mengisi snapshot
+level 6 sendiri saat sukses. Kalau proses terputus saat `--jalankan`, ulangi
+dengan `--run <id> --antrekan`.
 
 Skrip melewati kabupaten/kota yang berkas mentahnya sudah dipangkas (tidak bisa
 dibangun ulang) dan melaporkannya; kabupaten seperti itu perlu unggah ulang.

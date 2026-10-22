@@ -385,6 +385,21 @@ def antrean_lain(sesi: Session, kecuali: int | None = None) -> list[int]:
     return sorted(int(satu) for satu in sesi.scalars(kueri).all())
 
 
+def siapkan_antrean(sesi_pabrik: sessionmaker[Session], run_id: int) -> str:
+    """Kembalikan satu run ke antrean ``menunggu`` tanpa memprosesnya."""
+    with sesi_pabrik() as sesi:
+        run = sesi.get(Run, run_id)
+        if run is None:
+            raise RuntimeError(f"run {run_id} tidak ditemukan")
+        run.status = STATUS_MENUNGGU
+        run.started_at = None
+        run.heartbeat_at = None
+        run.finished_at = None
+        run.pesan = None
+        sesi.commit()
+        return run.status
+
+
 def proses_ulang(
     sesi_pabrik: sessionmaker[Session],
     setelan: Settings,
@@ -415,12 +430,7 @@ def proses_ulang(
                 f"ada job menunggu lebih dulu {sorted(lain)}; "
                 "kosongkan antrean sebelum backfill"
             )
-        run.status = STATUS_MENUNGGU
-        run.started_at = None
-        run.heartbeat_at = None
-        run.finished_at = None
-        run.pesan = None
-        sesi.commit()
+    siapkan_antrean(sesi_pabrik, run_id)
 
     if not modul_worker.proses_satu_job(sesi_pabrik, setelan):
         raise RuntimeError(f"run {run_id} tidak terklaim worker")
@@ -552,6 +562,7 @@ def jalankan(
     kabupaten: list[str] | None = None,
     run_ids: list[int] | None = None,
     paksa: bool = False,
+    antrekan: bool = False,
     sesi_pabrik: sessionmaker[Session] | None = None,
     log: list[str] | None = None,
 ) -> int:
@@ -582,6 +593,34 @@ def jalankan(
         tulis(teks)
     if not tugas:
         tulis("tidak ada run yang perlu diproses ulang")
+        return 0
+
+    if antrekan:
+        kunci = KunciBerkas(jalur_kunci(setelan))
+        if not kunci.ambil():
+            tulis(
+                f"BATAL: worker masih berjalan (kunci {jalur_kunci(setelan)}); "
+                "hentikan dulu service worker"
+            )
+            return 1
+        kunci.lepas()
+        gagal: list[str] = []
+        for satu in tugas:
+            try:
+                siapkan_antrean(sesi_pabrik, satu.run_id)
+                tulis(f"  run #{satu.run_id} ({satu.tipe}) masuk antrean menunggu")
+            except Exception as galat:  # noqa: BLE001 - laporkan semua run
+                gagal.append(f"run #{satu.run_id}: {galat}")
+                tulis(f"  GAGAL mengantrekan run #{satu.run_id}: {galat}")
+        if gagal:
+            for satu in gagal:
+                tulis(f"  - {satu}")
+            return 2
+        tulis(
+            "selesai: run diantrekan. Jalankan "
+            "`sudo systemctl start pointse-worker`; worker akan memproses "
+            "berurutan dan mengisi snapshot level 6 sendiri."
+        )
         return 0
 
     # Pegang kunci worker selama backfill supaya cron ``worker --once`` tidak
@@ -669,9 +708,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="benar-benar memproses ulang (tanpa ini hanya laporan)",
     )
+    parser.add_argument(
+        "--antrekan",
+        action="store_true",
+        help=(
+            "kembalikan run yang dipilih ke antrean menunggu lalu keluar; "
+            "service worker yang memproses (tidak perlu menunggu di terminal)"
+        ),
+    )
     args = parser.parse_args(argv)
-    if args.dry_run and args.jalankan:
-        parser.error("--dry-run dan --jalankan tidak boleh bersamaan")
+    if args.dry_run and (args.jalankan or args.antrekan):
+        parser.error("--dry-run tidak boleh digabung dengan --jalankan/--antrekan")
+    if args.jalankan and args.antrekan:
+        parser.error("--jalankan dan --antrekan tidak boleh bersamaan")
     if args.env_file:
         try:
             muat_env(args.env_file)
@@ -688,6 +737,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--kabupaten dan --run tidak boleh bersamaan")
     if args.jalankan:
         return jalankan(kabupaten=kabupaten, run_ids=run_ids, paksa=args.paksa)
+    if args.antrekan:
+        return jalankan(
+            kabupaten=kabupaten,
+            run_ids=run_ids,
+            paksa=args.paksa,
+            antrekan=True,
+        )
 
     try:
         with get_sessionmaker()() as sesi:
