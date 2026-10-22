@@ -443,6 +443,26 @@ def test_periksa_menampilkan_snapshot(
     assert "snapshot=0" in baris[0]
 
 
+def test_periksa_tetap_menunjuk_run_terbaru_saat_diantrekan(
+    sesi: Session,
+    sesi_pabrik: sessionmaker[Session],
+    siapkan: dict[str, Any],
+) -> None:
+    """Run yang sedang menunggu (antrean backfill) tetap ditampilkan, bukan run lama."""
+    run_a: Run = siapkan["run_a"]
+    backfill.jalankan(
+        siapkan["setelan"],
+        run_ids=[run_a.id],
+        antrekan=True,
+        sesi_pabrik=sesi_pabrik,
+        log=[],
+    )
+    sesi.expire_all()
+    baris = backfill.periksa_semua(sesi, [KDKAB])
+    assert len(baris) == 1
+    assert f"A#{run_a.id} menunggu" in baris[0]
+
+
 def test_tipe_a_tidak_mengulang_snapshot_yang_ada(
     sesi: Session,
     sesi_pabrik: sessionmaker[Session],

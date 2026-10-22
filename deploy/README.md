@@ -210,6 +210,11 @@ sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
   --env-file /etc/pointse/pointse.env --periksa
 ```
 
+`--periksa` menampilkan run **terakhir** per tipe beserta statusnya. Run yang
+sedang menunggu/diproses wajar masih `snapshot=0`; laporan baru bermakna setelah
+antrean kosong. Baris `B#49 sebelum A#112: perlu B baru` berarti B itu dibuat
+sebelum target A terbaru sehingga harus diunggah ulang, bukan dihitung mundur.
+
 Kabupaten/kota tanpa run A sukses atau yang berkas mentahnya sudah dipangkas
 dilewati dan dilaporkan; yang seperti itu perlu unggah ulang. Bisa juga tanpa
 `--tipe` untuk mengantrekan A dan B sekaligus per kabupaten, tetapi urutan

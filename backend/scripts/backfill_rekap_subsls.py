@@ -538,34 +538,61 @@ def ringkas_tabulasi(sesi: Session, kdprov: str, kdkab: str) -> list[str]:
     return keluaran
 
 
+def run_terakhir(
+    sesi: Session, kdprov: str, kdkab: str, tipe: str
+) -> Run | None:
+    """Run terakhir satu tipe tanpa memandang status (termasuk antrean backfill)."""
+    return sesi.scalars(
+        select(Run)
+        .where(
+            Run.tipe == tipe,
+            Run.kdprov == kdprov,
+            Run.kdkab.in_(_kandidat_kode(kdprov, kdkab)),
+        )
+        .order_by(Run.id.desc())
+        .limit(1)
+    ).first()
+
+
+def _ringkas_satu(sesi: Session, label: str, run: Run | None) -> str:
+    """Keterangan satu run: id, status, jumlah snapshot, hasil verifikasi."""
+    if run is None:
+        return f"{label}=-"
+    teks = f"{label}#{run.id} {run.status}"
+    jumlah = jumlah_snapshot(sesi, run.id)
+    if jumlah == 0:
+        return f"{teks} snapshot=0"
+    cocok = all(satu.cocok for satu in verifikasi_run(sesi, run))
+    return f"{teks} snapshot={jumlah} {'cocok' if cocok else 'TIDAK COCOK'}"
+
+
 def periksa_semua(
     sesi: Session, kabupaten: list[str] | None = None
 ) -> list[str]:
-    """Laporan status snapshot level 6 untuk semua kabupaten/kota (baca saja)."""
+    """Laporan status snapshot level 6 untuk semua kabupaten/kota (baca saja).
+
+    Memakai run **terakhir** per tipe tanpa memandang status, supaya saat
+    antrean backfill masih berisi run ``menunggu`` laporan tidak menunjuk run
+    lama (yang membuat angka terlihat mundur).
+    """
     saring = {_kode_filter(kode) for kode in kabupaten} if kabupaten else None
     baris: list[str] = []
     for kdprov, kdkab in daftar_kabupaten(sesi):
         if saring is not None and kdkab not in saring:
             continue
-        run_a, run_b = pilih_run(sesi, kdprov, kdkab)
         nmkab = nama_kabupaten(sesi, kdprov, kdkab) or "?"
+        run_a = run_terakhir(sesi, kdprov, kdkab, TIPE_A)
+        run_b = run_terakhir(sesi, kdprov, kdkab, TIPE_B)
         if run_a is None:
-            baris.append(f"{kdkab} {nmkab:<20} belum ada run A sukses")
+            baris.append(f"{kdkab} {nmkab:<20} belum ada run A")
             continue
-        bagian: list[str] = []
-        for label, run in (("A", run_a), ("B", run_b)):
-            if run is None:
-                bagian.append(f"{label}=-")
-                continue
-            jumlah = jumlah_snapshot(sesi, run.id)
-            if jumlah == 0:
-                bagian.append(f"{label}#{run.id} snapshot=0")
-                continue
-            cocok = all(satu.cocok for satu in verifikasi_run(sesi, run))
-            bagian.append(
-                f"{label}#{run.id} snapshot={jumlah} "
-                f"{'cocok' if cocok else 'TIDAK COCOK'}"
-            )
+        bagian = [
+            _ringkas_satu(sesi, "A", run_a),
+            _ringkas_satu(sesi, "B", run_b),
+        ]
+        # B harus dibuat setelah A target; B lama tidak dipakai tabulasi.
+        if run_b is not None and run_b.id <= run_a.id:
+            bagian.append(f"B#{run_b.id} sebelum A#{run_a.id}: perlu B baru")
         baris.append(f"{kdkab} {nmkab:<20} " + " | ".join(bagian))
     return baris
 
