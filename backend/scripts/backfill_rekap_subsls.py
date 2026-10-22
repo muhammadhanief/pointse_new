@@ -719,7 +719,7 @@ def jalankan(
         laporan.append(teks)
         print(teks, flush=True)
 
-    if tunggu and not run_ids:
+    if tunggu:
         tulis("menunggu antrean selesai sebelum menyusun rencana ...")
         if not tunggu_antrean_kosong(
             sesi_pabrik, interval=interval_tunggu, tulis=tulis
