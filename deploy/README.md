@@ -183,6 +183,38 @@ Worker memproses berurutan menurut id (A dulu, lalu B) dan mengisi snapshot
 level 6 sendiri saat sukses. Kalau proses terputus saat `--jalankan`, ulangi
 dengan `--run <id> --antrekan`.
 
+### 6b. Backfill semua kabupaten/kota (dua gelombang)
+
+Untuk seluruh wilayah, antrekan **semua A terakhir dulu**, baru setelah selesai
+antrekan **semua B terakhir**. Run yang snapshot level 6-nya sudah ada otomatis
+dilewati (kecuali `--paksa`).
+
+```bash
+# Gelombang 1: semua A terakhir
+sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
+  --env-file /etc/pointse/pointse.env --dry-run --tipe A
+sudo systemctl stop pointse-worker
+sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
+  --env-file /etc/pointse/pointse.env --tipe A --antrekan
+sudo systemctl start pointse-worker
+# tunggu sampai semua A sukses (pantau_worker.py atau halaman Job)
+
+# Gelombang 2: semua B terakhir
+sudo systemctl stop pointse-worker
+sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
+  --env-file /etc/pointse/pointse.env --tipe B --antrekan
+sudo systemctl start pointse-worker
+
+# Periksa hasil (baca saja)
+sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
+  --env-file /etc/pointse/pointse.env --periksa
+```
+
+Kabupaten/kota tanpa run A sukses atau yang berkas mentahnya sudah dipangkas
+dilewati dan dilaporkan; yang seperti itu perlu unggah ulang. Bisa juga tanpa
+`--tipe` untuk mengantrekan A dan B sekaligus per kabupaten, tetapi urutan
+pemrosesan mengikuti id run, bukan urutan gelombang.
+
 Skrip melewati kabupaten/kota yang berkas mentahnya sudah dipangkas (tidak bisa
 dibangun ulang) dan melaporkannya; kabupaten seperti itu perlu unggah ulang.
 Setiap run diverifikasi: total `rekap_subsls` harus sama dengan

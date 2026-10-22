@@ -409,6 +409,62 @@ def test_antrekan_mengembalikan_ke_menunggu(
     assert backfill.jumlah_snapshot(sesi, run_a.id) == 0
 
 
+def test_antrekan_hanya_tipe_b(
+    sesi: Session,
+    sesi_pabrik: sessionmaker[Session],
+    siapkan: dict[str, Any],
+) -> None:
+    """``--tipe B`` hanya mengantrekan run B; run A tidak disentuh."""
+    run_a: Run = siapkan["run_a"]
+    run_b: Run = siapkan["run_b"]
+    log: list[str] = []
+    kode = backfill.jalankan(
+        siapkan["setelan"],
+        kabupaten=[KDKAB],
+        antrekan=True,
+        tipe=TIPE_B,
+        sesi_pabrik=sesi_pabrik,
+        log=log,
+    )
+    assert kode == 0, "\n".join(log)
+    sesi.expire_all()
+    assert sesi.get(Run, run_a.id).status == STATUS_SUKSES
+    assert sesi.get(Run, run_b.id).status == STATUS_MENUNGGU
+
+
+def test_periksa_menampilkan_snapshot(
+    sesi: Session, siapkan: dict[str, Any]
+) -> None:
+    """``--periksa`` melaporkan run A/B dan status snapshot tanpa mengubah data."""
+    baris = backfill.periksa_semua(sesi, [KDKAB])
+    assert len(baris) == 1
+    assert f"A#{siapkan['run_a'].id}" in baris[0]
+    assert f"B#{siapkan['run_b'].id}" in baris[0]
+    assert "snapshot=0" in baris[0]
+
+
+def test_tipe_a_tidak_mengulang_snapshot_yang_ada(
+    sesi: Session,
+    sesi_pabrik: sessionmaker[Session],
+    siapkan: dict[str, Any],
+) -> None:
+    """Kalau snapshot A sudah ada, ``--tipe A`` tidak mengantrekan apa pun."""
+    _tambah_snapshot(sesi, siapkan["run_a"].id)
+    log: list[str] = []
+    kode = backfill.jalankan(
+        siapkan["setelan"],
+        kabupaten=[KDKAB],
+        antrekan=True,
+        tipe=TIPE_A,
+        sesi_pabrik=sesi_pabrik,
+        log=log,
+    )
+    assert kode == 0, "\n".join(log)
+    sesi.expire_all()
+    assert sesi.get(Run, siapkan["run_a"].id).status == STATUS_SUKSES
+    assert sesi.get(Run, siapkan["run_b"].id).status == STATUS_SUKSES
+
+
 def test_pilih_run_mengikuti_aturan_tabulasi(sesi: Session) -> None:
     """A = sukses terbaru; B = sukses terbaru setelah A dengan sumber A sama."""
     def tambah(tipe: str, kode: str = KDKAB, sumber: int | None = None) -> Run:

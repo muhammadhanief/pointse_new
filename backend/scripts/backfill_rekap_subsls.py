@@ -317,13 +317,24 @@ class Tugas:
     status: str
 
 
-def tugas_dari_rencana(rencana: list[Rencana]) -> list[Tugas]:
-    """Daftar tugas dari rencana per kabupaten (status run sudah ``sukses``)."""
+def tugas_dari_rencana(
+    rencana: list[Rencana], *, paksa: bool = False
+) -> list[Tugas]:
+    """Daftar tugas dari rencana per kabupaten (status run sudah ``sukses``).
+
+    Run yang snapshot level 6-nya sudah ada dilewati supaya ``--tipe A`` tidak
+    memproses ulang A hanya karena snapshot B masih kosong.
+    """
     tugas: list[Tugas] = []
     for satu in rencana:
         if not satu.diproses:
             continue
         for run in satu.urutan:
+            if not paksa:
+                if run.tipe == TIPE_A and satu.snapshot_a > 0:
+                    continue
+                if run.tipe == TIPE_B and satu.snapshot_b > 0:
+                    continue
             tugas.append(
                 Tugas(
                     run_id=run.id,
@@ -527,6 +538,38 @@ def ringkas_tabulasi(sesi: Session, kdprov: str, kdkab: str) -> list[str]:
     return keluaran
 
 
+def periksa_semua(
+    sesi: Session, kabupaten: list[str] | None = None
+) -> list[str]:
+    """Laporan status snapshot level 6 untuk semua kabupaten/kota (baca saja)."""
+    saring = {_kode_filter(kode) for kode in kabupaten} if kabupaten else None
+    baris: list[str] = []
+    for kdprov, kdkab in daftar_kabupaten(sesi):
+        if saring is not None and kdkab not in saring:
+            continue
+        run_a, run_b = pilih_run(sesi, kdprov, kdkab)
+        nmkab = nama_kabupaten(sesi, kdprov, kdkab) or "?"
+        if run_a is None:
+            baris.append(f"{kdkab} {nmkab:<20} belum ada run A sukses")
+            continue
+        bagian: list[str] = []
+        for label, run in (("A", run_a), ("B", run_b)):
+            if run is None:
+                bagian.append(f"{label}=-")
+                continue
+            jumlah = jumlah_snapshot(sesi, run.id)
+            if jumlah == 0:
+                bagian.append(f"{label}#{run.id} snapshot=0")
+                continue
+            cocok = all(satu.cocok for satu in verifikasi_run(sesi, run))
+            bagian.append(
+                f"{label}#{run.id} snapshot={jumlah} "
+                f"{'cocok' if cocok else 'TIDAK COCOK'}"
+            )
+        baris.append(f"{kdkab} {nmkab:<20} " + " | ".join(bagian))
+    return baris
+
+
 def _parse_kabupaten(nilai: list[str] | None) -> list[str] | None:
     """Pecah ``--kabupaten 3303,3304`` menjadi daftar kode."""
     if not nilai:
@@ -563,6 +606,7 @@ def jalankan(
     run_ids: list[int] | None = None,
     paksa: bool = False,
     antrekan: bool = False,
+    tipe: str | None = None,
     sesi_pabrik: sessionmaker[Session] | None = None,
     log: list[str] | None = None,
 ) -> int:
@@ -587,7 +631,9 @@ def jalankan(
             rencana = susun_rencana(sesi, kabupaten=kabupaten, paksa=paksa)
         for teks in format_rencana(rencana):
             tulis(teks)
-        tugas = tugas_dari_rencana(rencana)
+        tugas = tugas_dari_rencana(rencana, paksa=paksa)
+        if tipe is not None:
+            tugas = [satu for satu in tugas if satu.tipe == tipe]
         pulihkan = False
     for teks in catatan:
         tulis(teks)
@@ -704,6 +750,16 @@ def main(argv: list[str] | None = None) -> int:
         help="proses ulang walau snapshot level 6 sudah ada",
     )
     parser.add_argument(
+        "--tipe",
+        choices=["A", "B"],
+        help="batasi ke satu tipe: A (Identifikasi Titik) atau B (Pengecekan Titik)",
+    )
+    parser.add_argument(
+        "--periksa",
+        action="store_true",
+        help="tampilkan status snapshot level 6 semua kabupaten/kota (baca saja)",
+    )
+    parser.add_argument(
         "--jalankan",
         action="store_true",
         help="benar-benar memproses ulang (tanpa ini hanya laporan)",
@@ -721,6 +777,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--dry-run tidak boleh digabung dengan --jalankan/--antrekan")
     if args.jalankan and args.antrekan:
         parser.error("--jalankan dan --antrekan tidak boleh bersamaan")
+    if args.periksa and (args.jalankan or args.antrekan):
+        parser.error("--periksa hanya membaca; jangan digabung dengan aksi")
     if args.env_file:
         try:
             muat_env(args.env_file)
@@ -736,14 +794,26 @@ def main(argv: list[str] | None = None) -> int:
     if kabupaten and run_ids:
         parser.error("--kabupaten dan --run tidak boleh bersamaan")
     if args.jalankan:
-        return jalankan(kabupaten=kabupaten, run_ids=run_ids, paksa=args.paksa)
+        return jalankan(
+            kabupaten=kabupaten, run_ids=run_ids, paksa=args.paksa, tipe=args.tipe
+        )
     if args.antrekan:
         return jalankan(
             kabupaten=kabupaten,
             run_ids=run_ids,
             paksa=args.paksa,
             antrekan=True,
+            tipe=args.tipe,
         )
+    if args.periksa:
+        try:
+            with get_sessionmaker()() as sesi:
+                for teks in periksa_semua(sesi, kabupaten):
+                    print(teks)
+        except SQLAlchemyError as galat:
+            print(f"gagal membaca basis data: {galat}")
+            return 1
+        return 0
 
     try:
         with get_sessionmaker()() as sesi:
@@ -760,9 +830,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     for teks in format_rencana(rencana):
         print(teks)
-    perlu = sum(1 for satu in rencana if satu.diproses)
-    print(f"{perlu} kabupaten/kota perlu diproses ulang dari {len(rencana)} kandidat")
-    print("jalankan ulang dengan --jalankan setelah worker dihentikan")
+    def _relevan(satu: Rencana) -> bool:
+        if not satu.diproses:
+            return False
+        return args.tipe is None or any(run.tipe == args.tipe for run in satu.urutan)
+
+    perlu = sum(1 for satu in rencana if _relevan(satu))
+    jenis = f" tipe {args.tipe}" if args.tipe else ""
+    print(f"{perlu} kabupaten/kota{jenis} perlu diproses ulang dari {len(rencana)} kandidat")
+    print("jalankan ulang dengan --antrekan (worker service) atau --jalankan")
     return 0
 
 
