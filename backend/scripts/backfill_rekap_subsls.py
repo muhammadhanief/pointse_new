@@ -18,6 +18,12 @@ Contoh (dari folder ``backend``)::
     .venv/bin/python scripts/backfill_rekap_subsls.py --kabupaten 3303 --jalankan
     sudo systemctl start pointse-worker
 
+Di server, jalankan sebagai ``pointse`` dan beri ``--env-file`` (jangan
+``source`` berkas env di bash: tanda kutip di nilai JSON ikut terbuang)::
+
+    sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \\
+        --env-file /etc/pointse/pointse.env --dry-run --kabupaten 3303
+
 Syarat saat ``--jalankan``:
 
 - cadangkan basis data dan folder unggahan lebih dulu (``deploy/backup.sh``);
@@ -35,6 +41,7 @@ anggaran memori ``WORKER_MEM_BUDGET_MB`` tetap berlaku.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import dataclass, field
 from datetime import date
@@ -65,6 +72,21 @@ from app.models import (  # noqa: E402
 
 #: Dua dasar rekap; snapshot diisi untuk keduanya.
 DASAR: tuple[str, ...] = (DASAR_TUGAS, DASAR_POSISI)
+
+
+def muat_env(jalur: str) -> None:
+    """Muat berkas environment (``/etc/pointse/pointse.env``) tanpa merusak JSON.
+
+    ``source berkas.env`` di bash membuang tanda kutip di dalam nilai, sehingga
+    ``CORS_ORIGINS=["https://..."]`` menjadi ``[https://...]`` dan ditolak
+    pydantic-settings. ``python-dotenv`` hanya membuang kutip bila seluruh nilai
+    dikutip, jadi JSON tetap utuh. Variabel yang sudah ada tidak ditimpa.
+    """
+    from dotenv import dotenv_values
+
+    for kunci, nilai in dotenv_values(jalur).items():
+        if nilai is not None and kunci not in os.environ:
+            os.environ[kunci] = nilai
 
 
 def kode_kabupaten(run: Run) -> str:
@@ -484,6 +506,10 @@ def main(argv: list[str] | None = None) -> int:
         description="Isi ulang snapshot rekap level 6 (SubSLS) untuk run A/B terakhir."
     )
     parser.add_argument(
+        "--env-file",
+        help="berkas environment (mis. /etc/pointse/pointse.env) yang dimuat dulu",
+    )
+    parser.add_argument(
         "--kabupaten",
         action="append",
         help="batasi ke kode kabupaten/kota (4 digit atau 2 digit), boleh diulang",
@@ -506,6 +532,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.dry_run and args.jalankan:
         parser.error("--dry-run dan --jalankan tidak boleh bersamaan")
+    if args.env_file:
+        try:
+            muat_env(args.env_file)
+        except OSError as galat:
+            print(f"gagal membaca berkas environment {args.env_file}: {galat}")
+            return 1
 
     kabupaten = _parse_kabupaten(args.kabupaten)
     if args.jalankan:

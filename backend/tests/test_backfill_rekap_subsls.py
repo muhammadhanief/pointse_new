@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -256,6 +257,26 @@ def test_berkas_hilang_dilewati(
     assert rencana[0].hilang_b
     assert rencana[0].lewat is not None
     assert not rencana[0].diproses
+
+
+def test_muat_env_mempertahankan_json(monkeypatch: Any, tmp_path: Path) -> None:
+    """``--env-file`` membaca CORS_ORIGINS JSON utuh (tidak di-strip seperti bash)."""
+    berkas = tmp_path / "pointse.env"
+    berkas.write_text(
+        'CORS_ORIGINS=["https://contoh.test"]\nDB_HOST=127.0.0.9\n',
+        encoding="utf-8",
+    )
+    # Salinan environment supaya variabel yang diisi ``muat_env`` ikut dipulihkan.
+    lingkungan = dict(os.environ)
+    lingkungan.pop("CORS_ORIGINS", None)
+    lingkungan.pop("DB_HOST", None)
+    monkeypatch.setattr(os, "environ", lingkungan)
+
+    backfill.muat_env(str(berkas))
+
+    setelan = Settings(_env_file=None)
+    assert setelan.cors_origins == ["https://contoh.test"]
+    assert setelan.db_host == "127.0.0.9"
 
 
 def test_pilih_run_mengikuti_aturan_tabulasi(sesi: Session) -> None:

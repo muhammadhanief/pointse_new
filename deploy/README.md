@@ -150,15 +150,22 @@ cd /opt/pointse/backend
 sudo deploy/backup.sh
 
 # 1) Lihat rencana (tidak mengubah data); uji satu kabupaten dulu, mis. Purbalingga
-.venv/bin/python scripts/backfill_rekap_subsls.py --dry-run --kabupaten 3303
+sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
+  --env-file /etc/pointse/pointse.env --dry-run --kabupaten 3303
 
 # 2) Hentikan worker agar run yang dipilih pasti diproses (antrean harus kosong)
 sudo systemctl stop pointse-worker
-.venv/bin/python scripts/backfill_rekap_subsls.py --kabupaten 3303 --jalankan
+sudo -u pointse .venv/bin/python scripts/backfill_rekap_subsls.py \
+  --env-file /etc/pointse/pointse.env --kabupaten 3303 --jalankan
 sudo systemctl start pointse-worker
 
 # 3) Setelah angka Purbalingga benar, ulangi tanpa --kabupaten untuk semua
 ```
+
+Jangan memakai `set -a; . /etc/pointse/pointse.env` sebelum menjalankan skrip:
+bash membuang tanda kutip di dalam nilai, sehingga `CORS_ORIGINS` yang berformat
+JSON ditolak pydantic-settings. Pakai `--env-file` seperti contoh di atas.
+Jalankan sebagai pengguna `pointse` supaya berkas hasil tidak menjadi milik root.
 
 Skrip melewati kabupaten/kota yang berkas mentahnya sudah dipangkas (tidak bisa
 dibangun ulang) dan melaporkannya; kabupaten seperti itu perlu unggah ulang.
