@@ -12,10 +12,13 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 import data_kecil
 from app import auth
 from app.config import Settings
+from app.models import Aktivitas
 from app.unggahan import _bersihkan, _simpan_potongan
 
 
@@ -269,7 +272,7 @@ def mulai_berkas(klien: TestClient, isi: bytes, nama: str, jenis: str) -> dict[s
 
 
 def test_potongan_pertama_menolak_peta_tanpa_kolom_sop(
-    klien: TestClient, tmp_path: Path
+    klien: TestClient, tmp_path: Path, sesi: Session
 ) -> None:
     """Peta yang kurang kolom SOP ditolak di potongan pertama, sesi dibersihkan."""
     peta = data_kecil.tulis(
@@ -277,14 +280,23 @@ def test_potongan_pertama_menolak_peta_tanpa_kolom_sop(
         tmp_path / "peta.geojson",
     )
     isi = peta.read_bytes()
-    sesi = mulai_berkas(klien, isi, "peta.geojson", "peta")
+    sesi_unggah = mulai_berkas(klien, isi, "peta.geojson", "peta")
 
-    resp = kirim(klien, sesi["unggahan_id"], 1, isi)
+    resp = kirim(klien, sesi_unggah["unggahan_id"], 1, isi)
     assert resp.status_code == 422, resp.text
     detail = resp.json()["detail"]
     assert "kolom wajib" in detail and "nm_gedung" in detail
     # Sesi dibatalkan: sisa potongan tidak bisa dikirim lagi.
-    assert klien.get(f"/unggahan/{sesi['unggahan_id']}").status_code == 404
+    assert klien.get(f"/unggahan/{sesi_unggah['unggahan_id']}").status_code == 404
+
+    # Penolakan tercatat di log aktivitas walau job tidak pernah dibuat.
+    log = sesi.scalars(
+        select(Aktivitas).where(Aktivitas.aksi == "unggah_ditolak")
+    ).all()
+    assert len(log) == 1
+    assert log[0].objek == "unggahan"
+    assert "peta.geojson" in (log[0].detail or "")
+    assert "nm_gedung" in (log[0].detail or "")
 
 
 def test_potongan_pertama_menolak_titik_b_tanpa_kolom_wilayah(

@@ -561,8 +561,9 @@ class Aktivitas(Base):
     """Jejak audit tindakan pengguna, termasuk identitas SSO pelakunya.
 
     Ditulis setelah tindakan berhasil (mis. job dibuat atau master diunggah)
-    agar admin provinsi dapat melihat siapa melakukan apa. Baris audit tidak
-    dipakai untuk otorisasi dan tidak dihapus otomatis.
+    dan saat berkas unggahan ditolak validasi (``unggah_ditolak``), agar admin
+    provinsi dapat melihat siapa melakukan apa. Baris audit tidak dipakai untuk
+    otorisasi dan tidak dihapus otomatis.
     """
 
     __tablename__ = "aktivitas"

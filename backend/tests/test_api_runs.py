@@ -444,7 +444,9 @@ def test_unggah_menolak_kolom_wajib_hilang(
     assert list(dir_unggahan.iterdir()) == [], "folder unggahan tidak dibersihkan"
 
 
-def test_unggah_menolak_peta_tanpa_kolom_sop(klien: TestClient, tmp_path: Path) -> None:
+def test_unggah_menolak_peta_tanpa_kolom_sop(
+    klien: TestClient, tmp_path: Path, sesi: Session
+) -> None:
     """Peta tanpa kolom SOP ditolak walau proses tidak membaca kolom itu."""
     titik, _ = berkas_uji(tmp_path)
     peta = data_kecil.peta().drop(columns=["kdsls", "nm_gedung"])
@@ -455,6 +457,14 @@ def test_unggah_menolak_peta_tanpa_kolom_sop(klien: TestClient, tmp_path: Path) 
     detail = resp.json()["detail"]
     assert "kolom wajib" in detail
     assert "kdsls" in detail and "nm_gedung" in detail
+
+    # Penolakan tetap tercatat di log aktivitas walau run tidak dibuat.
+    log = sesi.scalars(
+        select(Aktivitas).where(Aktivitas.aksi == "unggah_ditolak")
+    ).all()
+    assert len(log) == 1
+    assert log[0].objek == "run"
+    assert "kdsls" in (log[0].detail or "")
 
 
 def test_unggah_b_menolak_tanpa_kolom_wilayah(klien: TestClient, tmp_path: Path) -> None:

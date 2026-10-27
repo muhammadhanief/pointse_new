@@ -23,10 +23,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.orm import Session
 from starlette.requests import ClientDisconnect
 
-from app import auth, periksa_awal
+from app import aktivitas, auth, periksa_awal
 from app.config import Settings, get_settings
+from app.db import get_session
 from app.skema import (
     PotonganOut,
     UnggahanMulaiIn,
@@ -252,18 +254,38 @@ def hapus_unggahan(id_unggah: str, setelan: Settings) -> None:
             return
 
 
-def _tolak_kolom_kurang(jalur: Path, folder: Path, meta: dict[str, Any]) -> None:
+def _tolak_kolom_kurang(
+    jalur: Path,
+    folder: Path,
+    meta: dict[str, Any],
+    sesi: Session | None = None,
+    pengguna: auth.Pengguna | None = None,
+) -> None:
     """Batalkan sesi unggahan kalau potongan awal sudah jelas kurang kolom.
 
     Berkas bisa ratusan MB; menunggu seluruh potongan terkirim hanya untuk
     ditolak saat ``POST /runs`` membuang waktu pengguna. Potongan pertama sudah
     memuat skema (GeoPackage) atau fitur pertama (GeoJSON), jadi cukup dari situ.
     Sesi dihapus supaya sisa potongan tidak menumpuk di disk.
+
+    Penolakan tetap dicatat di log aktivitas supaya operator bisa melihat berkas
+    mana yang gagal dan kolom apa yang kurang, walau job tidak pernah dibuat.
     """
     jenis = str(meta.get("jenis") or "")
     kurang = periksa_awal.kurang_kolom(jalur, jenis)
     if not kurang:
         return
+    if sesi is not None and pengguna is not None:
+        aktivitas.catat(
+            sesi,
+            pengguna,
+            aksi="unggah_ditolak",
+            objek="unggahan",
+            detail=(
+                f"{jenis or 'unggahan'} {meta.get('nama')} · kolom wajib hilang: "
+                f"{', '.join(kurang)}"
+            ),
+        )
     shutil.rmtree(folder, ignore_errors=True)
     raise HTTPException(
         status_code=422,
@@ -281,6 +303,8 @@ async def _simpan_potongan(
     meta: dict[str, Any],
     nomor: int,
     setelan: Settings,
+    sesi: Session | None = None,
+    pengguna: auth.Pengguna | None = None,
 ) -> PotonganOut:
     """Terima satu potongan; hash dan ukuran harus cocok. Idempoten."""
     tipe_konten = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
@@ -382,7 +406,7 @@ async def _simpan_potongan(
         if nomor == 1:
             # Berkas ratusan MB: periksa kelengkapan kolom dari potongan awal
             # supaya pengguna tidak menunggu seluruh berkas terkirim dulu.
-            _tolak_kolom_kurang(tujuan, folder, meta)
+            _tolak_kolom_kurang(tujuan, folder, meta, sesi, pengguna)
         _sentuh(folder)
         return PotonganOut(
             unggahan_id=str(meta["id"]),
@@ -404,6 +428,8 @@ def _selesai_unggahan(
     folder: Path,
     meta: dict[str, Any],
     setelan: Settings,
+    sesi: Session | None = None,
+    pengguna: auth.Pengguna | None = None,
 ) -> UnggahanOut:
     """Susun potongan berurutan, hapus tiap potongan setelah disalin."""
     total = int(meta["jumlah_potongan"])
@@ -417,7 +443,7 @@ def _selesai_unggahan(
 
     # Sesi yang dimulai sebelum pemeriksaan potongan pertama ada (mis. lanjutan
     # setelah deploy) tetap ditolak di sini, sebelum berkas disusun.
-    _tolak_kolom_kurang(_berkas_potongan(folder, 1), folder, meta)
+    _tolak_kolom_kurang(_berkas_potongan(folder, 1), folder, meta, sesi, pengguna)
 
     hasil = folder / "hasil"
     hash_sha = hashlib.sha256()
@@ -567,12 +593,15 @@ async def unggah_potongan(
     nomor: int,
     setelan: Settings = Depends(get_settings),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+    sesi: Session = Depends(get_session),
 ) -> PotonganOut:
     """Terima satu potongan body mentah; aman dikirim ulang."""
     folder = _folder(id_unggah, _akar_sementara(setelan))
     meta = _baca_meta(folder)
     _pastikan_pemilik(meta, pengguna)
-    return await _simpan_potongan(request, folder, meta, nomor, setelan)
+    return await _simpan_potongan(
+        request, folder, meta, nomor, setelan, sesi, pengguna
+    )
 
 
 @router.post("/unggahan/{id_unggah}/selesai", response_model=UnggahanOut)
@@ -580,6 +609,7 @@ def selesaikan_unggahan(
     id_unggah: str,
     setelan: Settings = Depends(get_settings),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+    sesi: Session = Depends(get_session),
 ) -> UnggahanOut:
     """Gabungkan semua potongan menjadi berkas final."""
     final = _meta_final(id_unggah, setelan)
@@ -597,7 +627,7 @@ def selesaikan_unggahan(
     folder = _folder(id_unggah, _akar_sementara(setelan))
     meta = _baca_meta(folder)
     _pastikan_pemilik(meta, pengguna)
-    return _selesai_unggahan(folder, meta, setelan)
+    return _selesai_unggahan(folder, meta, setelan, sesi, pengguna)
 
 
 @router.post("/unggahan", response_model=UnggahanOut, status_code=201)

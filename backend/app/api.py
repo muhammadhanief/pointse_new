@@ -339,6 +339,15 @@ def unggah_run(
                 )
     except KesalahanUnggahan as galat:
         shutil.rmtree(dir_run, ignore_errors=True)
+        # Berkas ditolak validasi: tetap tercatat di log aktivitas supaya
+        # operator tahu ada unggahan yang gagal walau run tidak pernah dibuat.
+        aktivitas.catat(
+            sesi,
+            pengguna,
+            aksi="unggah_ditolak",
+            objek="run",
+            detail=f"{tipe_bersih} · {galat}",
+        )
         raise HTTPException(status_code=422, detail=str(galat)) from galat
     except HTTPException:
         shutil.rmtree(dir_run, ignore_errors=True)

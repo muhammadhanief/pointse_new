@@ -1,8 +1,10 @@
 """Jejak audit aktivitas pengguna.
 
-Pencatatan dilakukan setelah tindakan berhasil. Kegagalan menulis audit tidak
-boleh membatalkan tindakan utama yang sudah tersimpan, jadi helper ini menangani
-rollback sendiri dan hanya menulis log server.
+Pencatatan dilakukan setelah tindakan berhasil, dan juga saat berkas unggahan
+ditolak validasi (aksi ``unggah_ditolak``) supaya kegagalan tetap terlihat di
+log aktivitas. Kegagalan menulis audit tidak boleh membatalkan tindakan utama
+yang sudah tersimpan, jadi helper ini menangani rollback sendiri dan hanya
+menulis log server.
 """
 
 from __future__ import annotations

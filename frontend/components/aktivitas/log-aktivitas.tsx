@@ -17,6 +17,7 @@ const LABEL_AKSI: Record<string, string> = {
   unggah_a: "Unggah peta SLS/SubSLS",
   unggah_b: "Unggah titik hasil perbaikan",
   unggah_master: "Unggah master geotag",
+  unggah_ditolak: "Unggahan ditolak",
   login: "Login",
 };
 
@@ -24,6 +25,7 @@ const GAYA_AKSI: Record<string, string> = {
   unggah_a: "border-brand/25 bg-brand-soft text-brand-strong",
   unggah_b: "border-accent/30 bg-accent-soft text-accent-strong",
   unggah_master: "border-success/30 bg-success-soft text-success",
+  unggah_ditolak: "border-danger/30 bg-danger-soft text-danger",
   login: "border-line bg-paper text-muted",
 };
 
@@ -33,6 +35,9 @@ function labelObjek(item: Aktivitas): string {
   }
   if (item.objek === "geotag_master") {
     return item.objek_id ? `Master #${item.objek_id}` : "Master geotag";
+  }
+  if (item.objek === "unggahan") {
+    return "Berkas unggahan";
   }
   return item.objek;
 }
