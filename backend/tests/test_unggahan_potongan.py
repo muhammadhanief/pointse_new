@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+import data_kecil
 from app import auth
 from app.config import Settings
 from app.unggahan import _bersihkan, _simpan_potongan
@@ -255,3 +256,78 @@ def test_potongan_16mb_tidak_menahan_body(
     akhir = rss()
     if awal is not None and akhir is not None:
         assert akhir - awal < 20 * 1024 * 1024
+
+
+def mulai_berkas(klien: TestClient, isi: bytes, nama: str, jenis: str) -> dict[str, Any]:
+    """Buat sesi unggahan berpotongan untuk satu jenis berkas."""
+    resp = klien.post(
+        "/unggahan/mulai",
+        json={"nama": nama, "ukuran": len(isi), "jenis": jenis},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_potongan_pertama_menolak_peta_tanpa_kolom_sop(
+    klien: TestClient, tmp_path: Path
+) -> None:
+    """Peta yang kurang kolom SOP ditolak di potongan pertama, sesi dibersihkan."""
+    peta = data_kecil.tulis(
+        data_kecil.peta().drop(columns=["nm_gedung"]),
+        tmp_path / "peta.geojson",
+    )
+    isi = peta.read_bytes()
+    sesi = mulai_berkas(klien, isi, "peta.geojson", "peta")
+
+    resp = kirim(klien, sesi["unggahan_id"], 1, isi)
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert "kolom wajib" in detail and "nm_gedung" in detail
+    # Sesi dibatalkan: sisa potongan tidak bisa dikirim lagi.
+    assert klien.get(f"/unggahan/{sesi['unggahan_id']}").status_code == 404
+
+
+def test_potongan_pertama_menolak_titik_b_tanpa_kolom_wilayah(
+    klien: TestClient, tmp_path: Path
+) -> None:
+    """Titik B tanpa ``nmsls`` ditolak sebelum seluruh berkas terkirim."""
+    baris = data_kecil.baris_titik_b("1", "3307010001000100")
+    del baris["nmsls"]
+    berkas = data_kecil.tulis(
+        data_kecil.titik_b(baris), tmp_path / "titik_b.geojson"
+    )
+    isi = berkas.read_bytes()
+    sesi = mulai_berkas(klien, isi, "titik_b.geojson", "titik")
+
+    resp = kirim(klien, sesi["unggahan_id"], 1, isi)
+    assert resp.status_code == 422, resp.text
+    assert "nmsls" in resp.json()["detail"]
+
+
+def test_potongan_pertama_menerima_berkas_lengkap(
+    klien: TestClient, tmp_path: Path
+) -> None:
+    """Berkas A berformat GeoJSON yang lengkap lolos pemeriksaan awal."""
+    berkas = data_kecil.tulis(
+        data_kecil.titik_a(data_kecil.baris_titik_a("1", "3307010001000100", 0.2, 0.2)),
+        tmp_path / "titik.geojson",
+    )
+    isi = berkas.read_bytes()
+    sesi = mulai_berkas(klien, isi, "titik.geojson", "titik")
+    assert kirim(klien, sesi["unggahan_id"], 1, isi).status_code == 200
+
+
+def test_potongan_pertama_menolak_gpkg_tanpa_kolom_wajib(
+    klien: TestClient, tmp_path: Path
+) -> None:
+    """GeoPackage: skema di halaman awal dipakai untuk menolak lebih awal."""
+    jalur = tmp_path / "master.gpkg"
+    data_kecil.titik_a(
+        data_kecil.baris_titik_a("1", "3307010001000100", 0.2, 0.2)
+    ).drop(columns=["count_usaha"]).to_file(jalur, driver="GPKG")
+    isi = jalur.read_bytes()
+    sesi = mulai_berkas(klien, isi, "master.gpkg", "titik")
+
+    resp = kirim(klien, sesi["unggahan_id"], 1, isi)
+    assert resp.status_code == 422, resp.text
+    assert "count_usaha" in resp.json()["detail"]

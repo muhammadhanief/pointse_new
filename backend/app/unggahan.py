@@ -25,7 +25,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from starlette.requests import ClientDisconnect
 
-from app import auth
+from app import auth, periksa_awal
 from app.config import Settings, get_settings
 from app.skema import (
     PotonganOut,
@@ -252,6 +252,29 @@ def hapus_unggahan(id_unggah: str, setelan: Settings) -> None:
             return
 
 
+def _tolak_kolom_kurang(jalur: Path, folder: Path, meta: dict[str, Any]) -> None:
+    """Batalkan sesi unggahan kalau potongan awal sudah jelas kurang kolom.
+
+    Berkas bisa ratusan MB; menunggu seluruh potongan terkirim hanya untuk
+    ditolak saat ``POST /runs`` membuang waktu pengguna. Potongan pertama sudah
+    memuat skema (GeoPackage) atau fitur pertama (GeoJSON), jadi cukup dari situ.
+    Sesi dihapus supaya sisa potongan tidak menumpuk di disk.
+    """
+    jenis = str(meta.get("jenis") or "")
+    kurang = periksa_awal.kurang_kolom(jalur, jenis)
+    if not kurang:
+        return
+    shutil.rmtree(folder, ignore_errors=True)
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            f"berkas {jenis or 'unggahan'} tidak punya kolom wajib "
+            f"({', '.join(kurang)}); unggahan dihentikan di potongan pertama "
+            "agar tidak menunggu seluruh berkas terkirim"
+        ),
+    )
+
+
 async def _simpan_potongan(
     request: Request,
     folder: Path,
@@ -356,6 +379,10 @@ async def _simpan_potongan(
             sidecar.name,
             {"ukuran": ukuran, "sha256": sha_hasil},
         )
+        if nomor == 1:
+            # Berkas ratusan MB: periksa kelengkapan kolom dari potongan awal
+            # supaya pengguna tidak menunggu seluruh berkas terkirim dulu.
+            _tolak_kolom_kurang(tujuan, folder, meta)
         _sentuh(folder)
         return PotonganOut(
             unggahan_id=str(meta["id"]),
@@ -387,6 +414,10 @@ def _selesai_unggahan(
             status_code=409,
             detail=f"potongan belum lengkap: {', '.join(map(str, hilang))}",
         )
+
+    # Sesi yang dimulai sebelum pemeriksaan potongan pertama ada (mis. lanjutan
+    # setelah deploy) tetap ditolak di sini, sebelum berkas disusun.
+    _tolak_kolom_kurang(_berkas_potongan(folder, 1), folder, meta)
 
     hasil = folder / "hasil"
     hash_sha = hashlib.sha256()
