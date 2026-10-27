@@ -33,6 +33,7 @@ from app.models import (
     RekapDesa,
     RekapKabupaten,
     RekapSubsls,
+    RekapTarget,
     Run,
     TitikHasil,
     Wilayah,
@@ -1116,19 +1117,151 @@ def _metrik_subsls(
     return keluaran
 
 
+def _metrik_target_b(
+    sesi: Session, run_b: Run | None, dasar: str
+) -> dict[tuple[str | None, int | None], dict[str, int]]:
+    """Baca capaian B per ``assignment_id`` (tabel ``rekap_target``).
+
+    Kuncinya sama dengan :func:`_metrik_subsls`: ``(level_6_full_code,
+    wilayah_id)``. Kosong untuk run B lama yang belum punya baris di tabel itu;
+    pemanggil lalu memakai hitungan lama.
+    """
+    if run_b is None:
+        return {}
+    hasil = sesi.execute(
+        select(
+            RekapTarget.level_6_full_code,
+            RekapTarget.wilayah_id,
+            RekapTarget.target,
+            RekapTarget.belum,
+            RekapTarget.hilang,
+            RekapTarget.regresi,
+        ).where(RekapTarget.run_b_id == run_b.id, RekapTarget.dasar == dasar)
+    ).all()
+    keluaran: dict[tuple[str | None, int | None], dict[str, int]] = {}
+    for kode, wilayah_id, target, belum, hilang, regresi in hasil:
+        kunci = (
+            None if kode in (None, "") else str(kode),
+            None if wilayah_id is None else int(wilayah_id),
+        )
+        keluaran[kunci] = {
+            "target": int(target),
+            "belum": int(belum),
+            "hilang": int(hilang),
+            "regresi": int(regresi),
+        }
+    return keluaran
+
+
+def _meta_wilayah(sesi: Session, ids: set[int]) -> dict[int, dict[str, str | None]]:
+    """Kode wilayah (kab/kec/desa) untuk sekumpulan ``wilayah.id``."""
+    if not ids:
+        return {}
+    baris = sesi.execute(
+        select(Wilayah.id, Wilayah.kdkab, Wilayah.kdkec, Wilayah.kddesa).where(
+            Wilayah.id.in_(ids)
+        )
+    ).all()
+    return {
+        int(satu[0]): {"kdkab": satu[1], "kdkec": satu[2], "kddesa": satu[3]}
+        for satu in baris
+    }
+
+
+def _progres_dari_capaian(
+    sesi: Session,
+    run_a: Run | None,
+    target_a: Mapping[tuple[str | None, int | None], Mapping[str, object]],
+    capaian: Mapping[tuple[str | None, int | None], Mapping[str, int]],
+) -> dict[tuple[str | None, int | None], dict[str, object]]:
+    """Susun progres dari capaian per ``assignment_id`` (metode baru)."""
+    keluaran: dict[tuple[str | None, int | None], dict[str, object]] = {}
+    for kunci, a in target_a.items():
+        satu = capaian.get(kunci)
+        target = int(satu["target"]) if satu is not None else 0
+        belum = int(satu["belum"]) if satu is not None else 0
+        regresi = int(satu["regresi"]) if satu is not None else 0
+        selesai = max(0, min(target, target - belum - regresi))
+        keluaran[kunci] = {
+            **a,
+            "target": target,
+            "selesai": selesai,
+            "sisa": target - selesai,
+            "ada_b": bool(
+                satu is not None and target > 0 and int(satu["hilang"]) < target
+            ),
+            # "Lengkap" = semua titik target masih ada di berkas B. Titik yang
+            # kodenya diubah tetap lengkap karena dicocokkan per assignment_id.
+            "lengkap": bool(satu is not None and int(satu["hilang"]) == 0),
+            # B memuat sebagian titik target: unggahan terpotong atau titik hilang.
+            "parsial": bool(
+                satu is not None and 0 < int(satu["hilang"]) < max(target, 1)
+            ),
+            "mundur": False,
+        }
+
+    # Dasar posisi: titik target yang pindah SubSLS muncul di kunci baru yang
+    # tidak ada di snapshot A, jadi dimensi wilayahnya diambil dari tabel.
+    kunci_baru = {kunci: satu for kunci, satu in capaian.items() if kunci not in target_a}
+    if kunci_baru:
+        meta = _meta_wilayah(
+            sesi, {kunci[1] for kunci in kunci_baru if kunci[1] is not None}
+        )
+        for kunci, satu in kunci_baru.items():
+            target = int(satu["target"])
+            belum = int(satu["belum"])
+            regresi = int(satu["regresi"])
+            selesai = max(0, min(target, target - belum - regresi))
+            info = meta.get(kunci[1], {}) if kunci[1] is not None else {}
+            keluaran[kunci] = {
+                "kode": kunci[0],
+                "wilayah_id": kunci[1],
+                "kdkab": info.get("kdkab")
+                or (kode_kabupaten(run_a.kdprov, run_a.kdkab) if run_a is not None else None),
+                "kdkec": info.get("kdkec"),
+                "kddesa": info.get("kddesa"),
+                "jumlah": target,
+                "belum": belum,
+                "benar_awal": 0,
+                "ditindak_posisi_benar": 0,
+                "ditindak_posisi_salah": 0,
+                "digeser": 0,
+                "tanpa_wilayah": 0,
+                "target": target,
+                "selesai": selesai,
+                "sisa": target - selesai,
+                "ada_b": target > 0 and int(satu["hilang"]) < target,
+                "lengkap": int(satu["hilang"]) == 0,
+                "parsial": 0 < int(satu["hilang"]) < max(target, 1),
+                "mundur": False,
+            }
+    return keluaran
+
+
 def _progres_level6(
     sesi: Session, run_a: Run | None, run_b: Run | None, dasar: str
 ) -> dict[tuple[str | None, int | None], dict[str, object]]:
     """Hitung capaian B per level 6 terhadap target A.
 
-    ``selesai`` = titik flag 0 pada B dikurangi titik flag 0 pada A, dibatasi
-    ``0..target``. Titik flag 0 adalah ``jumlah - belum`` (termasuk
-    ``benar_awal`` yang tidak disimpan di ``titik_hasil``). B yang tidak memuat
-    kode target dianggap belum selesai, bukan 100%.
+    Dua metode, dipilih otomatis:
+
+    - **per assignment** (utama): target A dicocokkan ke B lewat ``assignment_id``
+      (tabel ``rekap_target``). ``selesai`` = target yang sudah ``flag_repair = 0``
+      di B; titik yang tidak ada di B dihitung belum. Wilayah mengikuti kode A
+      (dasar tugas) atau posisi B (dasar posisi), jadi perubahan
+      ``level_6_full_code`` di berkas B tidak memindahkan capaian.
+    - **lama** (cadangan): ``selesai`` = titik flag 0 pada B dikurangi titik flag 0
+      pada A, dibatasi ``0..target``. Dipakai untuk run B sebelum tabel
+      ``rekap_target`` ada atau saat detail titik A sudah dipangkas.
     """
     target_a = _metrik_subsls(sesi, run_a, dasar)
     if not target_a:
         return {}
+
+    capaian = _metrik_target_b(sesi, run_b, dasar)
+    if capaian:
+        return _progres_dari_capaian(sesi, run_a, target_a, capaian)
+
     metrik_b = _metrik_subsls(sesi, run_b, dasar) if run_b is not None else {}
 
     keluaran: dict[tuple[str | None, int | None], dict[str, object]] = {}
@@ -1159,6 +1292,7 @@ def _progres_level6(
             "sisa": sisa,
             "ada_b": ada_b,
             "lengkap": lengkap,
+            "parsial": not ada_b,
             "mundur": mundur,
         }
     return keluaran
@@ -1173,6 +1307,8 @@ def _status_agregat(units: Sequence[Mapping[str, object]], target: int, sisa: in
         return "belum_b"
     if any(unit["target"] and bool(unit["mundur"]) for unit in units):
         return "mundur"
+    if any(unit["target"] and bool(unit.get("parsial")) for unit in units):
+        return "parsial"
     if any(unit["target"] and not unit["ada_b"] for unit in units):
         return "parsial"
     if any(unit["target"] and unit["ada_b"] and not unit["lengkap"] for unit in units):
@@ -1242,7 +1378,7 @@ def _baris_level6(
             if cucu is None:
                 continue
             anak.add(str(cucu))
-            if unit["ada_b"]:
+            if unit["ada_b"] and not unit.get("parsial"):
                 anak_ada.add(str(cucu))
 
         baris.append(

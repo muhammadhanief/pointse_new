@@ -19,6 +19,10 @@ Tujuh tabel:
 - ``rekap_subsls`` : snapshot rekap per **level 6/SubSLS** per job per dasar,
   disimpan **sebelum** titik ``benar_awal`` dipangkas. Ini satuan hitung target
   vs hasil B supaya kabupaten, kecamatan, dan desa selalu rekonsiliasi;
+- ``rekap_target`` : capaian B terhadap target A per **level 6/SubSLS**, dihitung
+  per ``assignment_id`` (bukan per jumlah baris per kode). Dibaca dashboard untuk
+  target/selesai/sisa supaya perubahan ``level_6_full_code`` di berkas B tidak
+  memindahkan capaian;
 - ``rekap_kabupaten``: rekap yang sama dijumlahkan per **kabupaten/kota**
   (``kdprov``+``kdkab``) per job per dasar; dibaca untuk ringkasan dan tren;
 - ``geotag_master``: geotag asli per kabupaten/kota yang diunggah admin provinsi.
@@ -387,6 +391,48 @@ class RekapSubsls(Base):
     ditindak_posisi_salah: Mapped[int] = mapped_column(Integer)
     digeser: Mapped[int] = mapped_column(Integer)
     tanpa_wilayah: Mapped[int] = mapped_column(Integer)
+
+
+class RekapTarget(Base):
+    """Capaian B terhadap target A dihitung **per ``assignment_id``**.
+
+    Satu baris = satu kode level 6 (atau satu SubSLS posisi untuk ``dasar=posisi``).
+    ``target`` = banyak titik A yang ``flag_repair = 1`` pada kode itu; ``belum`` =
+    berapa di antaranya yang tidak selesai di B; ``hilang`` = berapa di antaranya
+    yang tidak ada sama sekali di berkas B.
+
+    Titik dicocokkan lewat ``assignment_id``, sehingga operator yang mengubah
+    ``level_6_full_code`` di berkas B tidak memindahkan capaian: wilayah tetap
+    mengikuti kode penugasan milik A (``dasar=tugas``) atau posisi hasil join B
+    (``dasar=posisi``).
+
+    Hanya diisi untuk job B yang punya pasangan A dengan detail titik tersimpan.
+    Job lama tanpa baris di sini memakai hitungan lama (lihat
+    ``layanan._progres_level6``).
+    """
+
+    __tablename__ = "rekap_target"
+    __table_args__ = (
+        Index("ix_rekap_target_run_b_dasar", "run_b_id", "dasar"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_b_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    #: Run A yang menjadi sumber target; dicatat untuk jejak, bukan kunci.
+    run_a_id: Mapped[int | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL")
+    )
+    dasar: Mapped[str] = mapped_column(String(8))
+
+    level_6_full_code: Mapped[str | None] = mapped_column(String(16))
+    wilayah_id: Mapped[int | None] = mapped_column(ForeignKey("wilayah.id"))
+
+    target: Mapped[int] = mapped_column(Integer)
+    belum: Mapped[int] = mapped_column(Integer)
+    hilang: Mapped[int] = mapped_column(Integer)
+    #: Titik yang tidak termasuk target A tapi masih ``flag_repair = 1`` di B
+    #: (kerusakan baru / titik bergeser). Mengurangi capaian, tidak menambah target.
+    regresi: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class RekapKabupaten(Base):

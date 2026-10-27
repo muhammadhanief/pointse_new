@@ -224,6 +224,33 @@ Setiap run diverifikasi: total `rekap_subsls` harus sama dengan
 karena satu run bisa memakan waktu dan RAM seperti pemrosesan biasa
 (`WORKER_MEM_BUDGET_MB` tetap berlaku).
 
+## 6c. Capaian per `assignment_id` (setelah migrasi 0013)
+
+Migrasi `0013` menambah tabel `rekap_target`. Tabel itu menyimpan capaian B
+terhadap target A yang dicocokkan lewat `assignment_id`, bukan lewat jumlah
+titik per `level_6_full_code`. Tujuannya: operator yang mengubah
+`level_6_full_code` di berkas B tidak lagi membuat kode asal "kehilangan" titik,
+sehingga rekap tidak menampilkan sisa palsu (kasus Batang 3325: 8 titik).
+
+Setelah `alembic upgrade head` tidak ada backfill: job B lama sudah kehilangan
+titik `flag_repair=0` di `titik_hasil`, jadi pencocokan per `assignment_id` tidak
+bisa dibangun ulang. Job lama tetap memakai hitungan lama (angka historis
+stabil); angka baru muncul untuk **job B yang diproses ulang**. Untuk
+kabupaten/kota yang angkanya masih janggal, unggah ulang berkas B terbaru
+(berkas mentah masih tersimpan), bukan mengunggah ulang berkas A.
+
+Yang dihitung untuk setiap kode level 6 milik A:
+
+- `target`: titik A ber-`flag_repair=1` pada kode itu (kode penugasan, dari A);
+- `belum`: target yang tidak ada di B **atau** masih `flag_repair=1` di B;
+- `hilang`: target yang tidak ada di B sama sekali (penanda "B tidak lengkap");
+- `regresi`: titik yang bukan target A tapi `flag_repair=1` di B (kerusakan baru,
+  mis. titik yang tadinya benar menjadi salah). Ini yang membuat capaian masih
+  bisa **turun**.
+
+Dasar `posisi` memakai SubSLS hasil join peta B (posisi sekarang), dasar `tugas`
+memakai kode penugasan A.
+
 ## 7. Backup
 
 Tambahkan cron harian:

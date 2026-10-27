@@ -21,16 +21,19 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from sqlalchemy import Select, and_, case, delete, func, insert, inspect, literal, or_, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.models import (
     DASAR_POSISI,
     DASAR_TUGAS,
     KOLOM_HITUNGAN,
     STATUS_SUKSES,
+    TIPE_A,
+    TIPE_B,
     RekapDesa,
     RekapKabupaten,
     RekapSubsls,
+    RekapTarget,
     Run,
     TitikHasil,
     Wilayah,
@@ -66,6 +69,19 @@ KOLOM_REKAP_SUBSLS: tuple[str, ...] = (
     "level_6_full_code",
     "wilayah_id",
     *KOLOM_HITUNGAN,
+)
+
+#: Kolom tujuan ``rekap_target`` (untuk ``insert().from_select``).
+KOLOM_REKAP_TARGET: tuple[str, ...] = (
+    "run_b_id",
+    "run_a_id",
+    "dasar",
+    "level_6_full_code",
+    "wilayah_id",
+    "target",
+    "belum",
+    "hilang",
+    "regresi",
 )
 
 
@@ -208,6 +224,224 @@ def kueri_rekap_subsls(run: Run, dasar: str) -> Select[tuple[object, ...]]:
         .where(TitikHasil.run_id == run.id)
         .group_by(kode_level6, Wilayah.id)
     )
+
+
+def _kandidat_kdkab(kdprov: str | None, kdkab: str) -> list[str]:
+    """Bentuk kode kabupaten/kota yang mungkin tersimpan di ``runs``.
+
+    Peta wilkerstat memakai kode pendek (``07``), master/SSO memakai 4 digit
+    (``3307``); pencocokan run A ke run B harus menerima keduanya.
+    """
+    prov = str(kdprov).strip() if kdprov is not None else ""
+    kode = str(kdkab).strip()
+    if prov and len(kode) == 2:
+        kode = f"{prov[:2]}{kode}"
+    if len(kode) == 4:
+        return sorted({kode, kode[2:]})
+    return [kode]
+
+
+def run_a_pasangan(sesi: Session, run_b: Run) -> Run | None:
+    """Run A yang menjadi sumber target untuk ``run_b`` (kalau bisa dipakai).
+
+    Aturan pairing dashboard: B harus dibuat setelah A. Kalau ``sumber_run_a_id``
+    dicatat saat unggah, A itulah yang dipakai; kalau tidak, dipakai A sukses
+    terakhir sebelum B. A tanpa detail titik (``detail_tersedia`` = 0) tidak bisa
+    dicocokkan per ``assignment_id`` sehingga dianggap tidak ada.
+    """
+    if run_b.tipe != TIPE_B:
+        return None
+    if run_b.sumber_run_a_id is not None:
+        calon = sesi.get(Run, run_b.sumber_run_a_id)
+        if (
+            calon is not None
+            and calon.tipe == TIPE_A
+            and calon.status == STATUS_SUKSES
+            and calon.detail_tersedia
+        ):
+            return calon
+    return sesi.scalars(
+        select(Run)
+        .where(
+            Run.tipe == TIPE_A,
+            Run.status == STATUS_SUKSES,
+            Run.detail_tersedia == 1,
+            Run.kdprov == run_b.kdprov,
+            Run.kdkab.in_(_kandidat_kdkab(run_b.kdprov, run_b.kdkab)),
+            Run.id < run_b.id,
+        )
+        .order_by(Run.id.desc())
+        .limit(1)
+    ).first()
+
+
+def kueri_rekap_target(
+    run_a: Run, run_b: Run, dasar: str
+) -> Select[tuple[object, ...]]:
+    """Query capaian B terhadap target A, dicocokkan lewat ``assignment_id``.
+
+    Target = titik A dengan ``flag_repair = 1`` (itulah yang perlu diperbaiki).
+    Untuk ``dasar=tugas`` wilayahnya kode penugasan A, sehingga kode yang diubah
+    operator di berkas B tidak memindahkan capaian. Untuk ``dasar=posisi``
+    wilayahnya posisi titik di B (hasil join peta yang dihitung server), dan titik
+    yang hilang dari B memakai posisi A.
+
+    ``belum`` menghitung target yang tidak ada di B **atau** masih
+    ``flag_repair = 1``; ``hilang`` hanya yang tidak ada di B.
+    """
+    if dasar not in DASAR:
+        raise ValueError(f"dasar harus '{DASAR_TUGAS}' atau '{DASAR_POSISI}', bukan '{dasar}'")
+
+    titik = aliased(TitikHasil)
+    banding = aliased(TitikHasil)
+    wilayah_tugas = aliased(Wilayah)
+    wilayah_a = aliased(Wilayah)
+    wilayah_b = aliased(Wilayah)
+
+    belum = _jumlah_kasus(
+        or_(banding.assignment_id.is_(None), func.coalesce(banding.flag_repair, 1) == 1)
+    )
+    hilang = _jumlah_kasus(banding.assignment_id.is_(None))
+
+    if dasar == DASAR_TUGAS:
+        kode_level6: object = titik.level_6_full_code
+        kunci_wilayah: object = wilayah_tugas.id
+    else:
+        kode_level6 = case(
+            (banding.assignment_id.is_(None), wilayah_a.idsubsls),
+            else_=wilayah_b.idsubsls,
+        )
+        kunci_wilayah = case(
+            (banding.assignment_id.is_(None), wilayah_a.id), else_=wilayah_b.id
+        )
+
+    return (
+        select(
+            literal(run_b.id),
+            literal(run_a.id),
+            literal(dasar),
+            kode_level6,
+            kunci_wilayah,
+            func.count(),
+            belum,
+            hilang,
+            literal(0),
+        )
+        .select_from(titik)
+        .join(
+            banding,
+            and_(
+                banding.run_id == run_b.id,
+                banding.assignment_id == titik.assignment_id,
+            ),
+            isouter=True,
+        )
+        .join(
+            wilayah_tugas,
+            wilayah_tugas.idsubsls == titik.level_6_full_code,
+            isouter=True,
+        )
+        .join(
+            wilayah_a,
+            wilayah_a.id == func.coalesce(titik.wilayah_edit_id, titik.wilayah_asal_id),
+            isouter=True,
+        )
+        .join(
+            wilayah_b,
+            wilayah_b.id == func.coalesce(banding.wilayah_edit_id, banding.wilayah_asal_id),
+            isouter=True,
+        )
+        .where(titik.run_id == run_a.id, titik.flag_repair == 1)
+        .group_by(kode_level6, kunci_wilayah)
+    )
+
+
+def kueri_regresi_b(run_a: Run, run_b: Run, dasar: str) -> Select[tuple[object, ...]]:
+    """Titik B yang ``flag_repair = 1`` dan **bukan** target A, per wilayah.
+
+    Ini kerusakan baru: titik yang tadinya benar di A menjadi salah di B. Titik
+    target tidak ikut di sini supaya tidak dihitung dua kali (sudah masuk
+    ``belum``). Wilayahnya memakai posisi hasil join peta (dihitung server),
+    bukan ``level_6_full_code`` dari berkas B.
+    """
+    banding = aliased(TitikHasil)
+    sumber = aliased(TitikHasil)
+    wilayah = aliased(Wilayah)
+    target_a = select(sumber.assignment_id).where(
+        sumber.run_id == run_a.id, sumber.flag_repair == 1
+    )
+    if dasar == DASAR_TUGAS:
+        kode_level6: object = banding.level_6_full_code
+        kunci_wilayah: object = wilayah.id
+        syarat_wilayah: object = wilayah.idsubsls == banding.level_6_full_code
+    else:
+        kode_level6 = wilayah.idsubsls
+        kunci_wilayah = wilayah.id
+        syarat_wilayah = wilayah.id == func.coalesce(
+            banding.wilayah_edit_id, banding.wilayah_asal_id
+        )
+    return (
+        select(kode_level6, kunci_wilayah, func.count())
+        .select_from(banding)
+        .join(wilayah, syarat_wilayah, isouter=True)
+        .where(
+            banding.run_id == run_b.id,
+            banding.flag_repair == 1,
+            banding.assignment_id.not_in(target_a),
+        )
+        .group_by(kode_level6, kunci_wilayah)
+    )
+
+
+def _tambahkan_regresi(sesi: Session, run_a: Run, run_b: Run, dasar: str) -> None:
+    """Tambahkan hitungan kerusakan baru ke baris ``rekap_target`` yang sesuai."""
+    for kode, wilayah_id, jumlah in sesi.execute(kueri_regresi_b(run_a, run_b, dasar)):
+        hasil = sesi.execute(
+            update(RekapTarget)
+            .where(
+                RekapTarget.run_b_id == run_b.id,
+                RekapTarget.dasar == dasar,
+                RekapTarget.level_6_full_code == kode,
+                RekapTarget.wilayah_id == wilayah_id,
+            )
+            .values(regresi=RekapTarget.regresi + int(jumlah))
+        )
+        if hasil.rowcount:
+            continue
+        sesi.add(
+            RekapTarget(
+                run_b_id=run_b.id,
+                run_a_id=run_a.id,
+                dasar=dasar,
+                level_6_full_code=kode,
+                wilayah_id=wilayah_id,
+                target=0,
+                belum=0,
+                hilang=0,
+                regresi=int(jumlah),
+            )
+        )
+
+
+def simpan_rekap_target(sesi: Session, run: Run) -> None:
+    """Isi ``rekap_target`` untuk job B (target A dicocokkan per ``assignment_id``).
+
+    Dipanggil di akhir job sukses **sebelum** :func:`pangkas_titik_hasil`, jadi
+    titik B yang sudah benar (``flag_repair = 0``) masih ada saat dicocokkan.
+    Job selain Proses B, atau B tanpa A yang detailnya tersimpan, tidak membuat
+    baris: dashboard memakai hitungan lama untuk run seperti itu.
+    """
+    sesi.execute(delete(RekapTarget).where(RekapTarget.run_b_id == run.id))
+    run_a = run_a_pasangan(sesi, run)
+    if run_a is None:
+        return
+    for dasar in DASAR:
+        sesi.execute(
+            insert(RekapTarget).from_select(
+                KOLOM_REKAP_TARGET, kueri_rekap_target(run_a, run, dasar)
+            )
+        )
+        _tambahkan_regresi(sesi, run_a, run, dasar)
 
 
 def _rekap_subsls_level6_siap(sesi: Session) -> bool:

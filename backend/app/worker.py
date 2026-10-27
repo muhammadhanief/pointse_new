@@ -894,6 +894,8 @@ def proses_satu_job(
                 siapkan_urut_penuh(sesi, run_id)
 
             modul_rekap.simpan_rekap(sesi, run)
+            # Capaian per assignment_id (target A vs B), juga sebelum pemangkasan.
+            modul_rekap.simpan_rekap_target(sesi, run)
 
             run.jumlah_baris = jumlah
             run.jumlah_tanpa_wilayah = hitung_tanpa_wilayah(sesi, run_id)

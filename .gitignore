@@ -8,6 +8,7 @@ docs/**/*.prj
 docs/**/*.pdf
 docs/**/*.xlsx
 docs/**/*.csv
+docs/**/*.cpg
 
 # Berkas pendamping SQLite/GPKG yang dibuat otomatis saat dibaca
 *.gpkg-shm
@@ -55,3 +56,6 @@ tmp/
 # Berkas unggahan & data server (jangan di-commit)
 backend/data/
 data/
+
+# Perbandingan hasil QGIS (data mentah, di luar repo)
+perbandingan/
