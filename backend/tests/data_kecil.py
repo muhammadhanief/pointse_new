@@ -13,7 +13,8 @@ import geopandas as gpd
 from shapely.geometry import Point, box
 
 # Wilayah dasar semua poligon uji (kdkab 3307 = Wonosobo, sama seperti data uji asli).
-WILAYAH: dict[str, str] = {
+# Enam kolom terakhir tidak dibaca proses, tetapi wajib ada di peta (SOP).
+WILAYAH: dict[str, Any] = {
     "kdprov": "33",
     "nmprov": "JAWA TENGAH",
     "kdkab": "3307",
@@ -24,6 +25,12 @@ WILAYAH: dict[str, str] = {
     "nmdesa": "KALIBEBER",
     "idsls": "3307010010003900",
     "nmsls": "SLS 001",
+    "kdsls": "0390",
+    "kdsubsls": "01",
+    "rw_dki": "000",
+    "tingkat": 1,
+    "nm_gedung": "",
+    "posisi": "",
 }
 
 # Dua poligon SubSLS: A1 di kotak (0..1, 0..1), A2 di kotak (2..3, 0..1).
@@ -115,6 +122,17 @@ def baris_titik_b(
         "bbtt": 0,
         "usaha": "0",
         "nama_usaha_bang": None,
+        # Kolom wilayah: wajib ada di berkas B (SOP) walau nilai di DB diambil
+        # dari join peta, bukan dari sini.
+        "kdprov": WILAYAH["kdprov"],
+        "nmprov": WILAYAH["nmprov"],
+        "kdkab": WILAYAH["kdkab"],
+        "nmkab": WILAYAH["nmkab"],
+        "kdkec": WILAYAH["kdkec"],
+        "nmkec": WILAYAH["nmkec"],
+        "kddesa": WILAYAH["kddesa"],
+        "nmdesa": WILAYAH["nmdesa"],
+        "nmsls": WILAYAH["nmsls"],
         "geometry": Point(
             longitude_origin if longitude is None else longitude,
             latitude_origin if latitude is None else latitude,

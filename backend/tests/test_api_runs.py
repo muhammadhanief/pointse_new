@@ -444,6 +444,40 @@ def test_unggah_menolak_kolom_wajib_hilang(
     assert list(dir_unggahan.iterdir()) == [], "folder unggahan tidak dibersihkan"
 
 
+def test_unggah_menolak_peta_tanpa_kolom_sop(klien: TestClient, tmp_path: Path) -> None:
+    """Peta tanpa kolom SOP ditolak walau proses tidak membaca kolom itu."""
+    titik, _ = berkas_uji(tmp_path)
+    peta = data_kecil.peta().drop(columns=["kdsls", "nm_gedung"])
+    berkas_peta = data_kecil.tulis(peta, tmp_path / "masukan" / "peta_sop.geojson")
+
+    resp = unggah(klien, titik, berkas_peta)
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "kolom wajib" in detail
+    assert "kdsls" in detail and "nm_gedung" in detail
+
+
+def test_unggah_b_menolak_tanpa_kolom_wilayah(klien: TestClient, tmp_path: Path) -> None:
+    """Titik B tanpa kolom wilayah (mis. nmsls) ditolak sebagai berkas tidak lengkap."""
+    baris = data_kecil.baris_titik_b("1")
+    del baris["nmsls"]
+    titik = data_kecil.tulis(data_kecil.titik_b(baris), tmp_path / "masukan" / "b.geojson")
+    peta = data_kecil.tulis(data_kecil.peta(), tmp_path / "masukan" / "peta.geojson")
+
+    resp = unggah(klien, titik, peta, tipe="B")
+    assert resp.status_code == 422
+    assert "nmsls" in resp.json()["detail"]
+
+
+def test_unggah_b_tanpa_kolom_hasil_proses_tetap_diterima(
+    klien: TestClient, tmp_path: Path
+) -> None:
+    """Kolom hasil hitungan Proses B tidak wajib ada di berkas masukan."""
+    titik, peta = berkas_uji_b(tmp_path)
+    resp = unggah(klien, titik, peta, tipe="B")
+    assert resp.status_code == 201, resp.text
+
+
 def test_unggah_menolak_peta_banyak_kabupaten(klien: TestClient, tmp_path: Path) -> None:
     """Peta dengan lebih dari satu kdkab ditolak (satu job = satu kabupaten)."""
     titik = data_kecil.tulis(data_kecil.titik_a(BARIS_A[0]), tmp_path / "titik.geojson")

@@ -49,6 +49,42 @@ KOLOM_WAJIB: dict[str, dict[str, Sequence[str]]] = {
     TIPE_B: {"titik": KOLOM_TITIK_B, "peta": KOLOM_PETA},
 }
 
+#: Kolom peta yang **wajib ada** (sesuai SOP peta SLS/SubSLS) tetapi tidak
+#: dibaca proses: nilainya tidak memengaruhi hasil, hanya memastikan berkas yang
+#: diunggah memang peta lengkap, bukan peta yang kolomnya sudah dipangkas.
+KOLOM_PETA_TAMBAHAN: tuple[str, ...] = (
+    "kdsls",
+    "kdsubsls",
+    "rw_dki",
+    "tingkat",
+    "nm_gedung",
+    "posisi",
+)
+
+#: Kolom titik B yang wajib ada walau nilainya diambil dari join peta. Keluaran
+#: Proses A sudah membawa kolom ini, jadi normalnya ikut terkirim.
+#:
+#: Kolom hasil hitungan Proses B (``flag_position``, ``flag_edit_atr_repair``,
+#: ``idsubsls_edited``, ``latitude_edited``, ``longitude_edited``) **tidak**
+#: diwajibkan: berkas masukan B yang sah belum punya kolom itu.
+KOLOM_TITIK_B_TAMBAHAN: tuple[str, ...] = (
+    "kdprov",
+    "nmprov",
+    "kdkab",
+    "nmkab",
+    "kdkec",
+    "nmkec",
+    "kddesa",
+    "nmdesa",
+    "nmsls",
+)
+
+#: Kolom "wajib ada, tidak dibaca" per tipe dan peran berkas.
+KOLOM_TAMBAHAN: dict[str, dict[str, Sequence[str]]] = {
+    TIPE_A: {"titik": (), "peta": KOLOM_PETA_TAMBAHAN},
+    TIPE_B: {"titik": KOLOM_TITIK_B_TAMBAHAN, "peta": KOLOM_PETA_TAMBAHAN},
+}
+
 # Tingkat rekap progres (PRD §5): kolom kode + kolom nama pada tabel ``wilayah``.
 # ``sls`` = tingkat SLS (idsls), ``subsls`` = tingkat SubSLS (idsubsls, level_6).
 TINGKAT: dict[str, tuple[str, str]] = {
@@ -229,7 +265,9 @@ def periksa_peta(berkas: Path, layer: str | None) -> tuple[str | None, str, str]
     Satu job hanya untuk satu kabupaten/kota (PRD §8, aturan "satu job aktif per
     kabupaten/tipe"), jadi nilai ``kdprov``/``kdkab`` di peta harus tunggal.
     """
-    nama_layer = pilih_layer(berkas, KOLOM_PETA, layer, "peta")
+    nama_layer = pilih_layer(
+        berkas, (*KOLOM_PETA, *KOLOM_PETA_TAMBAHAN), layer, "peta"
+    )
     data = pyogrio.read_dataframe(
         berkas, layer=nama_layer, columns=["kdprov", "kdkab"], read_geometry=False
     )
@@ -250,7 +288,10 @@ def periksa_unggahan(
         raise KesalahanUnggahan(f"tipe harus {TIPE_A} atau {TIPE_B}, bukan '{tipe}'")
 
     kolom = KOLOM_WAJIB[tipe]
-    nama_input = pilih_layer(berkas_input, kolom["titik"], layer_input, "titik")
+    tambahan = KOLOM_TAMBAHAN[tipe]
+    nama_input = pilih_layer(
+        berkas_input, (*kolom["titik"], *tambahan["titik"]), layer_input, "titik"
+    )
     nama_peta, kdprov, kdkab = periksa_peta(berkas_peta, layer_peta)
     return InfoUnggahan(
         kdprov=kdprov, kdkab=kdkab, layer_input=nama_input, layer_peta=nama_peta
