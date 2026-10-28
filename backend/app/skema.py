@@ -629,6 +629,8 @@ class AnomaliRunOut(BaseModel):
     run_id: int
     tanggal_data: date
     pengunggah: str | None = None
+    #: Kode kabupaten/kota pemilik run (4 digit).
+    kdkab: str | None = None
     target: int = 0
     selesai: int = 0
     #: 0 = job ini belum dihitung ulang setelah fitur anomali ada.
@@ -646,6 +648,9 @@ class AnomaliJenisOut(BaseModel):
 class AnomaliBarisOut(BaseModel):
     """Satu titik yang menurut sistem masih bermasalah."""
 
+    jenis: str
+    #: Kode kabupaten/kota asal baris (untuk filter banyak wilayah).
+    kdkab: str | None = None
     assignment_id: str | None = None
     assignment_id_baru: str | None = None
     unique_bang: str | None = None
@@ -663,6 +668,9 @@ class AnomaliOut(BaseModel):
     """Isi halaman Anomali titik."""
 
     run: AnomaliRunOut | None = None
+    #: Semua run B yang ikut dihitung (lebih dari satu bila memilih banyak
+    #: kabupaten/kota).
+    runs: list[AnomaliRunOut] = []
     jenis: list[AnomaliJenisOut]
     total: int
     baris: list[AnomaliBarisOut]

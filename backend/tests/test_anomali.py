@@ -286,14 +286,72 @@ def test_api_anomali_menampilkan_jenis_dan_baris(klien, sesi: Session) -> None:
 
 
 def test_api_anomali_kabupaten_tanpa_run_b(klien) -> None:
-    """Wilayah yang belum pernah sukses Proses B mengembalikan run kosong."""
+    """Wilayah yang belum pernah sukses Proses B mengembalikan daftar kosong."""
     jawab = klien.get("/anomali", params={"kdprov": "33", "kdkab": "3399"})
     assert jawab.status_code == 200
-    assert jawab.json() == {"run": None, "jenis": [], "total": 0, "baris": []}
+    isi = jawab.json()
+    assert isi["run"] is None
+    assert isi["runs"] == []
+    assert isi["total"] == 0
+    assert isi["baris"] == []
+    assert len(isi["jenis"]) == 7
+    assert all(satu["jumlah"] == 0 for satu in isi["jenis"])
+
+
+def test_api_anomali_banyak_kabupaten_dan_jenis(klien, sesi: Session) -> None:
+    """Filter boleh memilih banyak kabupaten/kota dan banyak jenis sekaligus."""
+    _, run_b = _siapkan(sesi)
+    simpan_anomali(sesi, run_b)
+
+    # Kabupaten lain dengan satu anomali "hilang" saja.
+    run_lain = Run(
+        tipe=TIPE_B,
+        kdprov="33",
+        kdkab="3326",
+        user="uji",
+        status=STATUS_SUKSES,
+        nama_file_input="lain.geojson",
+        nama_file_peta="peta.geojson",
+        berkas_input="/tmp/lain.geojson",
+        berkas_peta="/tmp/peta.geojson",
+        jumlah_baris=0,
+        detail_tersedia=1,
+    )
+    sesi.add(run_lain)
+    sesi.flush()
+    sesi.add(
+        AnomaliTitik(
+            run_b_id=run_lain.id,
+            jenis="hilang",
+            assignment_id="z1",
+            level_6_full_code="3326010001000100",
+        )
+    )
+    sesi.commit()
+
+    jawab = klien.get(
+        "/anomali",
+        params=[
+            ("kdprov", "33"),
+            ("kdkab", "3325"),
+            ("kdkab", "3326"),
+            ("jenis", "hilang"),
+        ],
+    )
+    assert jawab.status_code == 200
+    isi = jawab.json()
+    assert isi["run"] is None
+    assert {satu["kdkab"] for satu in isi["runs"]} == {"3325", "3326"}
+    assert isi["total"] == 2
+    assert {baris["kdkab"] for baris in isi["baris"]} == {"3325", "3326"}
+    assert all(baris["jenis"] == "hilang" for baris in isi["baris"])
+    jumlah = {satu["kode"]: satu["jumlah"] for satu in isi["jenis"]}
+    assert jumlah["hilang"] == 2
+    assert jumlah["titik_baru"] == 1
 
 
 def test_ekspor_anomali_xlsx_satu_jenis(klien, sesi: Session) -> None:
-    """Excel anomali berisi satu jenis sesuai dropdown, dan jenis wajib diisi."""
+    """Excel anomali memuat jenis yang dipilih; tanpa jenis memuat semua lembar."""
     run_a, run_b = _siapkan(sesi)
     simpan_anomali(sesi, run_b)
     sesi.commit()
@@ -312,7 +370,8 @@ def test_ekspor_anomali_xlsx_satu_jenis(klien, sesi: Session) -> None:
     tanpa_jenis = klien.get(
         "/anomali.xlsx", params={"kdprov": "33", "kdkab": "3325"}
     )
-    assert tanpa_jenis.status_code == 422
+    assert tanpa_jenis.status_code == 200
+    assert "anomali_semua" in tanpa_jenis.headers["content-disposition"]
 
 
 def test_bersihkan_hasil_membuang_anomali_dan_penanda(sesi: Session) -> None:

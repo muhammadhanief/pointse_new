@@ -7,8 +7,8 @@ pemantauan admin. Admin provinsi hanya melihat pengguna di provinsinya.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app import aktivitas, auth
@@ -91,6 +91,7 @@ def catat_kehadiran(
 
 @router.get("/pengguna", response_model=DaftarPenggunaAktifOut)
 def daftar_pengguna(
+    q: str | None = Query(None, max_length=100, description="Cari nama/username/NIP/wilayah"),
     sesi: Session = Depends(get_session),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> DaftarPenggunaAktifOut:
@@ -101,6 +102,17 @@ def daftar_pengguna(
     perintah = select(PenggunaAktif)
     if kdprov is not None:
         perintah = perintah.where(PenggunaAktif.kdprov == kdprov)
+    if q and q.strip():
+        pola = f"%{q.strip()}%"
+        perintah = perintah.where(
+            or_(
+                PenggunaAktif.nama.like(pola),
+                PenggunaAktif.username.like(pola),
+                PenggunaAktif.nip.like(pola),
+                PenggunaAktif.kdkab.like(pola),
+                PenggunaAktif.kdprov.like(pola),
+            )
+        )
     perintah = perintah.order_by(PenggunaAktif.terakhir_aktif.desc()).limit(500)
 
     waktu = sekarang()

@@ -78,40 +78,48 @@ export function PenggunaAktifClient() {
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState<string | null>(null);
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
+  const [cari, setCari] = useState("");
+  const [kataKunci, setKataKunci] = useState("");
   const kendaliRef = useRef<AbortController | null>(null);
 
-  const muat = useCallback(async (senyap = false) => {
-    kendaliRef.current?.abort();
-    const kendali = new AbortController();
-    kendaliRef.current = kendali;
+  const muat = useCallback(
+    async (senyap = false) => {
+      kendaliRef.current?.abort();
+      const kendali = new AbortController();
+      kendaliRef.current = kendali;
 
-    if (!senyap) {
-      setMemuat(true);
-    }
-    setGalat(null);
+      if (!senyap) {
+        setMemuat(true);
+      }
+      setGalat(null);
 
-    try {
-      const hasil = await ambilJson<DaftarPenggunaAktif>("/pengguna", {
-        signal: kendali.signal,
-      });
-      if (!kendali.signal.aborted) {
-        setData(hasil);
-        setDiperbarui(new Date().toISOString());
+      try {
+        const jalur = kataKunci
+          ? `/pengguna?q=${encodeURIComponent(kataKunci)}`
+          : "/pengguna";
+        const hasil = await ambilJson<DaftarPenggunaAktif>(jalur, {
+          signal: kendali.signal,
+        });
+        if (!kendali.signal.aborted) {
+          setData(hasil);
+          setDiperbarui(new Date().toISOString());
+        }
+      } catch (kesalahan) {
+        if (!adalahBatal(kesalahan)) {
+          setGalat(
+            kesalahan instanceof KesalahanApi && kesalahan.status === 404
+              ? "Endpoint pengguna aktif belum tersedia di backend (404). Deploy backend dan jalankan migrasi 0010."
+              : pesanKesalahan(kesalahan),
+          );
+        }
+      } finally {
+        if (!kendali.signal.aborted) {
+          setMemuat(false);
+        }
       }
-    } catch (kesalahan) {
-      if (!adalahBatal(kesalahan)) {
-        setGalat(
-          kesalahan instanceof KesalahanApi && kesalahan.status === 404
-            ? "Endpoint pengguna aktif belum tersedia di backend (404). Deploy backend dan jalankan migrasi 0010."
-            : pesanKesalahan(kesalahan),
-        );
-      }
-    } finally {
-      if (!kendali.signal.aborted) {
-        setMemuat(false);
-      }
-    }
-  }, []);
+    },
+    [kataKunci],
+  );
 
   useEffect(() => {
     void muat();
@@ -151,6 +159,40 @@ export function PenggunaAktifClient() {
         </div>
       ) : null}
 
+      <form
+        className="mt-3 flex flex-wrap items-end gap-1.5"
+        onSubmit={(kejadian) => {
+          kejadian.preventDefault();
+          setKataKunci(cari.trim());
+        }}
+      >
+        <label className="min-w-0 flex-1 text-sm font-medium text-ink">
+          Cari pengguna
+          <input
+            type="search"
+            value={cari}
+            onChange={(kejadian) => setCari(kejadian.target.value)}
+            placeholder="nama, username, NIP, atau kode wilayah"
+            className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
+          />
+        </label>
+        <TombolAksi type="submit" varian="sekunder" className="min-h-9 px-2.5 text-xs">
+          Cari
+        </TombolAksi>
+        {kataKunci ? (
+          <TombolAksi
+            varian="sekunder"
+            className="min-h-9 px-2.5 text-xs"
+            onClick={() => {
+              setCari("");
+              setKataKunci("");
+            }}
+          >
+            Reset
+          </TombolAksi>
+        ) : null}
+      </form>
+
       {galat ? (
         <div
           role="alert"
@@ -172,9 +214,16 @@ export function PenggunaAktifClient() {
       ) : null}
 
       {!memuat && data && data.baris.length === 0 ? (
-        <EmptyState judul="Belum ada pengguna tercatat">
-          Kehadiran akan muncul setelah pengguna membuka dashboard PointSE.
-        </EmptyState>
+        kataKunci ? (
+          <EmptyState judul="Tidak ada pengguna yang cocok">
+            Tidak ada nama, username, NIP, atau kode wilayah yang memuat
+            &ldquo;{kataKunci}&rdquo;. Coba kata kunci lain.
+          </EmptyState>
+        ) : (
+          <EmptyState judul="Belum ada pengguna tercatat">
+            Kehadiran akan muncul setelah pengguna membuka dashboard PointSE.
+          </EmptyState>
+        )
       ) : null}
 
       {data && data.baris.length > 0 ? (

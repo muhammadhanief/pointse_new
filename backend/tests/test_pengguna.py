@@ -106,6 +106,32 @@ def test_daftar_pengguna_dibatasi_provinsi(klien: TestClient, sesi: Session) -> 
     assert data["total"] == 2
 
 
+def test_daftar_pengguna_bisa_dicari(klien: TestClient, sesi: Session) -> None:
+    """Parameter ``q`` menyaring nama/username/NIP/kode wilayah."""
+    sesi.add_all(
+        [
+            _baris("admin33"),
+            _baris("petugas3307", kdkab="3307"),
+            _baris("petugas3374", kdkab="3374"),
+        ]
+    )
+    sesi.commit()
+
+    admin = _pengguna()
+    app.dependency_overrides[auth.pengguna_saat_ini] = lambda: admin
+    try:
+        resp = klien.get("/pengguna", params={"q": "3307"})
+        kosong = klien.get("/pengguna", params={"q": "tidak-ada"})
+    finally:
+        app.dependency_overrides.pop(auth.pengguna_saat_ini, None)
+
+    assert resp.status_code == 200
+    assert [item["sub"] for item in resp.json()["baris"]] == ["petugas3307"]
+    assert kosong.status_code == 200
+    assert kosong.json()["baris"] == []
+    assert kosong.json()["total"] == 0
+
+
 def test_daftar_pengguna_hanya_admin(klien: TestClient) -> None:
     """Petugas kabupaten/kota tidak boleh membuka pemantauan pengguna."""
     petugas = _pengguna(

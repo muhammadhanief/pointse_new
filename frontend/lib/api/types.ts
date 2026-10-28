@@ -341,6 +341,7 @@ export type AnomaliRun = {
   run_id: number;
   tanggal_data: string;
   pengunggah: string | null;
+  kdkab: string | null;
   target: number;
   selesai: number;
   anomali_versi: number;
@@ -353,6 +354,8 @@ export type AnomaliJenis = {
 };
 
 export type AnomaliBaris = {
+  jenis: string;
+  kdkab: string | null;
   assignment_id: string | null;
   assignment_id_baru: string | null;
   unique_bang: string | null;
@@ -368,6 +371,7 @@ export type AnomaliBaris = {
 
 export type Anomali = {
   run: AnomaliRun | null;
+  runs: AnomaliRun[];
   jenis: AnomaliJenis[];
   total: number;
   baris: AnomaliBaris[];

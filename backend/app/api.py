@@ -941,22 +941,26 @@ def ekspor_rekap(
 MEDIA_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def _anomali_run(
-    sesi: Session,
-    pengguna: auth.Pengguna,
-    kdprov: str | None,
-    kdkab: str | None,
-) -> Run:
-    """Run B sukses terakhir satu kabupaten/kota (422 bila belum dipilih)."""
-    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
-    if kdkab is None:
+def _anomali_kdkab(
+    pengguna: auth.Pengguna, kdprov: str | None, kdkab: list[str] | None
+) -> tuple[str | None, list[str]]:
+    """Filter provinsi + daftar kabupaten/kota yang boleh diakses.
+
+    Petugas kabupaten/kota selalu dipaksa ke wilayahnya sendiri; admin provinsi
+    boleh memilih banyak kabupaten/kota sekaligus (``Semua``).
+    """
+    prov, tetap = auth.saring_akses(pengguna, kdprov, None)
+    if tetap is not None:
+        return prov, [tetap]
+    diminta = [satu.strip() for satu in (kdkab or []) if satu and satu.strip()]
+    if not diminta:
         raise HTTPException(status_code=422, detail="pilih kabupaten/kota")
-    run = anomali.run_b_terakhir(sesi, kdprov, kdkab)
-    if run is None:
-        raise HTTPException(
-            status_code=404, detail="belum ada Proses B yang sukses untuk wilayah ini"
-        )
-    return run
+    hasil: list[str] = []
+    for satu in diminta:
+        _, kab = auth.saring_akses(pengguna, prov, satu)
+        if kab and kab not in hasil:
+            hasil.append(kab)
+    return prov, hasil
 
 
 def _ringkas_anomali(sesi: Session, run: Run) -> AnomaliRunOut:
@@ -973,6 +977,7 @@ def _ringkas_anomali(sesi: Session, run: Run) -> AnomaliRunOut:
         run_id=run.id,
         tanggal_data=run.tanggal_data,
         pengunggah=run.user,
+        kdkab=run.kdkab,
         target=int(target),
         selesai=int(selesai),
         anomali_versi=int(run.anomali_versi or 0),
@@ -982,45 +987,53 @@ def _ringkas_anomali(sesi: Session, run: Run) -> AnomaliRunOut:
 @router.get("/anomali", response_model=AnomaliOut)
 def daftar_anomali(
     kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
-    kdkab: str | None = Query(None, description="Kode kabupaten/kota, mis. 3320"),
-    jenis: str | None = Query(None, description="Kode jenis anomali (kosong = semua)"),
+    kdkab: list[str] | None = Query(
+        None, description="Kode kabupaten/kota (boleh diulang), mis. 3320&kdkab=3318"
+    ),
+    jenis: list[str] | None = Query(
+        None, description="Kode jenis anomali (boleh diulang; kosong = semua)"
+    ),
     q: str | None = Query(None, max_length=100, description="Cari id/kode SLS/bangunan"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     sesi: Session = Depends(get_session),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> AnomaliOut:
-    """Anomali titik pada run Proses B sukses terakhir satu kabupaten/kota.
+    """Anomali titik pada run Proses B sukses terakhir tiap kabupaten/kota.
 
     Rekap memakai klaim kabupaten; endpoint ini menunjukkan titik mana yang
     menurut sistem masih bermasalah, sehingga selisih angkanya bisa ditelusuri.
     """
-    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
-    if kdkab is None:
-        raise HTTPException(status_code=422, detail="pilih kabupaten/kota")
-    run = anomali.run_b_terakhir(sesi, kdprov, kdkab)
-    if run is None:
-        return AnomaliOut(run=None, jenis=[], total=0, baris=[])
+    kdprov, daftar_kab = _anomali_kdkab(pengguna, kdprov, kdkab)
+    daftar_jenis_diminta = [satu.strip() for satu in (jenis or []) if satu.strip()]
+    asing = [satu for satu in daftar_jenis_diminta if satu not in anomali.LABEL]
+    if asing:
+        raise HTTPException(
+            status_code=422, detail=f"jenis anomali tidak dikenal: {', '.join(asing)}"
+        )
 
-    jumlah = anomali.hitung_per_jenis(sesi, run.id)
+    runs = anomali.run_b_terakhir_banyak(sesi, kdprov, daftar_kab)
+    ringkas = [_ringkas_anomali(sesi, satu) for satu in runs]
+    ids = [satu.id for satu in runs]
+    jumlah = anomali.hitung_per_jenis(sesi, ids)
     daftar_jenis = [
         AnomaliJenisOut(kode=kode, label=label, jumlah=jumlah.get(kode, 0))
         for kode, label in anomali.JENIS
     ]
-    if jenis and jenis not in anomali.LABEL:
-        raise HTTPException(
-            status_code=422, detail=f"jenis anomali tidak dikenal: {jenis}"
-        )
+    if not runs:
+        return AnomaliOut(run=None, runs=[], jenis=daftar_jenis, total=0, baris=[])
 
-    kueri = anomali.kueri_baris(run.id, jenis, q.strip() if q else None)
+    kueri = anomali.kueri_baris(ids, daftar_jenis_diminta or None, q.strip() if q else None)
     total = int(
         sesi.scalar(select(func.count()).select_from(kueri.subquery())) or 0
     )
     baris = []
-    for satu, nmsls, nmdesa in sesi.execute(kueri.limit(limit).offset(offset)):
+    for satu, nmsls, nmdesa, kode_kab in sesi.execute(kueri.limit(limit).offset(offset)):
         wilayah = nmsls or nmdesa
         baris.append(
             AnomaliBarisOut(
+                jenis=satu.jenis,
+                kdkab=kode_kab,
                 assignment_id=satu.assignment_id,
                 assignment_id_baru=satu.assignment_id_baru,
                 unique_bang=satu.unique_bang,
@@ -1035,7 +1048,8 @@ def daftar_anomali(
             )
         )
     return AnomaliOut(
-        run=_ringkas_anomali(sesi, run),
+        run=ringkas[0] if len(ringkas) == 1 else None,
+        runs=ringkas,
         jenis=daftar_jenis,
         total=total,
         baris=baris,
@@ -1045,64 +1059,85 @@ def daftar_anomali(
 @router.get("/anomali.xlsx", response_class=StreamingResponse)
 def ekspor_anomali(
     kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
-    kdkab: str | None = Query(None, description="Kode kabupaten/kota, mis. 3320"),
-    jenis: str = Query(..., description="Kode jenis anomali (wajib, satu jenis)"),
+    kdkab: list[str] | None = Query(None, description="Kode kabupaten/kota (boleh diulang)"),
+    jenis: list[str] | None = Query(None, description="Kode jenis anomali (boleh diulang)"),
     q: str | None = Query(None, max_length=100, description="Cari id/kode SLS/bangunan"),
     sesi: Session = Depends(get_session),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> StreamingResponse:
-    """Unduh satu jenis anomali (sesuai filter aktif) sebagai Excel."""
-    if jenis not in anomali.LABEL:
+    """Unduh anomali sesuai filter aktif sebagai Excel.
+
+    Satu lembar per jenis; bila jenis tidak dipilih, semua jenis ikut diunduh.
+    """
+    kdprov, daftar_kab = _anomali_kdkab(pengguna, kdprov, kdkab)
+    diminta = [satu.strip() for satu in (jenis or []) if satu.strip()]
+    asing = [satu for satu in diminta if satu not in anomali.LABEL]
+    if asing:
         raise HTTPException(
-            status_code=422, detail=f"jenis anomali tidak dikenal: {jenis}"
+            status_code=422, detail=f"jenis anomali tidak dikenal: {', '.join(asing)}"
         )
-    run = _anomali_run(sesi, pengguna, kdprov, kdkab)
+
+    runs = anomali.run_b_terakhir_banyak(sesi, kdprov, daftar_kab)
+    if not runs:
+        raise HTTPException(
+            status_code=404, detail="belum ada Proses B yang sukses untuk wilayah ini"
+        )
+    ids = [satu.id for satu in runs]
 
     # Impor di dalam fungsi supaya API tetap ringan saat start.
     from openpyxl import Workbook
 
     buku = Workbook(write_only=True)
-    lembar = buku.create_sheet("anomali")
-    lembar.append(
-        [
-            "assignment_id",
-            "assignment_id_baru",
-            "unique_bang",
-            "level_6_full_code",
-            "level_6_full_code_b",
-            "wilayah",
-            "latitude",
-            "longitude",
-            "flag_unggah",
-            "flag_model",
-            "keterangan",
-        ]
-    )
-    for satu, nmsls, nmdesa in sesi.execute(
-        anomali.kueri_baris(run.id, jenis, q.strip() if q else None)
-    ):
-        wilayah = nmsls or nmdesa
+    urutan = [kode for kode, _ in anomali.JENIS if not diminta or kode in diminta]
+    for kode in urutan:
+        lembar = buku.create_sheet(anomali.LABEL[kode][:31])
         lembar.append(
             [
-                satu.assignment_id,
-                satu.assignment_id_baru,
-                satu.unique_bang,
-                satu.level_6_full_code,
-                satu.level_6_full_code_b,
-                wilayah,
-                satu.latitude,
-                satu.longitude,
-                satu.flag_unggah,
-                satu.flag_model,
-                anomali.keterangan(satu, wilayah),
+                "kabupaten",
+                "assignment_id",
+                "assignment_id_baru",
+                "unique_bang",
+                "level_6_full_code",
+                "level_6_full_code_b",
+                "wilayah",
+                "latitude",
+                "longitude",
+                "flag_unggah",
+                "flag_model",
+                "keterangan",
             ]
         )
+        for satu, nmsls, nmdesa, kode_kab in sesi.execute(
+            anomali.kueri_baris(ids, [kode], q.strip() if q else None)
+        ):
+            wilayah = nmsls or nmdesa
+            lembar.append(
+                [
+                    kode_kab,
+                    satu.assignment_id,
+                    satu.assignment_id_baru,
+                    satu.unique_bang,
+                    satu.level_6_full_code,
+                    satu.level_6_full_code_b,
+                    wilayah,
+                    satu.latitude,
+                    satu.longitude,
+                    satu.flag_unggah,
+                    satu.flag_model,
+                    anomali.keterangan(satu, wilayah),
+                ]
+            )
 
     aliran = io.BytesIO()
     buku.save(aliran)
     aliran.seek(0)
-    kode = _kode_unduh(run.kdprov, run.kdkab)
-    nama = f"{kode}_anomali_{jenis}_{run.tanggal_data}.xlsx"
+    kode_unduh = (
+        _kode_unduh(runs[0].kdprov, runs[0].kdkab)
+        if len(runs) == 1
+        else f"{runs[0].kdprov}-{len(runs)}kab"
+    )
+    label = diminta[0] if len(diminta) == 1 else "semua"
+    nama = f"{kode_unduh}_anomali_{label}_{runs[0].tanggal_data}.xlsx"
     return StreamingResponse(
         aliran,
         media_type=MEDIA_XLSX,

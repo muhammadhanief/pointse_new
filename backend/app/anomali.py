@@ -458,16 +458,33 @@ def simpan_anomali(sesi: Session, run: Run) -> int:
     return jumlah
 
 
-def hitung_per_jenis(sesi: Session, run_b_id: int) -> dict[str, int]:
-    """Jumlah anomali per jenis untuk satu run B."""
+def hitung_per_jenis(sesi: Session, run_b_id: int | list[int]) -> dict[str, int]:
+    """Jumlah anomali per jenis untuk satu atau beberapa run B."""
+    ids = [run_b_id] if isinstance(run_b_id, int) else list(run_b_id)
+    if not ids:
+        return {}
     return {
         str(jenis): int(jumlah)
         for jenis, jumlah in sesi.execute(
             select(AnomaliTitik.jenis, func.count())
-            .where(AnomaliTitik.run_b_id == run_b_id)
+            .where(AnomaliTitik.run_b_id.in_(ids))
             .group_by(AnomaliTitik.jenis)
         )
     }
+
+
+def run_b_terakhir_banyak(
+    sesi: Session, kdprov: str | None, daftar_kdkab: list[str]
+) -> list[Run]:
+    """Run B sukses terakhir untuk tiap kabupaten/kota (urutan masukan)."""
+    hasil: list[Run] = []
+    terpakai: set[int] = set()
+    for kdkab in daftar_kdkab:
+        run = run_b_terakhir(sesi, kdprov, kdkab)
+        if run is not None and run.id not in terpakai:
+            terpakai.add(run.id)
+            hasil.append(run)
+    return hasil
 
 
 def run_b_terakhir(sesi: Session, kdprov: str | None, kdkab: str) -> Run | None:
@@ -486,16 +503,26 @@ def run_b_terakhir(sesi: Session, kdprov: str | None, kdkab: str) -> Run | None:
 
 
 def kueri_baris(
-    run_b_id: int, jenis: str | None = None, cari: str | None = None
+    run_b_id: int | list[int],
+    jenis: str | list[str] | None = None,
+    cari: str | None = None,
 ) -> Any:
-    """Query baris anomali + nama wilayah (SLS/desa) untuk satu run B."""
+    """Query baris anomali + nama wilayah (SLS/desa) untuk satu/beberapa run B.
+
+    Kembaliannya ``(AnomaliTitik, nmsls, nmdesa, kdkab)`` supaya tabel dan Excel
+    bisa menandai asal kabupaten/kota saat filter memilih lebih dari satu.
+    """
+    ids = [run_b_id] if isinstance(run_b_id, int) else list(run_b_id)
     kueri = (
-        select(AnomaliTitik, Wilayah.nmsls, Wilayah.nmdesa)
+        select(AnomaliTitik, Wilayah.nmsls, Wilayah.nmdesa, Run.kdkab)
         .join(Wilayah, Wilayah.id == AnomaliTitik.wilayah_id, isouter=True)
-        .where(AnomaliTitik.run_b_id == run_b_id)
+        .join(Run, Run.id == AnomaliTitik.run_b_id)
+        .where(AnomaliTitik.run_b_id.in_(ids))
     )
     if jenis:
-        kueri = kueri.where(AnomaliTitik.jenis == jenis)
+        daftar = [jenis] if isinstance(jenis, str) else list(jenis)
+        if daftar:
+            kueri = kueri.where(AnomaliTitik.jenis.in_(daftar))
     if cari:
         pola = f"%{cari}%"
         kueri = kueri.where(
@@ -504,10 +531,15 @@ def kueri_baris(
                 AnomaliTitik.assignment_id_baru.like(pola),
                 AnomaliTitik.unique_bang.like(pola),
                 AnomaliTitik.level_6_full_code.like(pola),
+                AnomaliTitik.level_6_full_code_b.like(pola),
+                Wilayah.nmsls.like(pola),
+                Wilayah.nmdesa.like(pola),
             )
         )
     return kueri.order_by(
-        AnomaliTitik.level_6_full_code, AnomaliTitik.assignment_id
+        Run.kdkab,
+        AnomaliTitik.level_6_full_code,
+        AnomaliTitik.assignment_id,
     )
 
 
