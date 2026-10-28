@@ -1,0 +1,32 @@
+[Unit]
+Description=pointse worker Proses A/B (instance %i)
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pointse
+Group=pointse
+WorkingDirectory=/opt/pointse/backend
+EnvironmentFile=/etc/pointse/pointse.env
+# Anggaran memori per instance. Total worker = jumlah instance x nilai ini,
+# jadi jangan pakai 800 seperti service utama kalau RAM tersisa mepet.
+Environment=WORKER_MEM_BUDGET_MB=700
+# Kunci flock terpisah per instance; tanpa ini instance kedua langsung keluar
+# karena menganggap worker lain sedang berjalan.
+Environment=WORKER_LOCK_FILE=/run/pointse-%i/worker.lock
+RuntimeDirectory=pointse-%i
+RuntimeDirectoryPreserve=no
+ExecStart=/opt/pointse/backend/.venv/bin/python -m app.worker --loop
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=600
+MemoryMax=1100M
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

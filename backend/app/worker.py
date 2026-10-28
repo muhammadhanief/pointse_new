@@ -31,7 +31,16 @@ dikembalikan ke ``menunggu``, lalu proses keluar. Satu proses worker memegang
 ``fcntl.flock`` pada ``WORKER_LOCK_FILE`` sehingga ``--once`` dari cron tidak
 berjalan bersamaan dengan service.
 
-Jumlah worker bersamaan diatur ``MAX_WORKERS`` (default 1, lihat ``.env``).
+Pekerjaan paralel bisa lewat dua cara:
+
+- ``MAX_WORKERS`` di ``.env`` menyalakan beberapa thread di dalam satu proses
+  (dipakai saat ``WORKER_ENABLED=true`` di API). Anggaran memori dihitung dari
+  RSS proses, jadi semua thread berbagi satu ``WORKER_MEM_BUDGET_MB``.
+- Service produksi ``--loop`` mengabaikan ``MAX_WORKERS`` karena memakai satu
+  proses per unit. Worker tambahan dijalankan sebagai proses terpisah dengan
+  ``WORKER_LOCK_FILE`` sendiri (unit template ``deploy/pointse-worker@.service``),
+  sehingga tiap proses punya anggaran memori sendiri.
+
 Dengan lebih dari satu worker, dua job berbeda kabupaten/tipe jalan paralel; kalau
 dua job dengan (kdprov, kdkab, tipe) yang sama sempat terklaim bersamaan (jendela
 balapan sempit pada ``SKIP LOCKED``), hasilnya tetap konsisten karena keduanya

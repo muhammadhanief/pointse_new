@@ -118,6 +118,57 @@ worker (flock + PID di `<WORKER_LOCK_FILE>.pid`) dan metrik `/proc`; PID baru
 muncul setelah service worker dijalankan ulang dengan versi ini. Halaman hanya
 membaca, tidak mengubah job atau konfigurasi.
 
+### 4a. Menambah worker kedua
+
+Satu worker memproses satu job sekaligus, jadi antrean panjang (mis. 7
+kabupaten/kota) selesai berurutan. Worker tambahan dijalankan sebagai **proses
+terpisah** lewat unit template `pointse-worker@.service`; jangan memakai
+`MAX_WORKERS` karena nilai itu hanya untuk worker in-process
+(`WORKER_ENABLED=true`) dan `--loop` mengabaikannya.
+
+```bash
+# 1) Pastikan RAM masih cukup: butuh ~700 MB x jumlah worker
+free -m
+
+# 2) Pasang unit template lalu nyalakan instance tambahan (worker #1 tetap
+#    pointse-worker.service)
+cp deploy/pointse-worker@.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now pointse-worker@2.service
+systemctl status 'pointse-worker*'
+```
+
+Yang perlu diketahui sebelum menyalakan worker kedua:
+
+- **Kunci terpisah wajib.** Unit template memakai
+  `WORKER_LOCK_FILE=/run/pointse-%i/worker.lock`. Tanpa itu instance kedua
+  langsung keluar (`worker --loop lain sedang berjalan`).
+- **Anggaran memori dijumlahkan.** Instance @2 memakai
+  `WORKER_MEM_BUDGET_MB=700` dan `MemoryMax=1100M`. Total dua worker ±1,4 GB
+  lunak / 2,2 GB keras, ditambah API (1 GB) dan MariaDB (±0,9 GB). Kalau
+  `free -m` menunjukkan tersedia di bawah ±1,5 GB, jangan menambah worker —
+  turunkan anggaran atau biarkan satu worker.
+- **Antrean tetap adil dan berurutan per kabupaten/kota.** Klaim job memakai
+  `FOR UPDATE SKIP LOCKED` dan melewati job dengan (provinsi, kabupaten, tipe)
+  yang sedang dikerjakan, jadi dua worker tidak pernah memproses dua job
+  kabupaten/tipe yang sama.
+- **Peta tetap diproses sebelum titik per kabupaten/kota.** Job B baru bisa
+  diunggah setelah run A sukses, dan peta A disalin ke folder job B, jadi
+  urutan itu tidak berubah walau ada dua worker.
+- **CPU dan disk berbagi.** Di server 4 core, dua job memakai dua core dan
+  menyisakan dua core untuk API/MariaDB. Karena penyimpanan HDD, kenaikan
+  kecepatan biasanya ±1,3-1,6x, bukan 2x; lonjakan `iowait` terlihat di
+  `iostat -x 5` atau `vmstat 5`.
+- **Status sistem** hanya membaca kunci worker utama (PID di
+  `<WORKER_LOCK_FILE>.pid`). Worker kedua tetap terlihat di daftar heartbeat dan
+  kolom "worker aktif" bertambah otomatis.
+
+Menghentikan worker tambahan:
+
+```bash
+systemctl disable --now pointse-worker@2.service
+```
+
 ## 5. nginx aaPanel
 
 Gunakan `deploy/nginx-pointse-api.conf.example`. Ganti `server_name` dan path
