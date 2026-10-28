@@ -91,7 +91,9 @@ export function AnomaliClient({
     return () => kendali.abort();
   }, [muat]);
 
-  const runs = data?.runs ?? [];
+  // ``runs`` baru ada di backend versi ini; sisa pakai ``run`` supaya halaman
+  // tetap hidup saat frontend lebih dulu diperbarui.
+  const runs = data?.runs ?? (data?.run ? [data.run] : []);
   const jenisTerpilih =
     jenises.length === 1
       ? data?.jenis.find((satu) => satu.kode === jenises[0])
