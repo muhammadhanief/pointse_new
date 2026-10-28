@@ -2,6 +2,7 @@
 
 Endpoint: ``/health``, ``/runs`` (unggah/antre + daftar), ``/runs/{id}`` (status),
 ``/runs/{id}/hasil``, ``/runs/{id}/rekap``, ``/runs/{id}/ekspor/*`` (CSV/GPKG),
+``/runs/{id}/unduh/input`` dan ``/runs/{id}/unduh/peta`` (berkas mentah),
 ``/ekspor/rekap.csv``, ``/ringkasan``, ``/tren``, ``/perubahan``, dan
 ``/sistem/status`` (pemantauan worker untuk admin).
 

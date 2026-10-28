@@ -40,6 +40,35 @@ def simpan_unduhan(respons: object, tujuan: Path) -> Path:
     return tujuan
 
 
+def test_unduh_berkas_mentah_input_dan_peta(
+    klien: TestClient,
+    sesi_pabrik: sessionmaker[Session],
+    setelan: Settings,
+    tmp_path: Path,
+) -> None:
+    """Berkas input/peta job bisa diunduh apa adanya; 409 bila sudah dihapus."""
+    titik, peta = berkas_uji(tmp_path, BARIS_A)
+    run_id = unggah(klien, titik, peta).json()["id"]
+    jalankan(sesi_pabrik)
+
+    input_resp = klien.get(f"/runs/{run_id}/unduh/input")
+    assert input_resp.status_code == 200, input_resp.text
+    assert input_resp.content == titik.read_bytes()
+    assert "titik.geojson" in input_resp.headers["content-disposition"]
+
+    peta_resp = klien.get(f"/runs/{run_id}/unduh/peta")
+    assert peta_resp.status_code == 200, peta_resp.text
+    assert peta_resp.content == peta.read_bytes()
+    assert "peta.geojson" in peta_resp.headers["content-disposition"]
+
+    with sesi_pabrik() as sesi:
+        tersimpan = Path(sesi.get(Run, run_id).berkas_input)  # type: ignore[union-attr]
+    tersimpan.unlink()
+    hilang = klien.get(f"/runs/{run_id}/unduh/input")
+    assert hilang.status_code == 409
+    assert "berkas mentah" in hilang.json()["detail"]
+
+
 def test_ekspor_hasil_a_sama_dengan_keluaran_proses(
     klien: TestClient,
     sesi_pabrik: sessionmaker[Session],

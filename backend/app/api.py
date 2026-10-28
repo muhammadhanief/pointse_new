@@ -12,6 +12,7 @@ Kunci wilayah di seluruh endpoint adalah (``kdprov``, ``kdkab``); ``tanggal_data
 
 from __future__ import annotations
 
+import mimetypes
 import shutil
 import uuid
 from datetime import date
@@ -838,6 +839,50 @@ def ekspor_titik_gpkg(
         f"{kode}_titik_perlu_tindakan_ke{nomor}.gpkg",
         hapus=True,
     )
+
+
+def _unduhan_mentah(berkas: str | None, nama: str | None) -> FileResponse:
+    """Balas berkas mentah unggahan apa adanya, supaya operator bisa memeriksa.
+
+    Berkas mentah hanya disimpan untuk unggahan baseline dan unggahan sukses
+    terakhir per kabupaten/tipe; run lain dibalas HTTP 409.
+    """
+    jalur = Path(berkas) if berkas else None
+    if jalur is None or not jalur.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "berkas mentah run ini sudah dihapus; server hanya menyimpan "
+                "unggahan baseline dan unggahan sukses terakhir per kabupaten/kota"
+            ),
+        )
+    nama_unduh = nama or jalur.name
+    tipe = mimetypes.guess_type(nama_unduh)[0] or "application/octet-stream"
+    return FileResponse(jalur, media_type=tipe, filename=nama_unduh)
+
+
+@router.get("/runs/{run_id}/unduh/input", response_class=FileResponse)
+def unduh_berkas_input(
+    run_id: int,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> FileResponse:
+    """Unduh berkas input (titik/landmark) yang diunggah untuk job ini."""
+    run = _ambil_run(sesi, run_id)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    return _unduhan_mentah(run.berkas_input, run.nama_file_input)
+
+
+@router.get("/runs/{run_id}/unduh/peta", response_class=FileResponse)
+def unduh_berkas_peta(
+    run_id: int,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> FileResponse:
+    """Unduh berkas peta SLS/SubSLS yang dipakai job ini."""
+    run = _ambil_run(sesi, run_id)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    return _unduhan_mentah(run.berkas_peta, run.nama_file_peta)
 
 
 @router.get("/ekspor/rekap.csv", response_class=StreamingResponse)
