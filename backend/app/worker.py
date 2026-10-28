@@ -135,6 +135,10 @@ TABEL_URUT = "_pointse_urut_sementara"
 #: Pesan untuk job ``jalan`` yang heartbeat-nya kedaluwarsa (server mati).
 PESAN_TERHENTI = "proses terhenti, kemungkinan dimatikan server"
 
+#: Job dianggap yatim bila tidak ada heartbeat worker yang menyebutnya selama
+#: ini (detik). Worker yang mati berhenti memperbarui ``worker_heartbeat``.
+AMBANG_YATIM_DETIK = 300
+
 #: Pesan saat worker berhenti rapi di tengah job.
 PESAN_DIHENTIKAN = "worker dihentikan, job dikembalikan ke antrean"
 
@@ -821,11 +825,23 @@ def tandai_job_terhenti(
     tidak disentuh.
     """
     batas = sekarang() - timedelta(minutes=setelan.job_timeout_menit)
+    # Worker yang mati (restart/deploy) berhenti memperbarui ``worker_heartbeat``;
+    # job yang dipegangnya jadi yatim dan harus segera ditandai gagal, bukan
+    # menunggu JOB_TIMEOUT_MENIT yang sengaja longgar untuk job besar.
+    segar = sekarang() - timedelta(seconds=AMBANG_YATIM_DETIK)
+    dipegang = select(WorkerHeartbeat.run_id).where(
+        WorkerHeartbeat.run_id.is_not(None),
+        WorkerHeartbeat.heartbeat_at >= segar,
+    )
     kandidat = list(
         sesi.scalars(
             select(Run).where(
                 Run.status == STATUS_JALAN,
-                func.coalesce(Run.heartbeat_at, Run.started_at, Run.created_at) < batas,
+                or_(
+                    func.coalesce(Run.heartbeat_at, Run.started_at, Run.created_at)
+                    < batas,
+                    Run.id.not_in(dipegang),
+                ),
             )
         )
     )

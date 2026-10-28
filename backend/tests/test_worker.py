@@ -23,6 +23,7 @@ from app.models import (
     STATUS_SUKSES,
     TIPE_A,
     TIPE_B,
+    WORKER_JALAN,
     WORKER_MENANGGUR,
     RekapDesa,
     RekapKabupaten,
@@ -31,6 +32,7 @@ from app.models import (
     Wilayah,
     WorkerEvent,
     WorkerHeartbeat,
+    sekarang,
 )
 from app.worker import UKURAN_BATCH, klaim_job, kueri_klaim, mulai_worker, proses_satu_job
 
@@ -745,6 +747,30 @@ def test_klaim_melewati_job_yang_sedang_jalan(sesi: Session, tmp_path: Path) -> 
     diambil = klaim_job(sesi)
     assert diambil is not None and diambil.id == lain_kabupaten.id
     assert diambil.status == STATUS_JALAN
+
+
+def test_tandai_job_terhenti_memakai_heartbeat_worker(
+    sesi: Session, tmp_path: Path
+) -> None:
+    """Job yatim (worker mati) segera gagal walau batas job sengaja longgar."""
+    yatim = buat_job(sesi, tmp_path, nama="yatim", kdkab="3307")
+    hidup = buat_job(sesi, tmp_path, nama="hidup", kdkab="3308")
+    for run in (yatim, hidup):
+        run.status = STATUS_JALAN
+        run.started_at = sekarang()
+        run.heartbeat_at = sekarang()
+    modul_worker.perbarui_heartbeat_worker(
+        sesi, "w-hidup", status=WORKER_JALAN, run_id=hidup.id
+    )
+    sesi.commit()
+
+    terhenti = modul_worker.tandai_job_terhenti(
+        sesi, Settings(job_timeout_menit=120), "w-penguji"
+    )
+
+    assert terhenti == [yatim.id]
+    assert sesi.get(Run, yatim.id).status == STATUS_GAGAL
+    assert sesi.get(Run, hidup.id).status == STATUS_JALAN
 
 
 def test_klaim_menahan_b_selama_a_sebelumnya_belum_selesai(
