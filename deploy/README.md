@@ -143,6 +143,12 @@ Yang perlu diketahui sebelum menyalakan worker kedua:
 - **Kunci terpisah wajib.** Unit template memakai
   `WORKER_LOCK_FILE=/run/pointse-%i/worker.lock`. Tanpa itu instance kedua
   langsung keluar (`worker --loop lain sedang berjalan`).
+  Nilai itu ditulis sebagai prefiks `ExecStart` (`/usr/bin/env VAR=...`), bukan
+  `Environment=`, karena `EnvironmentFile=` **selalu menimpa** `Environment=`.
+  Kalau `/etc/pointse/pointse.env` memuat `WORKER_LOCK_FILE` (default
+  `/home/pointse-data/worker.lock`), `Environment=` di unit akan kalah dan
+  kedua instance berebut kunci yang sama. Periksa hasilnya dengan
+  `systemctl show pointse-worker@2 -p Environment`.
 - **Naikkan `JOB_TIMEOUT_MENIT` dulu.** Worker yang menganggur akan menandai
   job `jalan` yang heartbeat-nya lebih tua dari batas itu sebagai gagal. Pada
   kabupaten besar fase akhir (rekap + pangkas + urut penuh) bisa >30 menit,
