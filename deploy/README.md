@@ -159,9 +159,11 @@ Yang perlu diketahui sebelum menyalakan worker kedua:
   `FOR UPDATE SKIP LOCKED` dan melewati job dengan (provinsi, kabupaten, tipe)
   yang sedang dikerjakan, jadi dua worker tidak pernah memproses dua job
   kabupaten/tipe yang sama.
-- **Peta tetap diproses sebelum titik per kabupaten/kota.** Job B baru bisa
-  diunggah setelah run A sukses, dan peta A disalin ke folder job B, jadi
-  urutan itu tidak berubah walau ada dua worker.
+- **Job B menunggu A kabupaten/kota itu selesai.** Klaim menahan job B selama
+  masih ada job A dengan id lebih kecil yang `menunggu`/`jalan`; sumber A-nya
+  ditentukan ulang tepat sebelum diproses (A sukses terbaru) dan petanya disalin
+  ke folder job. Jadi B yang diunggah saat A masih antre tidak lagi memakai peta
+  A lama.
 - **CPU dan disk berbagi.** Di server 4 core, dua job memakai dua core dan
   menyisakan dua core untuk API/MariaDB. Karena penyimpanan HDD, kenaikan
   kecepatan biasanya ±1,3-1,6x, bukan 2x; lonjakan `iowait` terlihat di

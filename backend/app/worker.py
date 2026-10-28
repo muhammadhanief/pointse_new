@@ -8,6 +8,9 @@ Aturan yang dipenuhi modul ini:
   sedang berstatus ``jalan`` dilewati; kalau ada beberapa job antre untuk
   (kdprov, kdkab, tipe) yang sama, semuanya tetap dikerjakan **berurutan** (yang
   paling lama dulu) dan tidak ada job yang ditandai batal/digantikan;
+- job B ditahan selama masih ada job A untuk kabupaten/kota yang sama dengan id
+  lebih kecil yang belum selesai, lalu sumber A-nya ditentukan ulang tepat sebelum
+  diproses (A sukses terbaru) beserta petanya, supaya B tidak memakai peta A lama;
 - dimensi wilayah di-upsert dari peta yang diunggah (``app.wilayah``), lalu
   ``titik_hasil`` menyimpan ``wilayah_asal_id``/``wilayah_edit_id`` saja;
 - hasil disimpan ke ``titik_hasil`` per batch :data:`UKURAN_BATCH` (10.000) baris,
@@ -73,6 +76,7 @@ from sqlalchemy import (
     delete,
     func,
     insert,
+    or_,
     select,
     text,
     update,
@@ -91,6 +95,7 @@ from app.models import (
     STATUS_MENUNGGU,
     STATUS_SUKSES,
     TIPE_A,
+    TIPE_B,
     WORKER_BERHENTI,
     WORKER_JALAN,
     WORKER_MENANGGUR,
@@ -622,6 +627,10 @@ def kueri_klaim() -> Select[tuple[Run]]:
     sedang berstatus ``jalan`` dilewati. Diurutkan dari id terkecil (urutan unggah)
     supaya job antre lama tetap dikerjakan **berurutan** dan tidak ada yang
     dibatalkan; run yang sukses terakhir jadi run dengan id terbesar.
+
+    Job B juga ditahan selama masih ada Proses A untuk kabupaten/kota yang sama
+    dengan id lebih kecil yang belum selesai. Tanpa penjaga ini, worker kedua
+    bisa menjalankan B bersamaan dengan A-nya sehingga B memakai peta A lama.
     """
     lain = aliased(Run)
     sedang_jalan = (
@@ -634,9 +643,24 @@ def kueri_klaim() -> Select[tuple[Run]]:
         )
         .exists()
     )
+    a_tertunda = (
+        select(lain.id)
+        .where(
+            lain.tipe == TIPE_A,
+            lain.kdprov == Run.kdprov,
+            lain.kdkab == Run.kdkab,
+            lain.id < Run.id,
+            lain.status.in_((STATUS_MENUNGGU, STATUS_JALAN)),
+        )
+        .exists()
+    )
     return (
         select(Run)
-        .where(Run.status == STATUS_MENUNGGU, ~sedang_jalan)
+        .where(
+            Run.status == STATUS_MENUNGGU,
+            ~sedang_jalan,
+            or_(Run.tipe == TIPE_A, ~a_tertunda),
+        )
         .order_by(Run.id)
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -660,6 +684,62 @@ def klaim_job(sesi: Session) -> Run | None:
     run.pesan = None
     sesi.commit()
     return run
+
+
+def sumber_a_untuk_b(sesi: Session, run: Run) -> Run | None:
+    """Run A sukses terbaru **sebelum** job B ini untuk kabupaten/kota yang sama."""
+    return sesi.scalars(
+        select(Run)
+        .where(
+            Run.tipe == TIPE_A,
+            Run.status == STATUS_SUKSES,
+            Run.kdprov == run.kdprov,
+            Run.kdkab == run.kdkab,
+            Run.id < run.id,
+        )
+        .order_by(Run.id.desc())
+        .limit(1)
+    ).first()
+
+
+def ikat_ulang_sumber_a(sesi: Session, run: Run) -> Run | None:
+    """Tentukan ulang sumber A job B tepat sebelum job dikerjakan.
+
+    Sumber A dicatat saat unggah memakai "A sukses terakhir" pada detik itu.
+    Karena A bisa masih antre berjam-jam, B sering terikat ke A lama beserta
+    petanya, lalu ditolak rekap yang memakai A terbaru. Di sini sumber dipilih
+    ulang: A sukses terbaru dengan id lebih kecil dari B (urutan unggah), lalu
+    petanya disalin ke folder job. Nama berkas dipertahankan karena layer
+    GeoJSON diturunkan dari nama berkas. Tanpa A yang lebih baru, job dibiarkan.
+    """
+    if run.tipe != TIPE_B:
+        return None
+    sumber = sumber_a_untuk_b(sesi, run)
+    if sumber is None or sumber.id == run.sumber_run_a_id:
+        return sumber
+    asal = Path(sumber.berkas_peta) if sumber.berkas_peta else None
+    if asal is None or not asal.is_file():
+        logger.warning(
+            "job %s: peta A %s tidak tersedia; tetap memakai sumber A %s",
+            run.id,
+            sumber.id,
+            run.sumber_run_a_id,
+        )
+        return None
+    tujuan = Path(run.berkas_peta).parent / asal.name if run.berkas_peta else asal
+    if asal.resolve() != tujuan.resolve():
+        shutil.copy2(asal, tujuan)
+    run.berkas_peta = str(tujuan)
+    run.nama_file_peta = sumber.nama_file_peta or asal.name
+    run.layer_peta = sumber.layer_peta
+    run.sumber_run_a_id = sumber.id
+    logger.info(
+        "job %s: sumber A diikat ulang ke %s (peta %s)",
+        run.id,
+        sumber.id,
+        tujuan.name,
+    )
+    return sumber
 
 
 def bersihkan_hasil(sesi: Session, run_id: int) -> None:
@@ -872,6 +952,11 @@ def proses_satu_job(
             if run is None:  # job dihapus saat sedang jalan
                 logger.warning("job %s hilang saat dikerjakan", run_id)
                 return True
+
+            # Tentukan ulang sumber A job B sebelum diproses (petanya bisa
+            # berubah bila A baru selesai setelah B diunggah).
+            ikat_ulang_sumber_a(sesi, run)
+            sesi.commit()
 
             # Bersihkan sisa hasil percobaan sebelumnya (bila job diulang).
             bersihkan_hasil(sesi, run_id)

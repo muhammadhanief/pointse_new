@@ -671,6 +671,71 @@ def test_klaim_melewati_job_yang_sedang_jalan(sesi: Session, tmp_path: Path) -> 
     assert diambil.status == STATUS_JALAN
 
 
+def test_klaim_menahan_b_selama_a_sebelumnya_belum_selesai(
+    sesi: Session, tmp_path: Path
+) -> None:
+    """Job B tidak diklaim selama A kabupaten itu (id lebih kecil) belum selesai."""
+    a = buat_job(sesi, tmp_path, nama="a", kdkab="3307")
+    b = buat_job(sesi, tmp_path, tipe=TIPE_B, nama="b", kdkab="3307")
+    sesi.commit()
+
+    diambil = klaim_job(sesi)
+    assert diambil is not None and diambil.id == a.id
+    # A sedang jalan -> B ditahan walau tipe-nya berbeda.
+    assert klaim_job(sesi) is None
+
+    a.status = STATUS_SUKSES
+    sesi.commit()
+    diambil = klaim_job(sesi)
+    assert diambil is not None and diambil.id == b.id
+
+
+def test_ikat_ulang_sumber_a_memakai_peta_a_terbaru(
+    sesi: Session, tmp_path: Path
+) -> None:
+    """Sumber B yang tertinggal dipindah ke A sukses terbaru beserta petanya."""
+    a1 = buat_job(sesi, tmp_path, nama="a1")
+    a1.status = STATUS_SUKSES
+    a2 = buat_job(sesi, tmp_path, nama="a2")
+    peta_lama = Path(a2.berkas_peta)
+    peta_baru = peta_lama.with_name("peta_v2.geojson")
+    peta_lama.rename(peta_baru)
+    a2.berkas_peta = str(peta_baru)
+    a2.nama_file_peta = peta_baru.name
+    a2.layer_peta = "peta_v2"
+    a2.status = STATUS_SUKSES
+    b = buat_job(sesi, tmp_path, tipe=TIPE_B, nama="b")
+    b.sumber_run_a_id = a1.id
+    sesi.commit()
+
+    sumber = modul_worker.ikat_ulang_sumber_a(sesi, b)
+    sesi.commit()
+
+    assert sumber is not None and sumber.id == a2.id
+    assert b.sumber_run_a_id == a2.id
+    assert b.layer_peta == "peta_v2"
+    assert Path(b.berkas_peta).name == "peta_v2.geojson"
+    assert Path(b.berkas_peta).read_bytes() == peta_baru.read_bytes()
+
+
+def test_ikat_ulang_sumber_a_tidak_menyalin_bila_sudah_terbaru(
+    sesi: Session, tmp_path: Path
+) -> None:
+    """B yang sudah memakai A terbaru tidak diubah dan petanya tidak disalin."""
+    a = buat_job(sesi, tmp_path, nama="a")
+    a.status = STATUS_SUKSES
+    b = buat_job(sesi, tmp_path, tipe=TIPE_B, nama="b")
+    b.sumber_run_a_id = a.id
+    sesi.commit()
+    peta_awal = b.berkas_peta
+
+    sumber = modul_worker.ikat_ulang_sumber_a(sesi, b)
+
+    assert sumber is not None and sumber.id == a.id
+    assert b.sumber_run_a_id == a.id
+    assert b.berkas_peta == peta_awal
+
+
 def test_klaim_tidak_ada_job(
     sesi: Session, sesi_pabrik: sessionmaker[Session]
 ) -> None:
