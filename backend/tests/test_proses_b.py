@@ -75,7 +75,10 @@ def gabung(*frames: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 def test_kolom_dan_urutan_hasil() -> None:
     """Keluaran memakai 35 kolom model QGIS (urutan sama) + geometri."""
     hasil = proses_b(titik(), peta())
-    assert list(hasil.columns) == list(KOLOM_HASIL_B) + ["geometry"]
+    assert list(hasil.columns) == list(KOLOM_HASIL_B) + [
+        "flag_repair_unggah",
+        "geometry",
+    ]
     assert hasil.crs is not None and hasil.crs.to_epsg() == 4326
     assert len(hasil) == 1
 

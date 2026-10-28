@@ -12,6 +12,7 @@ Kunci wilayah di seluruh endpoint adalah (``kdprov``, ``kdkab``); ``tanggal_data
 
 from __future__ import annotations
 
+import io
 import mimetypes
 import shutil
 import uuid
@@ -29,10 +30,11 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from app import aktivitas, auth, ekspor, layanan, unggahan
+from app import aktivitas, anomali, auth, ekspor, layanan, unggahan
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.layanan import (
@@ -42,9 +44,13 @@ from app.layanan import (
     KesalahanUnggahan,
     Tingkat,
 )
-from app.models import DASAR_TUGAS, STATUS_SUKSES, TIPE_A, TIPE_B, Run
+from app.models import DASAR_TUGAS, STATUS_SUKSES, TIPE_A, TIPE_B, RekapTarget, Run
 from app.peran import PERAN_ADMIN_PROVINSI
 from app.skema import (
+    AnomaliBarisOut,
+    AnomaliJenisOut,
+    AnomaliOut,
+    AnomaliRunOut,
     DaftarMasterOut,
     DaftarRunOut,
     HasilOut,
@@ -926,3 +932,179 @@ def ekspor_rekap(
         raise HTTPException(status_code=422, detail=str(galat)) from galat
     kode = _kode_unduh(kdprov, kdkab)
     return _unduhan_csv(spool, f"{kode}_rekap_{tingkat}_{dasar}.csv")
+
+
+# ---------------------------------------------------------------------------
+# Anomali titik (menu audit)
+# ---------------------------------------------------------------------------
+
+MEDIA_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _anomali_run(
+    sesi: Session,
+    pengguna: auth.Pengguna,
+    kdprov: str | None,
+    kdkab: str | None,
+) -> Run:
+    """Run B sukses terakhir satu kabupaten/kota (422 bila belum dipilih)."""
+    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
+    if kdkab is None:
+        raise HTTPException(status_code=422, detail="pilih kabupaten/kota")
+    run = anomali.run_b_terakhir(sesi, kdprov, kdkab)
+    if run is None:
+        raise HTTPException(
+            status_code=404, detail="belum ada Proses B yang sukses untuk wilayah ini"
+        )
+    return run
+
+
+def _ringkas_anomali(sesi: Session, run: Run) -> AnomaliRunOut:
+    target, selesai = sesi.execute(
+        select(
+            func.coalesce(func.sum(RekapTarget.target), 0),
+            func.coalesce(func.sum(RekapTarget.selesai), 0),
+        ).where(
+            RekapTarget.run_b_id == run.id,
+            RekapTarget.dasar == DASAR_TUGAS,
+        )
+    ).one()
+    return AnomaliRunOut(
+        run_id=run.id,
+        tanggal_data=run.tanggal_data,
+        pengunggah=run.user,
+        target=int(target),
+        selesai=int(selesai),
+        anomali_versi=int(run.anomali_versi or 0),
+    )
+
+
+@router.get("/anomali", response_model=AnomaliOut)
+def daftar_anomali(
+    kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
+    kdkab: str | None = Query(None, description="Kode kabupaten/kota, mis. 3320"),
+    jenis: str | None = Query(None, description="Kode jenis anomali (kosong = semua)"),
+    q: str | None = Query(None, max_length=100, description="Cari id/kode SLS/bangunan"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> AnomaliOut:
+    """Anomali titik pada run Proses B sukses terakhir satu kabupaten/kota.
+
+    Rekap memakai klaim kabupaten; endpoint ini menunjukkan titik mana yang
+    menurut sistem masih bermasalah, sehingga selisih angkanya bisa ditelusuri.
+    """
+    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
+    if kdkab is None:
+        raise HTTPException(status_code=422, detail="pilih kabupaten/kota")
+    run = anomali.run_b_terakhir(sesi, kdprov, kdkab)
+    if run is None:
+        return AnomaliOut(run=None, jenis=[], total=0, baris=[])
+
+    jumlah = anomali.hitung_per_jenis(sesi, run.id)
+    daftar_jenis = [
+        AnomaliJenisOut(kode=kode, label=label, jumlah=jumlah.get(kode, 0))
+        for kode, label in anomali.JENIS
+    ]
+    if jenis and jenis not in anomali.LABEL:
+        raise HTTPException(
+            status_code=422, detail=f"jenis anomali tidak dikenal: {jenis}"
+        )
+
+    kueri = anomali.kueri_baris(run.id, jenis, q.strip() if q else None)
+    total = int(
+        sesi.scalar(select(func.count()).select_from(kueri.subquery())) or 0
+    )
+    baris = []
+    for satu, nmsls, nmdesa in sesi.execute(kueri.limit(limit).offset(offset)):
+        wilayah = nmsls or nmdesa
+        baris.append(
+            AnomaliBarisOut(
+                assignment_id=satu.assignment_id,
+                assignment_id_baru=satu.assignment_id_baru,
+                unique_bang=satu.unique_bang,
+                level_6_full_code=satu.level_6_full_code,
+                level_6_full_code_b=satu.level_6_full_code_b,
+                wilayah=wilayah,
+                latitude=satu.latitude,
+                longitude=satu.longitude,
+                flag_unggah=satu.flag_unggah,
+                flag_model=satu.flag_model,
+                keterangan=anomali.keterangan(satu, wilayah),
+            )
+        )
+    return AnomaliOut(
+        run=_ringkas_anomali(sesi, run),
+        jenis=daftar_jenis,
+        total=total,
+        baris=baris,
+    )
+
+
+@router.get("/anomali.xlsx", response_class=StreamingResponse)
+def ekspor_anomali(
+    kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
+    kdkab: str | None = Query(None, description="Kode kabupaten/kota, mis. 3320"),
+    jenis: str = Query(..., description="Kode jenis anomali (wajib, satu jenis)"),
+    q: str | None = Query(None, max_length=100, description="Cari id/kode SLS/bangunan"),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> StreamingResponse:
+    """Unduh satu jenis anomali (sesuai filter aktif) sebagai Excel."""
+    if jenis not in anomali.LABEL:
+        raise HTTPException(
+            status_code=422, detail=f"jenis anomali tidak dikenal: {jenis}"
+        )
+    run = _anomali_run(sesi, pengguna, kdprov, kdkab)
+
+    # Impor di dalam fungsi supaya API tetap ringan saat start.
+    from openpyxl import Workbook
+
+    buku = Workbook(write_only=True)
+    lembar = buku.create_sheet("anomali")
+    lembar.append(
+        [
+            "assignment_id",
+            "assignment_id_baru",
+            "unique_bang",
+            "level_6_full_code",
+            "level_6_full_code_b",
+            "wilayah",
+            "latitude",
+            "longitude",
+            "flag_unggah",
+            "flag_model",
+            "keterangan",
+        ]
+    )
+    for satu, nmsls, nmdesa in sesi.execute(
+        anomali.kueri_baris(run.id, jenis, q.strip() if q else None)
+    ):
+        wilayah = nmsls or nmdesa
+        lembar.append(
+            [
+                satu.assignment_id,
+                satu.assignment_id_baru,
+                satu.unique_bang,
+                satu.level_6_full_code,
+                satu.level_6_full_code_b,
+                wilayah,
+                satu.latitude,
+                satu.longitude,
+                satu.flag_unggah,
+                satu.flag_model,
+                anomali.keterangan(satu, wilayah),
+            ]
+        )
+
+    aliran = io.BytesIO()
+    buku.save(aliran)
+    aliran.seek(0)
+    kode = _kode_unduh(run.kdprov, run.kdkab)
+    nama = f"{kode}_anomali_{jenis}_{run.tanggal_data}.xlsx"
+    return StreamingResponse(
+        aliran,
+        media_type=MEDIA_XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{nama}"'},
+    )

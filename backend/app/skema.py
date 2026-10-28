@@ -621,3 +621,48 @@ class DaftarAktivitasOut(BaseModel):
 
     total: int
     baris: list[AktivitasOut]
+
+
+class AnomaliRunOut(BaseModel):
+    """Run Proses B yang anomalinya ditampilkan (sukses terakhir)."""
+
+    run_id: int
+    tanggal_data: date
+    pengunggah: str | None = None
+    target: int = 0
+    selesai: int = 0
+    #: 0 = job ini belum dihitung ulang setelah fitur anomali ada.
+    anomali_versi: int = 0
+
+
+class AnomaliJenisOut(BaseModel):
+    """Satu pilihan dropdown jenis anomali beserta jumlahnya."""
+
+    kode: str
+    label: str
+    jumlah: int
+
+
+class AnomaliBarisOut(BaseModel):
+    """Satu titik yang menurut sistem masih bermasalah."""
+
+    assignment_id: str | None = None
+    assignment_id_baru: str | None = None
+    unique_bang: str | None = None
+    level_6_full_code: str | None = None
+    level_6_full_code_b: str | None = None
+    wilayah: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    flag_unggah: int | None = None
+    flag_model: int | None = None
+    keterangan: str | None = None
+
+
+class AnomaliOut(BaseModel):
+    """Isi halaman Anomali titik."""
+
+    run: AnomaliRunOut | None = None
+    jenis: list[AnomaliJenisOut]
+    total: int
+    baris: list[AnomaliBarisOut]

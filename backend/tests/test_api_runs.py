@@ -632,8 +632,11 @@ def test_progres_b_memakai_target_proses_a_tersedia(
     assert data["target"]["run_a_id"] == id_a
     assert data["target"]["flag_1"] == 1
     assert data["target"]["total"] == 3
+    # Rekap memakai klaim kabupaten: titik target yang diunggah dengan
+    # ``flag_repair = 0`` dihitung selesai walau ada titik lain yang rusak
+    # (kerusakan baru itu masuk menu anomali sebagai ``regresi``).
     assert [(baris["run_id"], baris["sisa_flag_1"], baris["beres"]) for baris in data["baris"]] == [
-        (id_b1, 1, 0),
+        (id_b1, 0, 1),
         (id_b2, 0, 1),
     ]
 

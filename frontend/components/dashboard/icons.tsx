@@ -72,6 +72,16 @@ export function IkonRekap(props: Props) {
   );
 }
 
+export function IkonAnomali(props: Props) {
+  return (
+    <Dasar {...props}>
+      <path d="M12 4 3 20h18L12 4Z" />
+      <path d="M12 10v5" />
+      <path d="M12 18h.01" />
+    </Dasar>
+  );
+}
+
 export function IkonEkspor(props: Props) {
   return (
     <Dasar {...props}>

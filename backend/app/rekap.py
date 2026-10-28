@@ -81,6 +81,7 @@ KOLOM_REKAP_TARGET: tuple[str, ...] = (
     "target",
     "belum",
     "hilang",
+    "selesai",
     "regresi",
 )
 
@@ -226,7 +227,7 @@ def kueri_rekap_subsls(run: Run, dasar: str) -> Select[tuple[object, ...]]:
     )
 
 
-def _kandidat_kdkab(kdprov: str | None, kdkab: str) -> list[str]:
+def kandidat_kdkab(kdprov: str | None, kdkab: str) -> list[str]:
     """Bentuk kode kabupaten/kota yang mungkin tersimpan di ``runs``.
 
     Peta wilkerstat memakai kode pendek (``07``), master/SSO memakai 4 digit
@@ -267,7 +268,7 @@ def run_a_pasangan(sesi: Session, run_b: Run) -> Run | None:
             Run.status == STATUS_SUKSES,
             Run.detail_tersedia == 1,
             Run.kdprov == run_b.kdprov,
-            Run.kdkab.in_(_kandidat_kdkab(run_b.kdprov, run_b.kdkab)),
+            Run.kdkab.in_(kandidat_kdkab(run_b.kdprov, run_b.kdkab)),
             Run.id < run_b.id,
         )
         .order_by(Run.id.desc())
@@ -302,6 +303,15 @@ def kueri_rekap_target(
         or_(banding.assignment_id.is_(None), func.coalesce(banding.flag_repair, 1) == 1)
     )
     hilang = _jumlah_kasus(banding.assignment_id.is_(None))
+    # Klaim kabupaten: nilai flag_repair apa adanya dari berkas unggahan. Titik
+    # yang tidak ada di B tetap belum (tidak dihitung selesai). Run B lama tanpa
+    # kolom itu memakai flag model seperti sebelumnya.
+    selesai = _jumlah_kasus(
+        and_(
+            banding.assignment_id.is_not(None),
+            func.coalesce(banding.flag_repair_unggah, banding.flag_repair) == 0,
+        )
+    )
 
     if dasar == DASAR_TUGAS:
         kode_level6: object = titik.level_6_full_code
@@ -325,6 +335,7 @@ def kueri_rekap_target(
             func.count(),
             belum,
             hilang,
+            selesai,
             literal(0),
         )
         .select_from(titik)

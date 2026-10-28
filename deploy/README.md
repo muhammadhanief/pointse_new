@@ -330,6 +330,46 @@ ruang 230 GB cukup untuk hitungan bulan. Pantau disk di halaman Status Sistem.
 Bila ingin kembali ke aturan lama (hemat disk, berkas lama tidak bisa diunduh),
 setel `SIMPAN_BERKAS_MENTAH=false` lalu restart `pointse-worker`.
 
+## 6e. Rekap klaim kabupaten dan menu Anomali (setelah migrasi 0014)
+
+Migrasi `0014` memisahkan dua hal yang sebelumnya tercampur:
+
+- **Rekap** memakai klaim kabupaten: nilai `flag_repair` apa adanya dari berkas
+  B yang diunggah (`titik_hasil.flag_repair_unggah`), bukan hasil hitung ulang
+  model. Titik yang hilang atau berubah `assignment_id` tetap dihitung **belum**.
+  Kolom baru `rekap_target.selesai` menyimpan angka ini; migrasi mengisinya
+  dengan rumus lama (`target - belum - regresi`) supaya angka historis tidak
+  berubah sebelum job diproses ulang.
+- **Anomali** disimpan di tabel `anomali_titik` saat job B selesai (sebelum
+  `titik_hasil` dipangkas), hanya untuk run B terakhir per kabupaten/kota:
+  `hilang`, `id_berubah`, `luar_wilayah`, `posisi_menyimpang`, `kode_berubah`,
+  `regresi`, `titik_baru`. Menu **Hasil → Anomali titik** membaca tabel ini dan
+  bisa mengunduh satu jenis sebagai Excel.
+
+Kolom pendukung: `titik_hasil.unique_bang` (mengenali `assignment_id` yang
+diganti lewat identitas bangunan) dan `runs.anomali_versi` (1 = job sudah
+dihitung). Tambahkan `openpyxl` ke venv API:
+
+```bash
+sudo -u pointse /opt/pointse/backend/.venv/bin/pip install -r /opt/pointse/backend/requirements.txt
+sudo systemctl restart pointse-api pointse-worker
+```
+
+Job B lama tidak punya baris anomali; halaman menampilkan pemberitahuan. Untuk
+menghitungnya cukup **antrekan ulang run B terakhir** per kabupaten/kota — tidak
+perlu unggah ulang karena berkas mentah masih tersimpan (lihat 6d):
+
+```bash
+sudo -u pointse /opt/pointse/backend/.venv/bin/python \
+    /opt/pointse/backend/scripts/backfill_rekap_subsls.py \
+    --env-file /etc/pointse/pointse.env --paksa --tipe B --antrekan
+```
+
+Skrip melewati run yang berkasnya sudah dipangkas dan melaporkannya. Setelah
+antrean selesai, angka rekap memakai klaim unggahan dan menu anomali terisi.
+Ini sekaligus memperbaiki kabupaten yang tampil 0% karena B terikat ke A lama
+(penjaga klaim B sejak commit `f011054`).
+
 ## 7. Backup
 
 Tambahkan cron harian:

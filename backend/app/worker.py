@@ -86,6 +86,7 @@ from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from app import rekap as modul_rekap
 from app import wilayah
+from app.anomali import simpan_anomali
 from app.config import Settings, get_settings
 from app.db import get_sessionmaker
 from app.kunci import KunciBerkas, jalur_kunci
@@ -99,6 +100,7 @@ from app.models import (
     WORKER_BERHENTI,
     WORKER_JALAN,
     WORKER_MENANGGUR,
+    AnomaliTitik,
     RekapDesa,
     RekapKabupaten,
     RekapSubsls,
@@ -801,6 +803,10 @@ def bersihkan_hasil(sesi: Session, run_id: int) -> None:
     sesi.execute(delete(RekapDesa).where(RekapDesa.run_id == run_id))
     sesi.execute(delete(RekapKabupaten).where(RekapKabupaten.run_id == run_id))
     sesi.execute(delete(RekapSubsls).where(RekapSubsls.run_id == run_id))
+    # Anomali job B ikut dibuang supaya menu tidak menampilkan hasil lama saat
+    # run diproses ulang (kalau gagal di tengah, tidak ada sisa yang menyesatkan).
+    sesi.execute(delete(AnomaliTitik).where(AnomaliTitik.run_b_id == run_id))
+    sesi.execute(update(Run).where(Run.id == run_id).values(anomali_versi=0))
 
 
 def tandai_job_terhenti(
@@ -1041,6 +1047,8 @@ def proses_satu_job(
                 siapkan_urut_penuh(sesi, run_id)
 
             modul_rekap.simpan_rekap(sesi, run)
+            # Anomali titik (menu audit) juga butuh seluruh titik B sebelum dipangkas.
+            jumlah_anomali = simpan_anomali(sesi, run)
             # Capaian per assignment_id (target A vs B), juga sebelum pemangkasan.
             modul_rekap.simpan_rekap_target(sesi, run)
 
@@ -1055,9 +1063,10 @@ def proses_satu_job(
                 terapkan_urut_penuh(sesi, run_id)
             sesi.commit()
         logger.info(
-            "job %s sukses: %s baris (titik_hasil run lain dipangkas: %s)",
+            "job %s sukses: %s baris (anomali: %s, titik_hasil run lain dipangkas: %s)",
             run_id,
             jumlah,
+            jumlah_anomali,
             buang or "tidak ada",
         )
         _catat_event_aman(

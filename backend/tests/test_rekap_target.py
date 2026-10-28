@@ -223,7 +223,11 @@ def test_pasangan_a_dicari_kalau_sumber_tidak_dicatat(sesi: Session) -> None:
 
 
 def test_titik_bukan_target_yang_rusak_menurunkan_capaian(sesi: Session) -> None:
-    """Titik yang tadinya benar tapi jadi ``flag_repair = 1`` di B = regresi."""
+    """Titik yang tadinya benar tapi jadi ``flag_repair = 1`` di B = regresi.
+
+    Sejak rekap memakai klaim kabupaten (``flag_repair_unggah``), regresi tidak
+    lagi mengurangi ``selesai``; kerusakan baru itu dilaporkan di menu anomali.
+    """
     run_a, run_b, w_a, _ = _siapkan(sesi)
     # a3 bukan target A (flag 0). Di B titik itu jadi bermasalah.
     satu = sesi.scalars(
@@ -244,9 +248,10 @@ def test_titik_bukan_target_yang_rusak_menurunkan_capaian(sesi: Session) -> None
         )
     ).one()
     assert (baris.target, baris.belum, baris.hilang, baris.regresi) == (2, 0, 0, 1)
+    assert baris.selesai == 2
 
     unit = layanan._progres_level6(sesi, run_a, run_b, DASAR_TUGAS)[(KODE_A, w_a.id)]
-    assert (unit["selesai"], unit["sisa"]) == (1, 1)
+    assert (unit["selesai"], unit["sisa"]) == (2, 0)
 
 
 def test_run_a_tanpa_baris_target(sesi: Session) -> None:

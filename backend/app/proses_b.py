@@ -202,6 +202,9 @@ def _proses_b_inti(
     hasil["flag_edit_atr_repair"] = _flag_tanpa_kosong(flag_edit).to_numpy()
     hasil["flag_repair_initial"] = _flag_tanpa_kosong(flag_repair_initial_baru).to_numpy()
     hasil["flag_repair"] = _flag_tanpa_kosong(pd.Series(flag_repair_akhir)).to_numpy()
+    # Nilai apa adanya dari berkas unggahan (sebelum dihitung ulang model).
+    # Tidak termasuk KOLOM_HASIL_B supaya keluaran GPKG tetap 35 kolom QGIS.
+    hasil["flag_repair_unggah"] = _flag_tanpa_kosong(flag_repair_awal).to_numpy()
     hasil["level_6_full_code"] = gabung["level_6_full_code"].to_numpy()
     hasil["idsubsls_origin"] = gabung["idsubsls_origin"].to_numpy()
     hasil["idsubsls_edited"] = gabung["_peta_idsubsls"].to_numpy()
@@ -241,7 +244,9 @@ def _proses_b_inti(
         crs=titik.crs,
     )
     hasil.index = indeks_asli.to_numpy()[posisi_lokal]
-    return hasil[list(KOLOM_HASIL_B) + ["_posisi", "_urut", "geometry"]]
+    return hasil[
+        list(KOLOM_HASIL_B) + ["flag_repair_unggah", "_posisi", "_urut", "geometry"]
+    ]
 
 
 def proses_b(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -272,7 +277,7 @@ def proses_b(titik: gpd.GeoDataFrame, peta: gpd.GeoDataFrame) -> gpd.GeoDataFram
     (lihat :mod:`app.proses_a`), karena model QGIS-nya memakai node yang sama.
     """
     hasil = _proses_b_inti(titik, peta)
-    return hasil[list(KOLOM_HASIL_B) + ["geometry"]]
+    return hasil[list(KOLOM_HASIL_B) + ["flag_repair_unggah", "geometry"]]
 
 
 def proses_b_potongan(

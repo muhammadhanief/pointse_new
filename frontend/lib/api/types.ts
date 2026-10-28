@@ -336,3 +336,39 @@ export type DaftarAktivitas = {
   total: number;
   baris: Aktivitas[];
 };
+
+export type AnomaliRun = {
+  run_id: number;
+  tanggal_data: string;
+  pengunggah: string | null;
+  target: number;
+  selesai: number;
+  anomali_versi: number;
+};
+
+export type AnomaliJenis = {
+  kode: string;
+  label: string;
+  jumlah: number;
+};
+
+export type AnomaliBaris = {
+  assignment_id: string | null;
+  assignment_id_baru: string | null;
+  unique_bang: string | null;
+  level_6_full_code: string | null;
+  level_6_full_code_b: string | null;
+  wilayah: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  flag_unggah: number | null;
+  flag_model: number | null;
+  keterangan: string | null;
+};
+
+export type Anomali = {
+  run: AnomaliRun | null;
+  jenis: AnomaliJenis[];
+  total: number;
+  baris: AnomaliBaris[];
+};

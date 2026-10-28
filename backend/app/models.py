@@ -155,6 +155,8 @@ class Run(Base):
     # Titik yang tidak masuk/menyentuh poligon wilkerstat mana pun (hasil join kosong).
     jumlah_tanpa_wilayah: Mapped[int | None] = mapped_column(Integer)
     detail_tersedia: Mapped[int] = mapped_column(AngkaKecil, default=0)
+    #: 1 = anomali titik job B ini sudah dihitung (tabel ``anomali_titik``).
+    anomali_versi: Mapped[int] = mapped_column(AngkaKecil, default=0)
     pesan: Mapped[str | None] = mapped_column(Text)
     tanggal_data: Mapped[date] = mapped_column(Date, default=hari_ini)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
@@ -253,6 +255,9 @@ class TitikHasil(Base):
     urut: Mapped[int] = mapped_column(BigInteger, primary_key=True)
 
     assignment_id: Mapped[str] = mapped_column(String(64))
+    #: Identitas bangunan dari berkas (dipakai mengenali ``assignment_id`` yang
+    #: berubah antar unggahan). Bukan kunci.
+    unique_bang: Mapped[str | None] = mapped_column(String(64))
     level_6_full_code: Mapped[str | None] = mapped_column(String(16))
 
     # Wilayah penugasan/posisi; NULL untuk titik di luar poligon wilkerstat.
@@ -264,6 +269,9 @@ class TitikHasil(Base):
     flag_edit_atr_repair: Mapped[int | None] = mapped_column(AngkaKecil)
     flag_repair_initial: Mapped[int | None] = mapped_column(AngkaKecil)
     flag_repair: Mapped[int | None] = mapped_column(AngkaKecil)
+    #: Nilai ``flag_repair`` apa adanya dari berkas yang diunggah (sebelum
+    #: dihitung ulang model). Dipakai rekap "klaim kabupaten".
+    flag_repair_unggah: Mapped[int | None] = mapped_column(AngkaKecil)
     kk: Mapped[int | None] = mapped_column(AngkaKecil)
     btt: Mapped[int | None] = mapped_column(AngkaKecil)
     bku: Mapped[int | None] = mapped_column(AngkaKecil)
@@ -430,9 +438,54 @@ class RekapTarget(Base):
     target: Mapped[int] = mapped_column(Integer)
     belum: Mapped[int] = mapped_column(Integer)
     hilang: Mapped[int] = mapped_column(Integer)
+    #: Target yang di berkas B ber-``flag_repair = 0`` menurut unggahan
+    #: (``flag_repair_unggah``), bukan menurut hitungan ulang model. Inilah angka
+    #: "selesai" di rekap; perbedaan dengan model muncul di menu anomali.
+    selesai: Mapped[int] = mapped_column(Integer, default=0)
     #: Titik yang tidak termasuk target A tapi masih ``flag_repair = 1`` di B
-    #: (kerusakan baru / titik bergeser). Mengurangi capaian, tidak menambah target.
+    #: (kerusakan baru / titik bergeser). Tidak menambah target dan tidak lagi
+    #: mengurangi ``selesai``; dirinci di menu anomali.
     regresi: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AnomaliTitik(Base):
+    """Titik yang menurut sistem masih bermasalah pada satu job Proses B.
+
+    Diisi di akhir job B (sebelum ``titik_hasil`` dipangkas), hanya untuk run B
+    terakhir per kabupaten/kota: run B baru menghapus baris run B lama. Menu
+    anomali membaca tabel ini; rekap tetap memakai klaim kabupaten
+    (``titik_hasil.flag_repair_unggah``).
+
+    ``jenis`` salah satu :data:`app.anomali.JENIS`.
+    """
+
+    __tablename__ = "anomali_titik"
+    __table_args__ = (
+        Index("ix_anomali_titik_run_jenis", "run_b_id", "jenis"),
+        Index("ix_anomali_titik_run_kode", "run_b_id", "level_6_full_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_b_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    run_a_id: Mapped[int | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL")
+    )
+    jenis: Mapped[str] = mapped_column(String(24))
+    assignment_id: Mapped[str | None] = mapped_column(String(64))
+    #: Hanya untuk ``id_berubah``: id pengganti yang ditemukan di berkas B.
+    assignment_id_baru: Mapped[str | None] = mapped_column(String(64))
+    unique_bang: Mapped[str | None] = mapped_column(String(64))
+    #: Kode SLS penugasan (dari A) supaya laporan tetap mengikuti kode tugas.
+    level_6_full_code: Mapped[str | None] = mapped_column(String(16))
+    #: Kode SLS di berkas B (untuk ``kode_berubah``).
+    level_6_full_code_b: Mapped[str | None] = mapped_column(String(16))
+    wilayah_id: Mapped[int | None] = mapped_column(ForeignKey("wilayah.id"))
+    latitude: Mapped[float | None] = mapped_column(Double)
+    longitude: Mapped[float | None] = mapped_column(Double)
+    #: ``flag_repair`` dari berkas unggahan (klaim kabupaten).
+    flag_unggah: Mapped[int | None] = mapped_column(AngkaKecil)
+    #: ``flag_repair`` hasil hitung ulang model.
+    flag_model: Mapped[int | None] = mapped_column(AngkaKecil)
 
 
 class RekapKabupaten(Base):

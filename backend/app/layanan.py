@@ -1176,11 +1176,12 @@ def _metrik_target_b(
             RekapTarget.target,
             RekapTarget.belum,
             RekapTarget.hilang,
+            RekapTarget.selesai,
             RekapTarget.regresi,
         ).where(RekapTarget.run_b_id == run_b.id, RekapTarget.dasar == dasar)
     ).all()
     keluaran: dict[tuple[str | None, int | None], dict[str, int]] = {}
-    for kode, wilayah_id, target, belum, hilang, regresi in hasil:
+    for kode, wilayah_id, target, belum, hilang, selesai, regresi in hasil:
         kunci = (
             None if kode in (None, "") else str(kode),
             None if wilayah_id is None else int(wilayah_id),
@@ -1189,6 +1190,7 @@ def _metrik_target_b(
             "target": int(target),
             "belum": int(belum),
             "hilang": int(hilang),
+            "selesai": int(selesai),
             "regresi": int(regresi),
         }
     return keluaran
@@ -1221,8 +1223,10 @@ def _progres_dari_capaian(
         satu = capaian.get(kunci)
         target = int(satu["target"]) if satu is not None else 0
         belum = int(satu["belum"]) if satu is not None else 0
-        regresi = int(satu["regresi"]) if satu is not None else 0
-        selesai = max(0, min(target, target - belum - regresi))
+        # "Selesai" = klaim kabupaten (flag_repair unggahan = 0), bukan hasil
+        # hitung ulang model; selisihnya terlihat di menu anomali.
+        selesai = int(satu["selesai"]) if satu is not None else 0
+        selesai = max(0, min(target, selesai))
         keluaran[kunci] = {
             **a,
             "target": target,
@@ -1251,8 +1255,7 @@ def _progres_dari_capaian(
         for kunci, satu in kunci_baru.items():
             target = int(satu["target"])
             belum = int(satu["belum"])
-            regresi = int(satu["regresi"])
-            selesai = max(0, min(target, target - belum - regresi))
+            selesai = max(0, min(target, int(satu["selesai"])))
             info = meta.get(kunci[1], {}) if kunci[1] is not None else {}
             keluaran[kunci] = {
                 "kode": kunci[0],

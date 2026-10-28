@@ -37,6 +37,7 @@ KOLOM_TITIK_HASIL: tuple[str, ...] = (
     "run_id",
     "urut",
     "assignment_id",
+    "unique_bang",
     "level_6_full_code",
     "wilayah_asal_id",
     "wilayah_edit_id",
@@ -45,6 +46,7 @@ KOLOM_TITIK_HASIL: tuple[str, ...] = (
     "flag_edit_atr_repair",
     "flag_repair_initial",
     "flag_repair",
+    "flag_repair_unggah",
     "kk",
     "btt",
     "bku",
@@ -60,7 +62,6 @@ KOLOM_TITIK_HASIL: tuple[str, ...] = (
 # Kolom keluaran Proses A/B yang sengaja tidak disimpan (atribut bangunan dan
 # nama/kode wilayah yang sudah dinormalkan ke tabel ``wilayah``).
 KOLOM_DIBUANG = (
-    "unique_bang",
     "idsubsls_origin",
     "idsubsls_edited",
     "no_bang",
@@ -93,7 +94,13 @@ def test_semua_kolom_keluaran_proses_diputuskan() -> None:
     keluaran = set(KOLOM_HASIL) | set(KOLOM_HASIL_B)
     tersimpan = set(TitikHasil.__table__.columns.keys())
     assert keluaran - tersimpan == set(KOLOM_DIBUANG)
-    assert tersimpan <= keluaran | {"run_id", "urut", "wilayah_asal_id", "wilayah_edit_id"}
+    assert tersimpan <= keluaran | {
+        "run_id",
+        "urut",
+        "wilayah_asal_id",
+        "wilayah_edit_id",
+        "flag_repair_unggah",
+    }
 
 
 def test_kunci_tabel_titik_hasil_wilayah_dan_rekap() -> None:
