@@ -147,8 +147,10 @@ Yang perlu diketahui sebelum menyalakan worker kedua:
   `Environment=`, karena `EnvironmentFile=` **selalu menimpa** `Environment=`.
   Kalau `/etc/pointse/pointse.env` memuat `WORKER_LOCK_FILE` (default
   `/home/pointse-data/worker.lock`), `Environment=` di unit akan kalah dan
-  kedua instance berebut kunci yang sama. Periksa hasilnya dengan
-  `systemctl show pointse-worker@2 -p Environment`.
+  kedua instance berebut kunci yang sama. Karena ditulis sebagai prefiks
+  `ExecStart`, nilainya tidak muncul di `systemctl show -p Environment`;
+  periksa lewat prosesnya:
+  `sudo tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value pointse-worker@2)/environ | grep WORKER_`.
 - **Naikkan `JOB_TIMEOUT_MENIT` dulu.** Worker yang menganggur akan menandai
   job `jalan` yang heartbeat-nya lebih tua dari batas itu sebagai gagal. Pada
   kabupaten besar fase akhir (rekap + pangkas + urut penuh) bisa >30 menit,
