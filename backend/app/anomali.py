@@ -264,14 +264,30 @@ def simpan_anomali(sesi: Session, run: Run) -> int:
         return 0
 
     # Hanya run B terakhir yang disimpan: buang anomali run B lain sekabupaten.
-    lain = select(Run.id).where(
-        Run.tipe == TIPE_B,
-        Run.kdprov == run.kdprov,
-        Run.kdkab == run.kdkab,
-        Run.id != run.id,
+    # Id run lain diambil dengan SELECT biasa lebih dulu, BUKAN subquery di dalam
+    # DELETE: MariaDB mengunci setiap baris ``runs`` yang dibaca subquery DML,
+    # sehingga worker kedua yang sedang memperbarui status/heartbeat run lain
+    # membuat DELETE ini menunggu sampai "Lock wait timeout exceeded" (job 80,
+    # 2026-10-28). SELECT biasa adalah consistent read tanpa lock.
+    lain = list(
+        sesi.scalars(
+            select(Run.id).where(
+                Run.tipe == TIPE_B,
+                Run.kdprov == run.kdprov,
+                Run.kdkab == run.kdkab,
+                Run.id != run.id,
+            )
+        )
     )
-    sesi.execute(delete(AnomaliTitik).where(AnomaliTitik.run_b_id.in_(lain)))
-    sesi.execute(delete(AnomaliTitik).where(AnomaliTitik.run_b_id == run.id))
+    if lain:
+        sesi.execute(delete(AnomaliTitik).where(AnomaliTitik.run_b_id.in_(lain)))
+    # DELETE pada rentang kosong pun mengambil gap lock di MariaDB; lewati bila
+    # memang tidak ada sisa anomali run ini.
+    ada = sesi.scalar(
+        select(AnomaliTitik.id).where(AnomaliTitik.run_b_id == run.id).limit(1)
+    )
+    if ada is not None:
+        sesi.execute(delete(AnomaliTitik).where(AnomaliTitik.run_b_id == run.id))
 
     a = aliased(TitikHasil)
     target_a = select(a.assignment_id).where(
