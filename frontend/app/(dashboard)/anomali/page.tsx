@@ -4,7 +4,7 @@ import { AnomaliClient } from "@/components/anomali/anomali-client";
 import { wajibSesi } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
-  title: "Anomali titik",
+  title: "Pencermatan Titik",
 };
 
 export const instant = false;
@@ -16,7 +16,7 @@ export default async function AnomaliPage() {
     <div className="space-y-field">
       <header className="border-b border-line pb-4">
         <h1 className="text-lg font-semibold tracking-tight text-ink sm:text-xl">
-          Anomali titik
+          Pencermatan Titik
         </h1>
         <p className="mt-1 max-w-3xl text-xs leading-5 text-muted sm:text-sm">
           Titik yang menurut sistem masih bermasalah pada Proses B terakhir:

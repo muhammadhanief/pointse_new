@@ -86,7 +86,7 @@ const MENU: GrupMenu[] = [
     label: "Hasil",
     item: [
       { href: "/rekap", label: "Rekap progres", ikon: IkonRekap },
-      { href: "/anomali", label: "Anomali titik", ikon: IkonAnomali },
+      { href: "/anomali", label: "Pencermatan Titik", ikon: IkonAnomali },
     ],
   },
   {

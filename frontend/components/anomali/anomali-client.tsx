@@ -151,7 +151,7 @@ export function AnomaliClient({
   return (
     <div className="space-y-field">
       <Panel
-        judul="Anomali titik"
+        judul="Pencermatan Titik"
         deskripsi="Titik yang menurut sistem masih bermasalah pada Proses B terakhir. Rekap memakai klaim kabupaten; halaman ini memperlihatkan selisihnya."
       >
         <div className="mt-3 grid gap-field sm:grid-cols-2 lg:grid-cols-4">
@@ -311,7 +311,7 @@ export function AnomaliClient({
 
         {!memuat && data != null && runs.length === 0 ? (
           <EmptyState judul="Belum ada Proses B yang sukses">
-            Anomali dihitung saat job Proses B selesai. Unggah titik hasil
+            Pencermatan dihitung saat job Proses B selesai. Unggah titik hasil
             perbaikan untuk kabupaten/kota ini lebih dulu.
           </EmptyState>
         ) : null}
