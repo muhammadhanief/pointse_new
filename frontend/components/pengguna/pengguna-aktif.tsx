@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EmptyState, Panel, TombolAksi } from "@/components/dashboard/ui";
 import {
@@ -130,6 +130,23 @@ export function PenggunaAktifClient() {
     };
   }, [muat]);
 
+  // Saringan lokal: jaring pengaman bila backend lama belum mengenal ``q``
+  // (FastAPI mengabaikan parameter tak dikenal) atau bila hasilnya >500 baris.
+  const baris = useMemo(() => {
+    const daftar = data?.baris ?? [];
+    const kata = kataKunci.trim().toLowerCase();
+    if (!kata) {
+      return daftar;
+    }
+    return daftar.filter((pengguna) =>
+      [pengguna.nama, pengguna.username, pengguna.nip, pengguna.kdprov, pengguna.kdkab]
+        .filter((nilai): nilai is string => Boolean(nilai))
+        .some((nilai) => nilai.toLowerCase().includes(kata)),
+    );
+  }, [data, kataKunci]);
+
+  const online = baris.filter((pengguna) => pengguna.online).length;
+
   return (
     <Panel
       judul="Daftar pengguna"
@@ -139,10 +156,10 @@ export function PenggunaAktifClient() {
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
             <span>
-              <strong className="text-ink">{data?.online ?? 0}</strong> online
+              <strong className="text-ink">{online}</strong> online
             </span>
             <span>
-              <strong className="text-ink">{data?.total ?? 0}</strong> pengguna
+              <strong className="text-ink">{baris.length}</strong> pengguna
             </span>
             {diperbarui ? (
               <span>Diperbarui {formatWaktu(diperbarui)}</span>
@@ -213,7 +230,7 @@ export function PenggunaAktifClient() {
         </div>
       ) : null}
 
-      {!memuat && data && data.baris.length === 0 ? (
+      {!memuat && data && baris.length === 0 ? (
         kataKunci ? (
           <EmptyState judul="Tidak ada pengguna yang cocok">
             Tidak ada nama, username, NIP, atau kode wilayah yang memuat
@@ -226,7 +243,7 @@ export function PenggunaAktifClient() {
         )
       ) : null}
 
-      {data && data.baris.length > 0 ? (
+      {data && baris.length > 0 ? (
         <div className="mt-3 overflow-x-auto rounded-lg border border-line">
           <table className="w-full min-w-[52rem] border-collapse text-[13px]">
             <thead>
@@ -240,7 +257,7 @@ export function PenggunaAktifClient() {
               </tr>
             </thead>
             <tbody>
-              {data.baris.map((pengguna) => (
+              {baris.map((pengguna) => (
                 <tr
                   key={pengguna.sub}
                   className="border-b border-line/70 last:border-0"
