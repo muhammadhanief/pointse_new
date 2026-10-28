@@ -143,6 +143,13 @@ Yang perlu diketahui sebelum menyalakan worker kedua:
 - **Kunci terpisah wajib.** Unit template memakai
   `WORKER_LOCK_FILE=/run/pointse-%i/worker.lock`. Tanpa itu instance kedua
   langsung keluar (`worker --loop lain sedang berjalan`).
+- **Naikkan `JOB_TIMEOUT_MENIT` dulu.** Worker yang menganggur akan menandai
+  job `jalan` yang heartbeat-nya lebih tua dari batas itu sebagai gagal. Pada
+  kabupaten besar fase akhir (rekap + pangkas + urut penuh) bisa >30 menit,
+  sedangkan heartbeat job bisa membeku karena baris `runs` dikunci transaksi
+  itu. Dengan satu worker ini tidak terjadi (worker sibuk di dalam job), tetapi
+  dengan dua worker job sehat bisa ikut dibatalkan. Setel mis. `120` di
+  `/etc/pointse/pointse.env` lalu restart.
 - **Anggaran memori dijumlahkan.** Instance @2 memakai
   `WORKER_MEM_BUDGET_MB=700` dan `MemoryMax=1100M`. Total dua worker ±1,4 GB
   lunak / 2,2 GB keras, ditambah API (1 GB) dan MariaDB (±0,9 GB). Kalau
