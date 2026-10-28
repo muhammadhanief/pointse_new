@@ -619,7 +619,28 @@ def test_pemangkasan_menyimpan_baseline_dan_run_terbaru(
 def test_berkas_mentah_hanya_baseline_dan_terbaru(
     sesi: Session, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
-    """Berkas mentah di folder unggahan hanya disimpan untuk baseline + terbaru."""
+    """Bila ``SIMPAN_BERKAS_MENTAH`` mati: hanya baseline + terbaru disimpan."""
+    akar = tmp_path / "unggahan"
+    akar.mkdir()
+    setelan = Settings(
+        worker_enabled=False, dir_unggahan=str(akar), simpan_berkas_mentah=False
+    )
+    ids = ids_job(sesi, tmp_path, 3, akar=akar)
+    sesi.rollback()
+
+    for _ in range(3):
+        assert proses_satu_job(sesi_pabrik, setelan) is True
+    sesi.expire_all()
+
+    assert {jalur.name for jalur in akar.iterdir()} == {"job0", "job2"}
+    # nama berkas tetap tersimpan di baris runs sebagai riwayat
+    assert {sesi.get(Run, satu).nama_file_input for satu in ids} == {"titik.geojson"}
+
+
+def test_berkas_mentah_semua_run_disimpan(
+    sesi: Session, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Dengan bawaan baru, berkas mentah semua run tetap ada untuk diunduh."""
     akar = tmp_path / "unggahan"
     akar.mkdir()
     setelan = Settings(worker_enabled=False, dir_unggahan=str(akar))
@@ -630,8 +651,7 @@ def test_berkas_mentah_hanya_baseline_dan_terbaru(
         assert proses_satu_job(sesi_pabrik, setelan) is True
     sesi.expire_all()
 
-    assert {jalur.name for jalur in akar.iterdir()} == {"job0", "job2"}
-    # nama berkas tetap tersimpan di baris runs sebagai riwayat
+    assert {jalur.name for jalur in akar.iterdir()} == {"job0", "job1", "job2"}
     assert {sesi.get(Run, satu).nama_file_input for satu in ids} == {"titik.geojson"}
 
 
@@ -654,9 +674,65 @@ def test_pangkas_berkas_tidak_menyentuh_luar_folder_unggahan(
     sesi.add(run)
     sesi.commit()
 
-    assert modul_worker.pangkas_berkas(sesi, [], tmp_path / "unggahan") == []
-    assert modul_worker.pangkas_berkas(sesi, [run.id], tmp_path / "unggahan") == []
+    assert (
+        modul_worker.pangkas_berkas(
+            sesi, [], tmp_path / "unggahan", Settings(simpan_berkas_mentah=False)
+        )
+        == []
+    )
+    assert (
+        modul_worker.pangkas_berkas(
+            sesi, [run.id], tmp_path / "unggahan", Settings(simpan_berkas_mentah=False)
+        )
+        == []
+    )
     assert berkas.exists()
+
+
+def test_pangkas_berkas_menyimpan_semua_selama_disk_cukup(
+    sesi: Session, tmp_path: Path
+) -> None:
+    """Dengan ``SIMPAN_BERKAS_MENTAH`` berkas run lama tetap disimpan."""
+    run = buat_job(sesi, tmp_path, nama="lama")
+    run.status = STATUS_SUKSES
+    sesi.commit()
+
+    setelan = Settings(simpan_berkas_mentah=True, berkas_min_free_mb=0)
+    assert modul_worker.pangkas_berkas(sesi, [run.id], tmp_path, setelan) == []
+    assert Path(run.berkas_input).exists()
+    assert Path(run.berkas_peta).exists()
+
+
+def test_pangkas_berkas_darurat_menyisakan_run_terbaru(
+    sesi: Session, tmp_path: Path
+) -> None:
+    """Saat disk di bawah ambang, berkas run lama dihapus dan yang terbaru disimpan."""
+    lama = buat_job(sesi, tmp_path, nama="lama")
+    baru = buat_job(sesi, tmp_path, nama="baru")
+    for run in (lama, baru):
+        run.status = STATUS_SUKSES
+    sesi.commit()
+
+    # Ambang 1 PB tidak mungkin terpenuhi -> pemangkasan darurat dijalankan.
+    setelan = Settings(simpan_berkas_mentah=True, berkas_min_free_mb=10**9)
+    terhapus = modul_worker.pangkas_berkas(sesi, [], tmp_path, setelan)
+
+    assert terhapus
+    assert not Path(lama.berkas_input).exists()
+    assert Path(baru.berkas_input).exists()
+
+
+def test_pangkas_berkas_mode_lama_menghapus_run_yang_dipangkas(
+    sesi: Session, tmp_path: Path
+) -> None:
+    """Bila penyimpanan dimatikan, berkas run yang dipangkas langsung dihapus."""
+    run = buat_job(sesi, tmp_path, nama="lama")
+    run.status = STATUS_SUKSES
+    sesi.commit()
+
+    setelan = Settings(simpan_berkas_mentah=False)
+    assert modul_worker.pangkas_berkas(sesi, [run.id], tmp_path, setelan)
+    assert not Path(run.berkas_input).exists()
 
 
 def test_klaim_melewati_job_yang_sedang_jalan(sesi: Session, tmp_path: Path) -> None:

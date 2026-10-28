@@ -547,29 +547,82 @@ def hitung_tanpa_wilayah(sesi: Session, run_id: int) -> int:
     )
 
 
-def pangkas_berkas(sesi: Session, run_ids: list[int], akar: Path) -> list[str]:
-    """Hapus folder berkas mentah run yang ``titik_hasil``-nya sudah dipangkas.
+def pangkas_berkas(
+    sesi: Session,
+    run_ids: list[int],
+    akar: Path,
+    setelan: Settings | None = None,
+) -> list[str]:
+    """Hapus folder berkas mentah run lama (default: hanya saat disk menipis).
+
+    Dengan ``SIMPAN_BERKAS_MENTAH`` (bawaan), berkas mentah semua run disimpan
+    supaya tombol unduh tetap berfungsi. Penghapusan baru terjadi bila ruang
+    disk bebas turun di bawah ``BERKAS_MIN_FREE_MB``: run tertua dihapus lebih
+    dulu, sedangkan run terbaru per (provinsi, kabupaten, tipe) dan berkas
+    geotag master selalu dipertahankan. Bila opsi itu dimatikan, perilaku lama
+    berlaku: folder run di ``run_ids`` (yang ``titik_hasil``-nya dipangkas)
+    langsung dihapus.
 
     Hanya folder di dalam ``akar`` (folder unggahan) yang dihapus, dan berkas run
     dengan status lain (``menunggu``/``jalan``/``gagal``) tidak pernah ikut karena
     :func:`app.rekap.pangkas_titik_hasil` hanya mengembalikan run sukses. Baris
     ``runs`` tetap menyimpan nama berkasnya sebagai riwayat.
     """
-    if not run_ids:
-        return []
+    setelan = setelan or get_settings()
     akar = akar.resolve()
+    jaga = setelan.simpan_berkas_mentah
+    if jaga and ruang_bebas_mb(akar) >= setelan.berkas_min_free_mb:
+        return []
+    if jaga:
+        kandidat = kandidat_hapus_berkas(sesi)
+    elif run_ids:
+        kandidat = list(sesi.scalars(select(Run).where(Run.id.in_(run_ids))))
+    else:
+        return []
+
     terhapus: list[str] = []
-    for run in sesi.scalars(select(Run).where(Run.id.in_(run_ids))):
+    for run in kandidat:
+        if jaga and ruang_bebas_mb(akar) >= setelan.berkas_min_free_mb:
+            break
         # Berkas input run A bisa menunjuk geotag master (permanen); jangan
         # menghapus foldernya. Folder peta tetap dipangkas.
         jalur_hapus = {Path(run.berkas_peta).resolve().parent}
-        if run.geotag_master_id is None:
+        if run.geotag_master_id is None and run.berkas_input:
             jalur_hapus.add(Path(run.berkas_input).resolve().parent)
         for jalur in jalur_hapus:
             if jalur != akar and akar in jalur.parents and jalur.exists():
                 shutil.rmtree(jalur, ignore_errors=True)
                 terhapus.append(str(jalur))
     return terhapus
+
+
+def ruang_bebas_mb(jalur: Path) -> int:
+    """Ruang disk bebas (MB) pada sistem berkas ``jalur``; 0 bila tidak terbaca."""
+    try:
+        return int(shutil.disk_usage(jalur).free // (1024 * 1024))
+    except OSError:
+        return 0
+
+
+def kandidat_hapus_berkas(sesi: Session) -> list[Run]:
+    """Run sukses yang berkasnya boleh dibuang saat disk menipis, terlama dulu.
+
+    Run terbaru per (provinsi, kabupaten, tipe) dipertahankan supaya unduhan dan
+    proses ulang tetap tersedia; run dengan geotag master tidak pernah dihapus
+    karena berkas input-nya milik master.
+    """
+    runs = list(
+        sesi.scalars(select(Run).where(Run.status == STATUS_SUKSES).order_by(Run.id))
+    )
+    terbaru: dict[tuple[str, str, str], int] = {}
+    for run in runs:
+        terbaru[(run.kdprov, run.kdkab, run.tipe)] = run.id
+    simpan = set(terbaru.values())
+    return [
+        run
+        for run in runs
+        if run.id not in simpan and run.geotag_master_id is None
+    ]
 
 
 def proses_potongan(
@@ -1015,9 +1068,11 @@ def proses_satu_job(
             jenis="job_sukses",
             pesan=f"Job {run_id} sukses: {jumlah} baris",
         )
-        if buang:
-            with sesi_pabrik() as sesi:
-                terhapus = pangkas_berkas(sesi, buang, Path(setelan.dir_unggahan))
+        with sesi_pabrik() as sesi:
+            terhapus = pangkas_berkas(
+                sesi, buang, Path(setelan.dir_unggahan), setelan
+            )
+        if terhapus:
             logger.info("berkas mentah dihapus: %s", terhapus)
     except WorkerDihentikan:
         logger.info("job %s dihentikan setelah batch; dikembalikan ke antrean", run_id)

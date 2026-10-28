@@ -209,14 +209,14 @@ def jalankan_penuh(sesi_pabrik: sessionmaker[Session], setelan: Settings) -> Non
         pass
 
 
-def test_run_tengah_yang_dipangkas_tidak_bisa_diekspor(
+def test_run_tengah_tanpa_detail_titik_tapi_berkas_mentah_tetap_ada(
     klien: TestClient,
     sesi: Session,
     sesi_pabrik: sessionmaker[Session],
     setelan: Settings,
     tmp_path: Path,
 ) -> None:
-    """Hanya baseline dan sukses terakhir yang punya berkas + detail titik."""
+    """Detail titik run tengah dipangkas, tetapi berkas mentahnya masih disimpan."""
     id_run: list[int] = []
     for nomor in range(3):
         titik, peta = berkas_uji(tmp_path / f"r{nomor}", BARIS_A_PERHATIAN)
@@ -228,9 +228,11 @@ def test_run_tengah_yang_dipangkas_tidak_bisa_diekspor(
     run = sesi.get(Run, tengah)
     assert run is not None and not run.detail_tersedia
 
-    assert klien.get(f"/runs/{tengah}/ekspor/hasil-a.gpkg").status_code == 409
+    # Ekspor dari titik_hasil butuh detail yang sudah dipangkas.
     assert klien.get(f"/runs/{tengah}/ekspor/titik.csv").status_code == 409
     assert klien.get(f"/runs/{tengah}/ekspor/titik.gpkg").status_code == 409
+    # SIMPAN_BERKAS_MENTAH (bawaan) menyimpan berkas, jadi hasil A bisa dihitung ulang.
+    assert klien.get(f"/runs/{tengah}/ekspor/hasil-a.gpkg").status_code == 200
 
     # Baseline dan sukses terakhir tetap bisa diekspor.
     for run_id in (id_run[0], id_run[2]):

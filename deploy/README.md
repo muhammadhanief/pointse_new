@@ -311,6 +311,25 @@ Yang dihitung untuk setiap kode level 6 milik A:
 Dasar `posisi` memakai SubSLS hasil join peta B (posisi sekarang), dasar `tugas`
 memakai kode penugasan A.
 
+## 6d. Penyimpanan berkas mentah (tombol Unduh run lama)
+
+Bawaan baru: **berkas mentah semua run disimpan** (`SIMPAN_BERKAS_MENTAH=true`)
+supaya tombol Unduh di detail riwayat berfungsi untuk run mana pun, bukan hanya
+run terbaru. Ini menggantikan aturan lama yang hanya menyisakan baseline + sukses
+terakhir per kabupaten/tipe.
+
+Pengamannya `BERKAS_MIN_FREE_MB` (bawaan `50000` = 50 GB): bila ruang disk bebas
+turun di bawah ambang itu, worker menghapus folder berkas mentah run **tertua**
+lebih dulu sampai ruang kembali di atas ambang. Yang tidak pernah dihapus:
+run terbaru per (provinsi, kabupaten, tipe) dan berkas geotag master. Baris
+`runs` serta seluruh rekap tidak tersentuh — hanya berkasnya.
+
+Perkiraan pemakaian: satu run ±200–500 MB; dengan ritme sekarang (±10 run/minggu)
+ruang 230 GB cukup untuk hitungan bulan. Pantau disk di halaman Status Sistem.
+
+Bila ingin kembali ke aturan lama (hemat disk, berkas lama tidak bisa diunduh),
+setel `SIMPAN_BERKAS_MENTAH=false` lalu restart `pointse-worker`.
+
 ## 7. Backup
 
 Tambahkan cron harian:
