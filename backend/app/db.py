@@ -19,7 +19,17 @@ class Base(DeclarativeBase):
 
 
 def buat_engine(url: str, **kwargs: object) -> Engine:
-    """Buat engine SQLAlchemy untuk ``url`` (dipakai app maupun tes)."""
+    """Buat engine SQLAlchemy untuk ``url`` (dipakai app maupun tes).
+
+    MySQL memakai ``READ COMMITTED``: dengan dua worker, ``REPEATABLE READ``
+    menahan gap lock pada rentang indeks yang berdekatan, sehingga job yang
+    menulis ``rekap_target``/``anomali_titik`` untuk satu kabupaten memblokir
+    job kabupaten lain sampai ``Lock wait timeout exceeded`` (1205). ``READ
+    COMMITTED`` hanya mengunci baris yang benar-benar disentuh. SQLite tidak
+    mengenal tingkat ini, jadi hanya dipasang untuk MySQL/MariaDB.
+    """
+    if url.startswith("mysql"):
+        kwargs.setdefault("isolation_level", "READ COMMITTED")
     return create_engine(
         url,
         pool_pre_ping=True,

@@ -32,11 +32,25 @@ disimpan untuk run B terakhir per kabupaten/kota.
 
 from __future__ import annotations
 
+import logging
+import os
 from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy import String, and_, delete, func, insert, literal, or_, select
+from sqlalchemy import (
+    String,
+    and_,
+    column,
+    delete,
+    func,
+    insert,
+    literal,
+    or_,
+    select,
+    table,
+    text,
+)
 from sqlalchemy.orm import Session, aliased
 
 from app import rekap as modul_rekap
@@ -61,6 +75,11 @@ JENIS: tuple[tuple[str, str], ...] = (
 )
 
 LABEL: dict[str, str] = dict(JENIS)
+
+logger = logging.getLogger(__name__)
+
+#: Tabel sementara daftar ``assignment_id`` berkas A (lihat :func:`_siapkan_id_a`).
+TABEL_ID_A = "_anomali_id_a"
 
 #: Kolom tujuan ``anomali_titik`` (untuk ``insert().from_select``).
 KOLOM: tuple[str, ...] = (
@@ -249,6 +268,77 @@ def _simpan_hilang(
     return jumlah_hilang, jumlah_ubah, id_baru
 
 
+def _id_a_dari_berkas(run_a: Run) -> list[str] | None:
+    """Seluruh ``assignment_id`` berkas A, atau ``None`` bila tidak terbaca.
+
+    ``titik_hasil`` run A sudah dipangkas (hanya titik yang perlu perhatian),
+    sehingga daftar id lengkap hanya bisa diambil dari berkas mentah yang masih
+    disimpan. Tanpa ini setiap titik B yang sehat terlihat sebagai "titik baru".
+    """
+    jalur = getattr(run_a, "berkas_input", None)
+    if not jalur or not os.path.exists(jalur):
+        return None
+    try:
+        import pyogrio  # impor berat: hanya dipakai worker
+
+        tabel = pyogrio.read_dataframe(
+            jalur,
+            layer=run_a.layer_input,
+            columns=["assignment_id"],
+            read_geometry=False,
+        )
+    except Exception:  # noqa: BLE001 - berkas hilang/rusak: pakai sisa titik_hasil
+        logger.warning(
+            "berkas A run %s tidak terbaca; daftar id memakai titik_hasil",
+            run_a.id,
+            exc_info=True,
+        )
+        return None
+    if "assignment_id" not in tabel.columns:
+        return None
+    seri = tabel["assignment_id"].dropna().astype(str).str.strip()
+    return [satu for satu in seri.unique().tolist() if satu]
+
+
+def _siapkan_id_a(sesi: Session, run_a: Run) -> Any:
+    """Isi tabel sementara daftar ``assignment_id`` A; kembalikan subquery-nya.
+
+    Dipakai ``regresi`` (titik B yang ada di A tetapi bukan target) dan
+    ``titik_baru`` (id yang benar-benar tidak ada di A). Tabel sementara dipilih
+    supaya ``IN`` tidak membawa ratusan ribu parameter.
+    """
+    sesi.execute(text(f"DROP TABLE IF EXISTS {TABEL_ID_A}"))
+    sesi.execute(
+        text(
+            f"CREATE TEMPORARY TABLE {TABEL_ID_A} "
+            "(assignment_id VARCHAR(64) NOT NULL PRIMARY KEY)"
+        )
+    )
+    ids = _id_a_dari_berkas(run_a)
+    if ids is None:
+        ids = [
+            str(satu)
+            for satu in sesi.scalars(
+                select(TitikHasil.assignment_id).where(
+                    TitikHasil.run_id == run_a.id,
+                    TitikHasil.assignment_id.is_not(None),
+                )
+            )
+        ]
+    abaikan = (
+        "INSERT OR IGNORE"
+        if sesi.get_bind().dialect.name == "sqlite"
+        else "INSERT IGNORE"
+    )
+    for mulai in range(0, len(ids), 5000):
+        potong = ids[mulai : mulai + 5000]
+        sesi.execute(
+            text(f"{abaikan} INTO {TABEL_ID_A} (assignment_id) VALUES (:id)"),
+            [{"id": satu} for satu in potong],
+        )
+    return select(table(TABEL_ID_A, column("assignment_id")).c.assignment_id)
+
+
 def simpan_anomali(sesi: Session, run: Run) -> int:
     """Hitung dan simpan anomali job B; kembalikan jumlah baris.
 
@@ -293,7 +383,7 @@ def simpan_anomali(sesi: Session, run: Run) -> int:
     target_a = select(a.assignment_id).where(
         a.run_id == run_a.id, a.flag_repair == 1
     )
-    semua_a = select(a.assignment_id).where(a.run_id == run_a.id)
+    semua_a = _siapkan_id_a(sesi, run_a)
 
     jumlah = 0
     jumlah_hilang, jumlah_ubah, id_baru = _simpan_hilang(sesi, run_a, run)

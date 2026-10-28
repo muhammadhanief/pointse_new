@@ -7,9 +7,11 @@ bermasalah. Tes di sini menjaga pemisahan itu.
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import anomali
 from app.anomali import hitung_per_jenis, simpan_anomali
 from app.models import (
     DASAR_TUGAS,
@@ -179,6 +181,30 @@ def test_simpan_anomali_mengisi_semua_jenis(sesi: Session) -> None:
     assert per_jenis["regresi"][0].assignment_id == "a7"
     assert per_jenis["titik_baru"][0].assignment_id == "z1"
     assert hitung_per_jenis(sesi, run_b.id)["hilang"] == 1
+
+
+def test_titik_baru_memakai_id_lengkap_berkas_a(
+    sesi: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Titik sehat di B tidak jadi "baru" hanya karena A sudah dipangkas."""
+    w_a = _wilayah(sesi, KODE_A)
+    run_a = _run(sesi, TIPE_A)
+    # titik_hasil A hanya menyimpan target (flag_repair=1), seperti setelah pangkas
+    _titik(sesi, run_a, 0, "a1", KODE_A, flag_model=1, wilayah=w_a)
+    sesi.flush()
+
+    run_b = _run(sesi, TIPE_B, sumber_a=run_a.id)
+    _titik(sesi, run_b, 0, "a1", KODE_A, flag_model=1, flag_unggah=0, wilayah=w_a)
+    _titik(sesi, run_b, 1, "a6", KODE_A, flag_model=0, flag_unggah=0, wilayah=w_a)
+    _titik(sesi, run_b, 2, "z1", KODE_A, flag_model=1, flag_unggah=1, wilayah=w_a)
+    sesi.flush()
+
+    # berkas A memuat seluruh id, termasuk yang sudah tidak tersimpan di DB
+    monkeypatch.setattr(anomali, "_id_a_dari_berkas", lambda run: ["a1", "a6"])
+    simpan_anomali(sesi, run_b)
+    sesi.flush()
+
+    assert [baris.assignment_id for baris in _jenis(sesi, run_b)["titik_baru"]] == ["z1"]
 
 
 def test_simpan_anomali_mengganti_anomali_run_b_lama(sesi: Session) -> None:

@@ -172,6 +172,11 @@ Yang perlu diketahui sebelum menyalakan worker kedua:
   ditentukan ulang tepat sebelum diproses (A sukses terbaru) dan petanya disalin
   ke folder job. Jadi B yang diunggah saat A masih antre tidak lagi memakai peta
   A lama.
+- **Dua worker menulis tabel rekap yang sama.** Fase akhir job (rekap,
+  anomali, `rekap_target`, pangkas) menyentuh tabel yang sama untuk kabupaten
+  berbeda. Engine memakai `READ COMMITTED` (`app/db.py`) supaya tidak ada gap
+  lock antar rentang `run_id`; dengan `REPEATABLE READ` job bisa gagal
+  `1205 Lock wait timeout exceeded`.
 - **CPU dan disk berbagi.** Di server 4 core, dua job memakai dua core dan
   menyisakan dua core untuk API/MariaDB. Karena penyimpanan HDD, kenaikan
   kecepatan biasanya ±1,3-1,6x, bukan 2x; lonjakan `iowait` terlihat di
