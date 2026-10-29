@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { MultiPilih } from "@/components/dashboard/multi-pilih";
 import { EmptyState, Panel, TombolAksi } from "@/components/dashboard/ui";
+import { PenjelasanJenis } from "@/components/anomali/penjelasan-jenis";
 import {
   adalahBatal,
   ambilJson,
@@ -39,6 +40,7 @@ export function AnomaliClient({
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState<string | null>(null);
   const [mengunduh, setMengunduh] = useState(false);
+  const [bukaPenjelasan, setBukaPenjelasan] = useState(false);
 
   const parameter = useMemo(() => {
     const isi = new URLSearchParams({
@@ -154,6 +156,26 @@ export function AnomaliClient({
         judul="Pencermatan Titik"
         deskripsi="Titik yang menurut sistem masih bermasalah pada Proses B terakhir. Rekap memakai klaim kabupaten; halaman ini memperlihatkan selisihnya."
       >
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-muted">
+            Filter berlaku untuk tabel dan unduhan Excel.
+          </p>
+          <button
+            type="button"
+            onClick={() => setBukaPenjelasan(true)}
+            aria-haspopup="dialog"
+            className="group inline-flex items-center gap-2 rounded-full bg-accent px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-accent-strong hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            <span
+              aria-hidden="true"
+              className="grid h-5 w-5 place-items-center rounded-full bg-white/20 text-[11px] font-bold ring-1 ring-white/40 transition group-hover:bg-white group-hover:text-accent"
+            >
+              ?
+            </span>
+            Apa arti jenis ini?
+          </button>
+        </div>
+
         <div className="mt-3 grid gap-field sm:grid-cols-2 lg:grid-cols-4">
           {kdkabAwal ? (
             <div>
@@ -415,6 +437,11 @@ export function AnomaliClient({
           </>
         ) : null}
       </Panel>
+
+      <PenjelasanJenis
+        terbuka={bukaPenjelasan}
+        onTutup={() => setBukaPenjelasan(false)}
+      />
     </div>
   );
 }
