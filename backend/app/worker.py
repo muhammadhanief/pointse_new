@@ -823,26 +823,41 @@ def tandai_job_terhenti(
     Hasil separuhnya dibersihkan dan pesannya dibuat khusus supaya operator tahu
     job boleh diunggah ulang. Job ``jalan`` yang masih sehat (heartbeat baru)
     tidak disentuh.
+
+    Dengan dua worker, job yang baru saja sukses bisa terbaca ``jalan`` oleh
+    worker lain (baris ``runs``-nya sedang dikunci transaksi penutup). Karena itu
+    kandidat dibaca ulang dengan ``FOR UPDATE`` (baca data terkini, bukan snapshot
+    transaksi) dan job yang sudah punya ``finished_at`` tidak pernah disentuh.
     """
     batas = sekarang() - timedelta(minutes=setelan.job_timeout_menit)
     # Worker yang mati (restart/deploy) berhenti memperbarui ``worker_heartbeat``;
     # job yang dipegangnya jadi yatim dan harus segera ditandai gagal, bukan
     # menunggu JOB_TIMEOUT_MENIT yang sengaja longgar untuk job besar.
     segar = sekarang() - timedelta(seconds=AMBANG_YATIM_DETIK)
-    dipegang = select(WorkerHeartbeat.run_id).where(
-        WorkerHeartbeat.run_id.is_not(None),
-        WorkerHeartbeat.heartbeat_at >= segar,
+    # Daftar run yang dipegang worker hidup dibaca terpisah: kalau subquery-nya
+    # ikut di kunci ``FOR UPDATE``, baris ``worker_heartbeat`` worker lain bisa
+    # tersentuh lock dan heartbeat-nya justru membeku.
+    dipegang = list(
+        sesi.scalars(
+            select(WorkerHeartbeat.run_id).where(
+                WorkerHeartbeat.run_id.is_not(None),
+                WorkerHeartbeat.heartbeat_at >= segar,
+            )
+        )
     )
     kandidat = list(
         sesi.scalars(
-            select(Run).where(
+            select(Run)
+            .where(
                 Run.status == STATUS_JALAN,
+                Run.finished_at.is_(None),
                 or_(
                     func.coalesce(Run.heartbeat_at, Run.started_at, Run.created_at)
                     < batas,
                     Run.id.not_in(dipegang),
                 ),
             )
+            .with_for_update(skip_locked=True)
         )
     )
     if not kandidat:

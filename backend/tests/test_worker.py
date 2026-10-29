@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -771,6 +772,30 @@ def test_tandai_job_terhenti_memakai_heartbeat_worker(
     assert terhenti == [yatim.id]
     assert sesi.get(Run, yatim.id).status == STATUS_GAGAL
     assert sesi.get(Run, hidup.id).status == STATUS_JALAN
+
+
+def test_job_sudah_selesai_tidak_ditandai_terhenti(
+    sesi: Session, tmp_path: Path
+) -> None:
+    """Job yang sudah punya ``finished_at`` tidak boleh diubah jadi terhenti.
+
+    Dengan dua worker, worker yang menganggur bisa membaca baris run yang baru
+    ditutup sebagai ``jalan`` (barisnya masih dikunci transaksi penutup). Guard
+    ``finished_at`` menahan job sukses itu agar hasilnya tidak dibersihkan.
+    """
+    selesai = buat_job(sesi, tmp_path, nama="selesai", kdkab="3307")
+    selesai.status = STATUS_JALAN
+    selesai.started_at = sekarang() - timedelta(minutes=10)
+    selesai.heartbeat_at = sekarang() - timedelta(minutes=10)
+    selesai.finished_at = sekarang() - timedelta(minutes=9)
+    sesi.commit()
+
+    terhenti = modul_worker.tandai_job_terhenti(
+        sesi, Settings(job_timeout_menit=120), "w-penguji"
+    )
+
+    assert terhenti == []
+    assert sesi.get(Run, selesai.id).status == STATUS_JALAN
 
 
 def test_klaim_menahan_b_selama_a_sebelumnya_belum_selesai(

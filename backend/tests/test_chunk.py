@@ -25,6 +25,7 @@ from app.models import (
     STATUS_MENUNGGU,
     STATUS_SUKSES,
     TIPE_B,
+    WORKER_JALAN,
     Run,
     TitikHasil,
     sekarang,
@@ -34,6 +35,7 @@ from app.worker import (
     PESAN_DIHENTIKAN,
     PESAN_TERHENTI,
     jalankan_sekali,
+    perbarui_heartbeat_worker,
     proses_satu_job,
     tandai_job_terhenti,
 )
@@ -172,11 +174,12 @@ def test_heartbeat_diperbarui_saat_job_sukses(
 def test_job_jalan_yang_sehat_tidak_disentuh(
     sesi: Session, tmp_path: Path
 ) -> None:
-    """Heartbeat baru: job ``jalan`` bukan job menggantung."""
+    """Heartbeat baru + dipegang worker hidup: job bukan job menggantung."""
     job = buat_job(sesi, tmp_path, nama="sehat")
     job.status = STATUS_JALAN
     job.started_at = sekarang()
     job.heartbeat_at = sekarang()
+    perbarui_heartbeat_worker(sesi, "w-sehat", status=WORKER_JALAN, run_id=job.id)
     sesi.commit()
 
     assert tandai_job_terhenti(sesi, Settings(job_timeout_menit=10)) == []
