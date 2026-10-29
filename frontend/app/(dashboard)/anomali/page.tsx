@@ -21,8 +21,8 @@ export default async function AnomaliPage() {
         <p className="mt-1 max-w-3xl text-xs leading-5 text-muted sm:text-sm">
           Titik yang menurut sistem masih bermasalah pada Proses B terakhir:
           hilang, id berubah, posisi menyimpang, di luar wilayah, kode SLS
-          berubah, regresi, atau titik baru. Rekap memakai klaim kabupaten,
-          halaman ini alat auditnya.
+          berubah, bermasalah lagi, atau titik baru. Rekap memakai klaim
+          kabupaten, halaman ini alat auditnya.
         </p>
       </header>
       <AnomaliClient kdprov={sesi.kdprov} kdkabAwal={sesi.kdkab} />

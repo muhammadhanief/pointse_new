@@ -166,6 +166,8 @@ def test_simpan_anomali_mengisi_semua_jenis(sesi: Session) -> None:
     assert hilang.assignment_id == "a1"
     assert hilang.assignment_id_baru is None
     assert hilang.level_6_full_code == KODE_A
+    # Tidak ada di Geotag Kabkot: kolom kode Geotag Kabkot kosong.
+    assert hilang.level_6_full_code_b is None
 
     ubah = per_jenis["id_berubah"][0]
     assert ubah.assignment_id == "a2"
@@ -179,7 +181,11 @@ def test_simpan_anomali_mengisi_semua_jenis(sesi: Session) -> None:
 
     assert per_jenis["posisi_menyimpang"][0].assignment_id == "a3"
     assert per_jenis["regresi"][0].assignment_id == "a7"
-    assert per_jenis["titik_baru"][0].assignment_id == "z1"
+    baru = per_jenis["titik_baru"][0]
+    assert baru.assignment_id == "z1"
+    # Tidak ada di Master GS: kolom kode Master GS kosong, hanya kode Geotag.
+    assert baru.level_6_full_code is None
+    assert baru.level_6_full_code_b == KODE_A
     assert hitung_per_jenis(sesi, run_b.id)["hilang"] == 1
 
 

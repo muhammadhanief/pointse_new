@@ -337,8 +337,8 @@ export function AnomaliClient({
                     <th className="px-3 py-2 font-semibold">Assignment ID</th>
                     <th className="px-3 py-2 font-semibold">ID baru</th>
                     <th className="px-3 py-2 font-semibold">Bangunan</th>
-                    <th className="px-3 py-2 font-semibold">Kode SLS tugas</th>
-                    <th className="px-3 py-2 font-semibold">Kode SLS B</th>
+                    <th className="px-3 py-2 font-semibold">level_6_fullcode Master GS</th>
+                    <th className="px-3 py-2 font-semibold">level_6_fullcode Geotag Kabkot</th>
                     <th className="px-3 py-2 font-semibold">Wilayah</th>
                     <th className="px-3 py-2 font-semibold">Flag unggah / model</th>
                     <th className="px-3 py-2 font-semibold">Keterangan</th>

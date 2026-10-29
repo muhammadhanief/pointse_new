@@ -70,7 +70,7 @@ JENIS: tuple[tuple[str, str], ...] = (
     ("luar_wilayah", "Di luar wilayah"),
     ("posisi_menyimpang", "Posisi menyimpang"),
     ("kode_berubah", "Kode SLS berubah"),
-    ("regresi", "Regresi"),
+    ("regresi", "Bermasalah lagi (regresi)"),
     ("titik_baru", "Titik baru"),
 )
 
@@ -150,7 +150,9 @@ def _kueri_titik_b(
         b.assignment_id,
         literal(None, String(64)),
         b.unique_bang,
-        b.level_6_full_code,
+        # Titik ini tidak punya pasangan di Master GS, jadi kolom kode Master GS
+        # dikosongkan; hanya kode Geotag Kabkot yang bermakna.
+        literal(None, String(16)),
         b.level_6_full_code,
         _wilayah_b(b),
         b.latitude_edited,
@@ -245,7 +247,9 @@ def _simpan_hilang(
             jumlah_ubah += 1
             jenis = "id_berubah"
             id_baru.add(str(baru[0]))
-        isi = baru or (None, kode, wilayah_id, lat, lon, None, None)
+        # Titik tidak ada di Geotag Kabkot: kolom kode Geotag Kabkot dikosongkan,
+        # hanya kode Master GS (penugasan) yang diisi.
+        isi = baru or (None, None, wilayah_id, lat, lon, None, None)
         baris.append(
             {
                 "run_b_id": run_b.id,
@@ -546,7 +550,7 @@ def kueri_baris(
 def keterangan(baris: AnomaliTitik, wilayah: str | None = None) -> str:
     """Kalimat pendek penjelas satu baris anomali (untuk tabel & Excel)."""
     if baris.jenis == "hilang":
-        return "tidak ada di berkas B"
+        return "tidak ada di Geotag Kabkot"
     if baris.jenis == "id_berubah":
         return f"id baru {baris.assignment_id_baru or '-'}"
     if baris.jenis == "luar_wilayah":
@@ -554,7 +558,7 @@ def keterangan(baris: AnomaliTitik, wilayah: str | None = None) -> str:
     if baris.jenis == "posisi_menyimpang":
         return f"posisi masuk {wilayah or 'wilayah lain'}"
     if baris.jenis == "kode_berubah":
-        return f"kode B {baris.level_6_full_code_b or '-'}"
+        return f"kode Geotag Kabkot {baris.level_6_full_code_b or '-'}"
     if baris.jenis == "regresi":
-        return "bukan target A, tetapi masih ditandai"
-    return "tidak ada di berkas A"
+        return "di Master GS sudah beres, ditandai bermasalah lagi di Geotag Kabkot"
+    return "tidak ada di Master GS"
