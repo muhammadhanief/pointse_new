@@ -489,7 +489,7 @@ export function Shell({
               Pointse
             </Link>
             <p className="hidden text-sm text-muted lg:block">
-              Monitoring editing batas Wilkerstat
+              Pemantauan dan Monitoring Wilkerstat Sensus Ekonomi 2026
             </p>
           </div>
 
