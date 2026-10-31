@@ -425,24 +425,21 @@ export function Shell({
         <div className={`border-b border-line ${ringkas ? "p-3" : "p-4"}`}>
           <Link
             href="/"
-            title="Pointse"
+            title="Pointse — Monitoring Wilkerstat, BPS"
             className={`inline-flex ${
-              ringkas ? "w-full items-center justify-center" : "flex-col"
+              ringkas ? "w-full items-center justify-center" : "w-full"
             }`}
           >
-            <span
-              aria-hidden={ringkas ? true : undefined}
-              className="font-display text-xl font-semibold tracking-tight text-brand"
-            >
-              {ringkas ? "P" : "Pointse"}
-            </span>
-            {ringkas ? (
-              <span className="sr-only">Pointse</span>
-            ) : (
-              <span className="mt-1 text-xs font-medium text-muted">
-                Monitoring Wilkerstat, BPS
-              </span>
-            )}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={
+                ringkas ? "/logo-pointse-lambang.png" : "/logo-pointse.png"
+              }
+              alt="Pointse — Monitoring Wilkerstat, BPS"
+              className={
+                ringkas ? "h-9 w-9 object-contain" : "h-32 w-auto object-contain"
+              }
+            />
           </Link>
         </div>
 
