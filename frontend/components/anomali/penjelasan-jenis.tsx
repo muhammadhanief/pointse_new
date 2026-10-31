@@ -14,7 +14,7 @@ export function PenjelasanJenis({
   return (
     <Modal
       terbuka={terbuka}
-      judul="Arti jenis pencermatan titik"
+      judul="Penjelasan poin pencermatan"
       onTutup={onTutup}
       ukuran="lg"
     >

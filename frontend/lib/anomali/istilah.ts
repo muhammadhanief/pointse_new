@@ -1,5 +1,6 @@
 /**
- * Teks penjelasan jenis pencermatan titik (dipakai modal "Apa arti jenis ini?").
+ * Teks penjelasan jenis pencermatan titik (dipakai modal "Penjelasan poin
+ * pencermatan").
  *
  * Sumber istilah: Master GS = berkas A (daftar tugas), Geotag Kabkot = berkas B
  * (hasil perbaikan kabupaten/kota).
@@ -10,6 +11,17 @@ export type IstilahJenis = {
   judul: string;
   isi: string;
   solusi?: string;
+};
+
+/** Label dropdown/tabel; menimpa label bawaan API supaya seragam dengan modal. */
+export const LABEL_JENIS: Readonly<Record<string, string>> = {
+  hilang: "Titik hilang",
+  id_berubah: "Assignment ID berubah",
+  luar_wilayah: "Di luar wilayah",
+  posisi_menyimpang: "Posisi menyimpang",
+  kode_berubah: "Kode SLS berubah",
+  regresi: "Awal Tidak masalah, sekarang jadi masalah",
+  titik_baru: "Titik baru",
 };
 
 export const PENGANTAR =

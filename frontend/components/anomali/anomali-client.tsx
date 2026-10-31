@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { MultiPilih } from "@/components/dashboard/multi-pilih";
 import { EmptyState, Panel, TombolAksi } from "@/components/dashboard/ui";
 import { PenjelasanJenis } from "@/components/anomali/penjelasan-jenis";
+import { LABEL_JENIS } from "@/lib/anomali/istilah";
 import {
   adalahBatal,
   ambilJson,
@@ -118,7 +119,7 @@ export function AnomaliClient({
 
   const labelJenis = useMemo(() => {
     const peta = new Map((data?.jenis ?? []).map((satu) => [satu.kode, satu.label]));
-    return (kode: string) => peta.get(kode) ?? kode;
+    return (kode: string) => LABEL_JENIS[kode] ?? peta.get(kode) ?? kode;
   }, [data]);
 
   async function unduhExcel() {
@@ -141,7 +142,7 @@ export function AnomaliClient({
       const label = jenises.length === 1 ? jenises[0] : "semua";
       await unduhBerkas(
         `/anomali.xlsx?${isi}`,
-        `anomali_${label}_${kdkabs.join("-")}.xlsx`,
+        `pencermatan_${label}_${kdkabs.join("-")}.xlsx`,
       );
     } catch (kesalahan) {
       setGalat(pesanKesalahan(kesalahan));
@@ -164,15 +165,15 @@ export function AnomaliClient({
             type="button"
             onClick={() => setBukaPenjelasan(true)}
             aria-haspopup="dialog"
-            className="group inline-flex items-center gap-2 rounded-full bg-accent px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-accent-strong hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="group inline-flex animate-pulse items-center gap-2 rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow-[0_0_18px_4px_rgba(220,38,38,0.55)] ring-2 ring-red-300 transition hover:animate-none hover:bg-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 motion-reduce:animate-none"
           >
             <span
               aria-hidden="true"
-              className="grid h-5 w-5 place-items-center rounded-full bg-white/20 text-[11px] font-bold ring-1 ring-white/40 transition group-hover:bg-white group-hover:text-accent"
+              className="grid h-5 w-5 place-items-center rounded-full bg-white/25 text-[11px] font-bold ring-1 ring-white/50"
             >
-              ?
+              !
             </span>
-            Apa arti jenis ini?
+            Penjelasan poin pencermatan
           </button>
         </div>
 
@@ -205,12 +206,12 @@ export function AnomaliClient({
           )}
 
           <MultiPilih
-            label="Jenis anomali"
+            label="Jenis pencermatan"
             labelSemua={`Semua (${formatAngka(totalSemua)})`}
-            tempatCari="Cari jenis anomali..."
+            tempatCari="Cari jenis pencermatan..."
             opsi={(data?.jenis ?? []).map((satu) => ({
               nilai: satu.kode,
-              label: `${satu.label} (${formatAngka(satu.jumlah)})`,
+              label: `${LABEL_JENIS[satu.kode] ?? satu.label} (${formatAngka(satu.jumlah)})`,
             }))}
             terpilih={jenises}
             onTerapkan={(nilai) => {
@@ -255,7 +256,7 @@ export function AnomaliClient({
               title={
                 runs.length === 0
                   ? "Belum ada Proses B yang sukses"
-                  : "Unduh anomali sesuai filter sebagai Excel"
+                  : "Unduh pencermatan sesuai filter sebagai Excel"
               }
             >
               {mengunduh ? "Menyiapkan..." : "Unduh Excel"}
@@ -295,8 +296,8 @@ export function AnomaliClient({
             </>
           ) : null}
           <span>
-            <strong className="text-ink">{formatAngka(total)}</strong> anomali
-            {jenisTerpilih ? ` · ${jenisTerpilih.label}` : ""}
+            <strong className="text-ink">{formatAngka(total)}</strong> titik
+            {jenisTerpilih ? ` · ${labelJenis(jenisTerpilih.kode)}` : ""}
           </span>
         </div>
 
@@ -305,8 +306,8 @@ export function AnomaliClient({
             role="status"
             className="mt-3 rounded-lg border border-accent/30 bg-accent-soft/50 px-3 py-2 text-sm text-ink"
           >
-            Ada job B yang diproses sebelum fitur anomali ada. Antrekan ulang
-            berkas B terakhir kabupaten tersebut untuk menghitung anomali
+            Ada job B yang diproses sebelum fitur pencermatan ada. Antrekan ulang
+            berkas B terakhir kabupaten tersebut untuk menghitung pencermatan
             (tidak perlu unggah ulang).
           </div>
         ) : null}
@@ -321,7 +322,7 @@ export function AnomaliClient({
         ) : null}
 
         {memuat && data == null ? (
-          <div className="mt-3 space-y-2" aria-label="Memuat anomali">
+          <div className="mt-3 space-y-2" aria-label="Memuat pencermatan">
             {[0, 1, 2, 3].map((baris) => (
               <div
                 key={baris}
@@ -339,7 +340,7 @@ export function AnomaliClient({
         ) : null}
 
         {runs.length > 0 && data && data.baris.length === 0 ? (
-          <EmptyState judul="Tidak ada titik anomali">
+          <EmptyState judul="Tidak ada titik yang perlu dicermati">
             {jenises.length > 0
               ? "Jenis yang dipilih kosong untuk run terakhir."
               : "Semua titik target cocok dan tidak ada kerusakan baru menurut sistem."}
