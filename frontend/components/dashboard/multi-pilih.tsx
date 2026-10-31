@@ -130,14 +130,14 @@ export function MultiPilih({
         disabled={nonaktif}
         onClick={() => setBuka((lama) => !lama)}
       >
-        <span className="truncate">{ringkasan}</span>
+        <span className="min-w-0 flex-1 break-words text-left">{ringkasan}</span>
         <span aria-hidden="true" className="text-muted">
           ▾
         </span>
       </button>
 
       {buka ? (
-        <div className="absolute z-20 mt-1 w-full min-w-56 rounded-lg border border-line-strong bg-surface shadow-lg">
+        <div className="absolute z-20 mt-1 w-full min-w-72 max-w-96 rounded-lg border border-line-strong bg-surface shadow-lg">
           <div className="border-b border-line p-2">
             <input
               ref={kotakCari}
@@ -166,16 +166,19 @@ export function MultiPilih({
               tersaring.map((satu) => (
                 <label
                   key={satu.nilai}
-                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-ink hover:bg-paper"
+                  className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-sm text-ink hover:bg-paper"
                 >
                   <input
                     type="checkbox"
+                    className="mt-0.5"
                     checked={draf.includes(satu.nilai)}
                     onChange={(kejadian) =>
                       ubahSatu(satu.nilai, kejadian.target.checked)
                     }
                   />
-                  <span className="truncate">{satu.label}</span>
+                  <span className="min-w-0 flex-1 break-words leading-5">
+                    {satu.label}
+                  </span>
                 </label>
               ))
             )}
