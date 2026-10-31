@@ -57,6 +57,7 @@ import argparse
 import logging
 import os
 import shutil
+import re
 import signal
 import socket
 import threading
@@ -146,6 +147,67 @@ PESAN_DIHENTIKAN = "worker dihentikan, job dikembalikan ke antrean"
 PESAN_ANGGARAN_MEMORI = (
     "worker melewati anggaran memori; job dihentikan agar server tidak OOM"
 )
+
+#: Pola galat MySQL yang sering muncul saat menyimpan hasil proses.
+_POLA_KOLOM_WAJIB = re.compile(
+    r"\(1364, \"Field '([^']+)' doesn't have a default value\"\)"
+)
+_POLA_TERLALU_PANJANG = re.compile(r"\(1406, \"Data too long for column '([^']+)'")
+_POLA_DUPLIKAT = re.compile(r"\(1062, \"Duplicate entry '([^']*)' for key '([^']+)'")
+
+
+def _sebut_berkas(run: Run | None) -> str:
+    """Sebutan berkas yang sedang diproses untuk pesan galat."""
+    if run is None:
+        return "berkas yang diunggah"
+    return f"berkas Proses {run.tipe} ({run.nama_file_input})"
+
+
+def _jelaskan_galat(mentah: str, run: Run | None = None) -> str | None:
+    """Penjelasan galat basis data yang umum; ``None`` bila tidak dikenali."""
+    berkas = _sebut_berkas(run)
+
+    cocok = _POLA_KOLOM_WAJIB.search(mentah)
+    if cocok:
+        kolom = cocok.group(1)
+        return (
+            f"Kolom wajib '{kolom}' tidak terisi saat menyimpan hasil, jadi basis "
+            f"data menolak barisnya. Penyebab paling sering: {berkas} tidak memuat "
+            f"kolom '{kolom}' (namanya berbeda atau kolomnya hilang), sehingga "
+            "nilainya kosong. Periksa kolom pada berkas lalu unggah ulang."
+        )
+
+    cocok = _POLA_TERLALU_PANJANG.search(mentah)
+    if cocok:
+        kolom = cocok.group(1)
+        return (
+            f"Nilai kolom '{kolom}' terlalu panjang untuk kolom basis data "
+            f"(melebihi batas). Periksa {berkas}: ada nilai yang formatnya tidak "
+            "sesuai atau salah saat diekspor."
+        )
+
+    cocok = _POLA_DUPLIKAT.search(mentah)
+    if cocok:
+        return (
+            f"Ada data ganda pada kunci unik '{cocok.group(2)}' (nilai "
+            f"'{cocok.group(1)}'). {berkas.capitalize()} memuat baris yang sama "
+            "dua kali untuk kunci itu."
+        )
+
+    return None
+
+
+def pesan_galat(galat: BaseException, run: Run | None = None) -> str:
+    """Pesan galat untuk ``runs.pesan``: penjelasan singkat + galat mentah.
+
+    Galat mentah selalu disertakan (walau sudah ada penjelasan) supaya penyebab
+    teknis -- SQL, nama kolom, nilai baris -- masih bisa ditelusuri.
+    """
+    mentah = str(galat).strip() or repr(galat)
+    penjelasan = _jelaskan_galat(mentah, run)
+    if not penjelasan:
+        return mentah
+    return f"{penjelasan}\n\nPesan galat mentah: {mentah}"
 
 
 def worker_id_untuk(nama: str | None = None) -> str:
@@ -1168,16 +1230,10 @@ def proses_satu_job(
             sesi.commit()
     except Exception as galat:  # noqa: BLE001 - pesan apa pun dicatat di runs.pesan
         logger.exception("job %s gagal", run_id)
-        _catat_event_aman(
-            sesi_pabrik,
-            setelan,
-            worker_id=worker_id,
-            run_id=run_id,
-            level="error",
-            jenis="job_gagal",
-            pesan=f"Job {run_id} gagal: {str(galat)[:1000]}",
-        )
         with sesi_pabrik() as sesi:
+            run = sesi.get(Run, run_id)
+            pesan = pesan_galat(galat, run)
+            ringkas = pesan.splitlines()[0][:500]
             bersihkan_hasil(sesi, run_id)
             sesi.execute(
                 update(Run)
@@ -1185,11 +1241,20 @@ def proses_satu_job(
                 .values(
                     status=STATUS_GAGAL,
                     detail_tersedia=0,
-                    pesan=str(galat)[:2000],
+                    pesan=pesan[:2000],
                     finished_at=sekarang(),
                 )
             )
             sesi.commit()
+        _catat_event_aman(
+            sesi_pabrik,
+            setelan,
+            worker_id=worker_id,
+            run_id=run_id,
+            level="error",
+            jenis="job_gagal",
+            pesan=f"Job {run_id} gagal: {ringkas}",
+        )
     finally:
         berhenti_heartbeat.set()
         heartbeat.join(timeout=5)

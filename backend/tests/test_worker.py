@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, NamedTuple
 
 from sqlalchemy import select
@@ -890,3 +891,33 @@ def test_mulai_worker_membuat_thread_sesuai_max_workers(
             satu.join(timeout=5)
 
     assert not any(satu.is_alive() for satu in benang)
+
+
+def test_pesan_galat_kolom_wajib_menjelaskan_dan_menyertakan_mentah() -> None:
+    """Galat 1364 diberi penjelasan kolom hilang; pesan mentah tetap ada."""
+    mentah = (
+        "(pymysql.err.OperationalError) (1364, \"Field 'assignment_id' doesn't "
+        "have a default value\")\n[SQL: INSERT INTO titik_hasil ...]"
+    )
+
+    pesan = modul_worker.pesan_galat(Exception(mentah))
+
+    assert "Kolom wajib 'assignment_id' tidak terisi" in pesan
+    assert "tidak memuat kolom 'assignment_id'" in pesan
+    assert "Pesan galat mentah:" in pesan
+    assert mentah in pesan
+
+
+def test_pesan_galat_menyebut_berkas_yang_diproses() -> None:
+    """Penjelasan menyebut berkas Proses B yang gagal disimpan."""
+    run = SimpleNamespace(tipe=TIPE_B, nama_file_input="3307_geotagging_1.geojson")
+    mentah = "(1364, \"Field 'assignment_id' doesn't have a default value\")"
+
+    pesan = modul_worker.pesan_galat(Exception(mentah), run)  # type: ignore[arg-type]
+
+    assert "berkas Proses B (3307_geotagging_1.geojson)" in pesan
+
+
+def test_pesan_galat_tak_dikenal_hanya_mentah() -> None:
+    """Galat di luar pola yang dikenal dikembalikan apa adanya."""
+    assert modul_worker.pesan_galat(ValueError("berkas rusak")) == "berkas rusak"
