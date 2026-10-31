@@ -297,8 +297,9 @@ export function AnomaliClient({
               </span>
             </>
           ) : null}
-          <span>
-            <strong className="text-ink">{formatAngka(total)}</strong> titik
+          <span className="font-medium text-danger">
+            <strong className="font-bold">{formatAngka(total)}</strong> titik
+            bermasalah
             {jenisTerpilih ? ` · ${labelJenis(jenisTerpilih.kode)}` : ""}
           </span>
         </div>
