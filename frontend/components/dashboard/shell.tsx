@@ -437,7 +437,7 @@ export function Shell({
               }
               alt="Pointse — Monitoring Wilkerstat, BPS"
               className={
-                ringkas ? "h-9 w-9 object-contain" : "h-32 w-auto object-contain"
+                ringkas ? "h-9 w-9 object-contain" : "h-auto w-full object-contain"
               }
             />
           </Link>
