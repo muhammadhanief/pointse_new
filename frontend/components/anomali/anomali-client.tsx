@@ -30,8 +30,10 @@ export function AnomaliClient({
   kdkabAwal: string | null;
 }) {
   const opsi = daftarKabupaten(kdprov);
+  // Admin provinsi: semua kabupaten/kota tercentang. Petugas kabupaten: hanya
+  // kabupaten/kotanya sendiri. Jenis pencermatan kosong = semua jenis.
   const [kdkabs, setKdkabs] = useState<string[]>(() =>
-    kdkabAwal ? [kdkabAwal] : opsi[0] ? [opsi[0].kode] : [],
+    kdkabAwal ? [kdkabAwal] : opsi.map((satu) => satu.kode),
   );
   const [jenises, setJenises] = useState<string[]>([]);
   const [cari, setCari] = useState("");
