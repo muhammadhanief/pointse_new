@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import anomali, auth
+from app import anomali, auth, konfirmasi
 from app.main import app
 from app.models import (
     STATUS_SUKSES,
@@ -89,7 +89,12 @@ def _anomali(
     return baris
 
 
-def _siapkan(sesi: Session, jumlah: int = 3) -> Run:
+def _siapkan(sesi: Session, jumlah: int = 3, jenis: str = "luar_wilayah") -> Run:
+    """Siapkan satu run B berisi ``jumlah`` anomali yang boleh dikonfirmasi.
+
+    Bawaan memakai ``luar_wilayah`` karena ``hilang`` termasuk jenis
+    wajib-tangani (tidak boleh dimaklumi).
+    """
     w = _wilayah(sesi)
     _run(sesi, TIPE_A)
     run_b = _run(sesi, TIPE_B)
@@ -98,7 +103,7 @@ def _siapkan(sesi: Session, jumlah: int = 3) -> Run:
             sesi,
             run_b,
             w,
-            jenis="hilang",
+            jenis=jenis,
             assignment=f"a{i}",
             unique_bang=f"U{i}",
         )
@@ -246,6 +251,54 @@ def test_konfirmasi_semua_hasil_filter(klien: TestClient, sesi: Session) -> None
     assert belum["total"] == 0
 
 
+def test_jenis_wajib_tangani_ditolak_dikonfirmasi(
+    klien: TestClient, sesi: Session
+) -> None:
+    """Titik hilang/ID berubah/kode SLS berubah/titik baru tidak bisa dimaklumi."""
+    _siapkan(sesi, jumlah=2, jenis="hilang")
+    ids = _ids_anomali(sesi)
+
+    tolak = klien.post(
+        "/anomali/konfirmasi",
+        json={"status": "akan_diperbaiki", "anomali_ids": ids},
+    )
+    assert tolak.status_code == 422
+    assert tolak.json()["detail"] == konfirmasi.PESAN_WAJIB_TANGANI
+    assert sesi.scalar(select(func.count()).select_from(KonfirmasiAnomali)) == 0
+
+    # Mode "pilih semua hasil filter" yang isinya hanya jenis wajib-tangani
+    # juga ditolak, bukan disimpan diam-diam.
+    semua = klien.post(
+        "/anomali/konfirmasi",
+        json={"status": "akan_diperbaiki", "semua": True, "kdkab": ["3325"]},
+    )
+    assert semua.status_code == 422
+    assert semua.json()["detail"] == konfirmasi.PESAN_WAJIB_TANGANI
+
+
+def test_massal_melewati_jenis_wajib_tangani(klien: TestClient, sesi: Session) -> None:
+    """Aksi massal tetap jalan untuk jenis yang boleh, melewati yang terkunci."""
+    run_b = _siapkan(sesi, jumlah=1, jenis="hilang")
+    w = sesi.scalars(select(Wilayah)).first()
+    _anomali(sesi, run_b, w, jenis="luar_wilayah", assignment="a9", unique_bang="U9")
+    sesi.commit()
+
+    semua = klien.post(
+        "/anomali/konfirmasi",
+        json={"status": "akan_diperbaiki", "semua": True, "kdkab": ["3325"]},
+    )
+    assert semua.status_code == 200
+    assert semua.json()["jumlah"] == 1
+
+    # Pembatalan tetap boleh untuk membersihkan konfirmasi lama jenis terkunci.
+    batal = klien.post(
+        "/anomali/konfirmasi/batal",
+        json={"semua": True, "kdkab": ["3325"]},
+    )
+    assert batal.status_code == 200
+    assert batal.json()["jumlah"] == 1
+
+
 def test_minta_klarifikasi_tanpa_ubah_status(
     klien: TestClient, sesi: Session
 ) -> None:
@@ -302,11 +355,11 @@ def test_xlsx_memuat_kolom_konfirmasi(klien: TestClient, sesi: Session) -> None:
     from openpyxl import load_workbook
 
     balasan = klien.get(
-        "/anomali.xlsx", params={"kdkab": "3325", "jenis": "hilang"}
+        "/anomali.xlsx", params={"kdkab": "3325", "jenis": "luar_wilayah"}
     )
     assert balasan.status_code == 200
     buku = load_workbook(io.BytesIO(balasan.content))
-    lembar = buku[anomali.LABEL["hilang"][:31]]
+    lembar = buku[anomali.LABEL["luar_wilayah"][:31]]
     header = [sel.value for sel in next(lembar.iter_rows(max_row=1))]
     for kolom in (
         "status_konfirmasi",
@@ -334,7 +387,7 @@ def test_provinsi_boleh_konfirmasi_kdkab_pendek(
     _run(sesi, TIPE_A)
     run_b = _run(sesi, TIPE_B)
     run_b.kdkab = "02"
-    _anomali(sesi, run_b, w, jenis="hilang", assignment="a0", unique_bang="U0")
+    _anomali(sesi, run_b, w, jenis="luar_wilayah", assignment="a0", unique_bang="U0")
     sesi.commit()
 
     provinsi = auth.Pengguna(

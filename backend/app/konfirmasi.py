@@ -62,6 +62,17 @@ LABEL[SUDAH] = "Sudah dikonfirmasi"
 #: Status yang wajib disertai catatan.
 CATATAN_WAJIB: tuple[str, ...] = (SESUAI_KENYATAAN,)
 
+#: Jenis pencermatan yang wajib ditangani: tidak bisa dimaklumi/dikonfirmasi.
+#: Dipakai backend sebagai pengaman (frontend juga menonaktifkan tombolnya).
+JENIS_WAJIB_TANGANI: frozenset[str] = frozenset(
+    {"hilang", "id_berubah", "kode_berubah", "titik_baru"}
+)
+
+#: Pesan penolakan saat baris jenis wajib-tangani dicoba dikonfirmasi.
+PESAN_WAJIB_TANGANI = (
+    "jenis pencermatan ini harus ditangani, tidak bisa dimaklumi"
+)
+
 
 def kunci(
     jenis: str | None, assignment_id: str | None, unique_bang: str | None

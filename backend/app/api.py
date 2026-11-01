@@ -1113,8 +1113,14 @@ def _baris_konfirmasi_ids(
     sesi: Session,
     pengguna: auth.Pengguna,
     ids: list[int],
+    *,
+    hanya_layak: bool,
 ) -> list[tuple[AnomaliTitik, str, str]]:
-    """Ambil baris anomali dari daftar id; tolak bila ada di luar kewenangan."""
+    """Ambil baris anomali dari daftar id; tolak bila di luar kewenangan.
+
+    ``hanya_layak`` = True untuk aksi *simpan*: baris jenis wajib-tangani
+    ditolak (lihat :data:`app.konfirmasi.JENIS_WAJIB_TANGANI`).
+    """
     unik = list(dict.fromkeys(int(satu) for satu in ids))
     if not unik:
         return []
@@ -1132,6 +1138,10 @@ def _baris_konfirmasi_ids(
                     status_code=403,
                     detail="ada titik di luar kewenangan wilayah Anda",
                 )
+            if hanya_layak and satu.jenis in konfirmasi.JENIS_WAJIB_TANGANI:
+                raise HTTPException(
+                    status_code=422, detail=konfirmasi.PESAN_WAJIB_TANGANI
+                )
             hasil.append((satu, kdkab, kdprov))
     return hasil
 
@@ -1140,8 +1150,15 @@ def _baris_konfirmasi_filter(
     sesi: Session,
     pengguna: auth.Pengguna,
     permintaan: KonfirmasiMasuk,
+    *,
+    hanya_layak: bool,
 ) -> list[tuple[AnomaliTitik, str, str]]:
-    """Ambil baris anomali dari filter aktif (mode "pilih semua hasil filter")."""
+    """Ambil baris anomali dari filter aktif (mode "pilih semua hasil filter").
+
+    ``hanya_layak`` = True untuk aksi *simpan*: baris jenis wajib-tangani
+    dilewati supaya aksi massal tetap bisa dijalankan untuk sisanya. Bila
+    seluruh hasil filter justru jenis wajib-tangani, permintaan ditolak.
+    """
     kdprov, daftar_kab = _anomali_kdkab(pengguna, permintaan.kdprov, permintaan.kdkab)
     diminta = [satu.strip() for satu in (permintaan.jenis or []) if satu.strip()]
     asing = [satu for satu in diminta if satu not in anomali.LABEL]
@@ -1154,7 +1171,7 @@ def _baris_konfirmasi_filter(
         return []
     ids = [satu.id for satu in runs]
     status = _pastikan_status(permintaan.status_filter)
-    return list(
+    baris = list(
         sesi.execute(
             anomali.kueri_konfirmasi(
                 ids,
@@ -1164,18 +1181,34 @@ def _baris_konfirmasi_filter(
             )
         )
     )
+    if not hanya_layak:
+        return baris
+    layak = [
+        satu
+        for satu in baris
+        if satu[0].jenis not in konfirmasi.JENIS_WAJIB_TANGANI
+    ]
+    if baris and not layak:
+        raise HTTPException(status_code=422, detail=konfirmasi.PESAN_WAJIB_TANGANI)
+    return layak
 
 
 def _baris_konfirmasi(
     sesi: Session,
     pengguna: auth.Pengguna,
     permintaan: KonfirmasiMasuk,
+    *,
+    hanya_layak: bool = False,
 ) -> list[tuple[AnomaliTitik, str, str]]:
     """Pilih baris yang dikonfirmasi dari mode id atau mode filter."""
     if permintaan.anomali_ids:
-        return _baris_konfirmasi_ids(sesi, pengguna, permintaan.anomali_ids)
+        return _baris_konfirmasi_ids(
+            sesi, pengguna, permintaan.anomali_ids, hanya_layak=hanya_layak
+        )
     if permintaan.semua:
-        return _baris_konfirmasi_filter(sesi, pengguna, permintaan)
+        return _baris_konfirmasi_filter(
+            sesi, pengguna, permintaan, hanya_layak=hanya_layak
+        )
     raise HTTPException(status_code=422, detail="tidak ada titik yang dipilih")
 
 
@@ -1446,7 +1479,7 @@ def simpan_konfirmasi_anomali(
             detail="catatan wajib diisi untuk status 'Sesuai Kondisi Kenyataan'",
         )
 
-    baris = _baris_konfirmasi(sesi, pengguna, permintaan)
+    baris = _baris_konfirmasi(sesi, pengguna, permintaan, hanya_layak=True)
     if not baris:
         raise HTTPException(status_code=404, detail="tidak ada titik anomali yang cocok")
     jumlah = konfirmasi.simpan(

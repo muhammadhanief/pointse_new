@@ -59,6 +59,25 @@ const STATUS_BAWAAN: StatusKonfirmasi[] = [
 type UkuranHalaman = number | "semua";
 type KodeStatus = "akan_diperbaiki" | "sesuai_kenyataan";
 
+/**
+ * Jenis pencermatan yang wajib ditangani: tidak boleh dimaklumi, jadi status
+ * konfirmasinya tidak boleh diisi. Tombolnya tampak nonaktif tetapi tetap bisa
+ * diklik supaya alasannya muncul sebagai notifikasi.
+ */
+const JENIS_WAJIB_TANGANI: ReadonlySet<string> = new Set([
+  "hilang",
+  "id_berubah",
+  "kode_berubah",
+  "titik_baru",
+]);
+
+const PESAN_WAJIB_TANGANI =
+  "jenis pencermatan ini harus ditangani, tidak bisa dimaklumi";
+
+function wajibTangani(jenis: string): boolean {
+  return JENIS_WAJIB_TANGANI.has(jenis);
+}
+
 function teks(nilai: string | null | undefined): string {
   return nilai && nilai.trim() !== "" ? nilai : "–";
 }
@@ -149,7 +168,27 @@ export function AnomaliClient({
   const [bukaKlarifikasi, setBukaKlarifikasi] = useState(false);
   const [klarifikasiCatatan, setKlarifikasiCatatan] = useState("");
   const [mengirim, setMengirim] = useState(false);
+  // Notifikasi ringkas (toast) untuk aksi yang ditolak tanpa memanggil API.
+  const [toast, setToast] = useState<string | null>(null);
+  const jamToast = useRef<number | null>(null);
   const kdkabSatu = kdkabs.length === 1 ? kdkabs[0] : null;
+
+  const tampilkanToast = useCallback((pesan: string) => {
+    setToast(pesan);
+    if (jamToast.current != null) {
+      window.clearTimeout(jamToast.current);
+    }
+    jamToast.current = window.setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (jamToast.current != null) {
+        window.clearTimeout(jamToast.current);
+      }
+    },
+    [],
+  );
 
   // Parameter /anomali untuk satu permintaan. Limit/offset eksplisit supaya
   // mode "Semua" bisa menyusuri halaman sampai seluruh baris terkumpul.
@@ -333,15 +372,16 @@ export function AnomaliClient({
       : STATUS_BAWAAN;
 
   const barisHalaman = data?.baris ?? [];
+  const bisaDipilih = (baris: AnomaliBaris): boolean =>
+    baris.id != null && !wajibTangani(baris.jenis);
+  const barisBisaDipilih = barisHalaman.filter(bisaDipilih);
   const semuaHalamanDipilih =
     pilihSemua ||
-    (barisHalaman.length > 0 &&
-      barisHalaman.every(
-        (baris) => baris.id != null && pilihan.has(baris.id),
-      ));
+    (barisBisaDipilih.length > 0 &&
+      barisBisaDipilih.every((baris) => pilihan.has(baris.id as number)));
   const sebagianHalaman =
     pilihSemua ||
-    barisHalaman.some((baris) => baris.id != null && pilihan.has(baris.id));
+    barisBisaDipilih.some((baris) => pilihan.has(baris.id as number));
   const jumlahDipilih = pilihSemua ? total : pilihan.size;
   const adaPilihan = pilihSemua || pilihan.size > 0;
 
@@ -421,8 +461,8 @@ export function AnomaliClient({
     }
     setPilihSemua(false);
     const id = barisHalaman
-      .map((baris) => baris.id)
-      .filter((satu): satu is number => satu != null);
+      .filter(bisaDipilih)
+      .map((baris) => baris.id as number);
     setPilihan(new Set(id));
   }
 
@@ -498,6 +538,12 @@ export function AnomaliClient({
   }
 
   function bukaDrawer(baris: AnomaliBaris, statusAwal?: KodeStatus) {
+    // Jenis wajib-tangani tidak boleh diisi statusnya. Drawer masih boleh
+    // dibuka bila sudah ada konfirmasi lama -- hanya untuk membatalkannya.
+    if (wajibTangani(baris.jenis) && (statusAwal != null || !baris.konfirmasi)) {
+      tampilkanToast(PESAN_WAJIB_TANGANI);
+      return;
+    }
     setDrawer(baris);
     const statusLama = baris.konfirmasi?.status;
     const awal: KodeStatus =
@@ -513,6 +559,10 @@ export function AnomaliClient({
     if (id == null) {
       return;
     }
+    if (drawer != null && wajibTangani(drawer.jenis)) {
+      tampilkanToast(PESAN_WAJIB_TANGANI);
+      return;
+    }
     if (formStatus === "sesuai_kenyataan" && formCatatan.trim() === "") {
       return;
     }
@@ -524,6 +574,10 @@ export function AnomaliClient({
   }
 
   async function konfirmasiCepat(baris: AnomaliBaris, status: KodeStatus) {
+    if (wajibTangani(baris.jenis)) {
+      tampilkanToast(PESAN_WAJIB_TANGANI);
+      return;
+    }
     const id = baris.id;
     if (id == null) {
       return;
@@ -631,7 +685,9 @@ export function AnomaliClient({
     }
   }
 
+  const drawerTerkunci = drawer != null && wajibTangani(drawer.jenis);
   const simpanMati =
+    drawerTerkunci ||
     mengirim ||
     (formStatus === "sesuai_kenyataan" && formCatatan.trim() === "");
 
@@ -1085,9 +1141,12 @@ export function AnomaliClient({
                         <td className={KELAS_SEL_KIRI}>
                           <input
                             type="checkbox"
-                            checked={dipilih || pilihSemua}
+                            checked={
+                              !wajibTangani(baris.jenis) &&
+                              (dipilih || pilihSemua)
+                            }
                             onChange={() => toggleBaris(baris)}
-                            disabled={baris.id == null}
+                            disabled={baris.id == null || wajibTangani(baris.jenis)}
                             aria-label="Pilih titik ini"
                             className="h-4 w-4 accent-[var(--brand)]"
                           />
@@ -1115,8 +1174,17 @@ export function AnomaliClient({
                                 void konfirmasiCepat(baris, "akan_diperbaiki")
                               }
                               disabled={mengirim || baris.id == null}
-                              className="hidden min-h-6 rounded-md border border-line-strong bg-surface px-1.5 text-[10px] font-semibold text-ink transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-60 lg:inline-flex"
-                              title="Tandai Akan Diperbaiki"
+                              aria-disabled={wajibTangani(baris.jenis)}
+                              className={`hidden min-h-6 rounded-md border border-line-strong bg-surface px-1.5 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 lg:inline-flex ${
+                                wajibTangani(baris.jenis)
+                                  ? "cursor-not-allowed text-muted opacity-60"
+                                  : "text-ink hover:border-accent hover:text-accent"
+                              }`}
+                              title={
+                                wajibTangani(baris.jenis)
+                                  ? PESAN_WAJIB_TANGANI
+                                  : "Tandai Akan Diperbaiki"
+                              }
                             >
                               Akan
                             </button>
@@ -1124,8 +1192,17 @@ export function AnomaliClient({
                               type="button"
                               onClick={() => bukaDrawer(baris, "sesuai_kenyataan")}
                               disabled={baris.id == null}
-                              className="hidden min-h-6 rounded-md border border-line-strong bg-surface px-1.5 text-[10px] font-semibold text-ink transition-colors hover:border-success hover:text-success disabled:cursor-not-allowed disabled:opacity-60 lg:inline-flex"
-                              title="Tandai Sesuai Kondisi Kenyataan (wajib keterangan)"
+                              aria-disabled={wajibTangani(baris.jenis)}
+                              className={`hidden min-h-6 rounded-md border border-line-strong bg-surface px-1.5 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 lg:inline-flex ${
+                                wajibTangani(baris.jenis)
+                                  ? "cursor-not-allowed text-muted opacity-60"
+                                  : "text-ink hover:border-success hover:text-success"
+                              }`}
+                              title={
+                                wajibTangani(baris.jenis)
+                                  ? PESAN_WAJIB_TANGANI
+                                  : "Tandai Sesuai Kondisi Kenyataan (wajib keterangan)"
+                              }
                             >
                               Sesuai
                             </button>
@@ -1133,7 +1210,14 @@ export function AnomaliClient({
                               type="button"
                               onClick={() => bukaDrawer(baris)}
                               disabled={baris.id == null}
-                              className="min-h-6 rounded-md border border-line-strong bg-surface px-1.5 text-[10px] font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong disabled:cursor-not-allowed disabled:opacity-60 lg:hidden"
+                              aria-disabled={
+                                wajibTangani(baris.jenis) && !baris.konfirmasi
+                              }
+                              className={`min-h-6 rounded-md border border-line-strong bg-surface px-1.5 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 lg:hidden ${
+                                wajibTangani(baris.jenis) && !baris.konfirmasi
+                                  ? "cursor-not-allowed text-muted opacity-60"
+                                  : "text-ink hover:border-brand hover:text-brand-strong"
+                              }`}
                             >
                               Konfirmasi
                             </button>
@@ -1382,7 +1466,20 @@ export function AnomaliClient({
                 </div>
               ) : null}
 
-              <fieldset>
+              {drawerTerkunci ? (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-danger/30 bg-danger-soft/50 px-3 py-2 text-sm text-ink"
+                >
+                  <strong className="font-semibold">
+                    Jenis ini harus ditangani.
+                  </strong>{" "}
+                  Temuan {labelJenis(drawer.jenis)} tidak bisa dimaklumi; perbaiki
+                  titiknya di Geotag Kabkot, bukan lewat status konfirmasi.
+                </div>
+              ) : null}
+
+              <fieldset className={drawerTerkunci ? "hidden" : undefined}>
                 <legend className="text-sm font-medium text-ink">Status</legend>
                 <div className="mt-1.5 grid gap-1.5">
                   {(
@@ -1428,7 +1525,7 @@ export function AnomaliClient({
                 </div>
               </fieldset>
 
-              <div>
+              <div className={drawerTerkunci ? "hidden" : undefined}>
                 <label
                   htmlFor="catatan-konfirmasi"
                   className="block text-sm font-medium text-ink"
@@ -1462,7 +1559,11 @@ export function AnomaliClient({
                 </p>
               </div>
 
-              <p className="rounded-lg border border-accent/30 bg-accent-soft/50 px-3 py-2 text-[11px] leading-5 text-ink">
+              <p
+                className={`rounded-lg border border-accent/30 bg-accent-soft/50 px-3 py-2 text-[11px] leading-5 text-ink ${
+                  drawerTerkunci ? "hidden" : ""
+                }`}
+              >
                 Konfirmasi berlaku juga untuk run berikutnya selama jenis dan
                 titiknya sama, jadi tidak perlu diulang tiap unggahan.
               </p>
@@ -1481,7 +1582,7 @@ export function AnomaliClient({
                   Batalkan konfirmasi
                 </button>
               ) : null}
-              {adminProvinsi && drawer.konfirmasi ? (
+              {adminProvinsi && drawer.konfirmasi && !drawerTerkunci ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -1499,11 +1600,16 @@ export function AnomaliClient({
                 onClick={() => setDrawer(null)}
                 disabled={mengirim}
               >
-                Batal
+                {drawerTerkunci ? "Tutup" : "Batal"}
               </TombolAksi>
-              <TombolAksi onClick={() => void simpanDrawer()} disabled={simpanMati}>
-                {mengirim ? "Menyimpan…" : "Simpan"}
-              </TombolAksi>
+              {drawerTerkunci ? null : (
+                <TombolAksi
+                  onClick={() => void simpanDrawer()}
+                  disabled={simpanMati}
+                >
+                  {mengirim ? "Menyimpan…" : "Simpan"}
+                </TombolAksi>
+              )}
             </div>
           </div>
         </div>
@@ -1601,6 +1707,16 @@ export function AnomaliClient({
           </TombolAksi>
         </div>
       </Modal>
+
+      {/* Notifikasi ringkas untuk aksi yang ditolak (mis. jenis wajib-tangani). */}
+      {toast ? (
+        <div
+          role="alert"
+          className="fixed bottom-4 left-1/2 z-[60] w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 rounded-lg border border-danger/40 bg-danger-soft px-4 py-3 text-sm font-medium text-ink shadow-lg"
+        >
+          {toast}
+        </div>
+      ) : null}
     </div>
   );
 }
