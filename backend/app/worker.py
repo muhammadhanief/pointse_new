@@ -921,7 +921,11 @@ def bersihkan_hasil(sesi: Session, run_id: int) -> None:
     # Anomali job B ikut dibuang supaya menu tidak menampilkan hasil lama saat
     # run diproses ulang (kalau gagal di tengah, tidak ada sisa yang menyesatkan).
     sesi.execute(delete(AnomaliTitik).where(AnomaliTitik.run_b_id == run_id))
-    sesi.execute(update(Run).where(Run.id == run_id).values(anomali_versi=0))
+    sesi.execute(
+        update(Run)
+        .where(Run.id == run_id)
+        .values(anomali_versi=0, jumlah_anomali=None)
+    )
 
 
 def tandai_job_terhenti(

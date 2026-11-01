@@ -51,6 +51,7 @@ from app.skema import (
     AnomaliJenisOut,
     AnomaliOut,
     AnomaliRunOut,
+    DaftarAnomaliRunOut,
     DaftarMasterOut,
     DaftarRunOut,
     HasilOut,
@@ -963,6 +964,20 @@ def _anomali_kdkab(
     return prov, hasil
 
 
+def _out_anomali(run: Run, target: int, selesai: int) -> AnomaliRunOut:
+    """Ringkasan satu run B untuk menu/riwayat anomali."""
+    return AnomaliRunOut(
+        run_id=run.id,
+        tanggal_data=run.tanggal_data,
+        pengunggah=run.user,
+        kdkab=run.kdkab,
+        target=target,
+        selesai=selesai,
+        anomali_versi=int(run.anomali_versi or 0),
+        jumlah_anomali=run.jumlah_anomali,
+    )
+
+
 def _ringkas_anomali(sesi: Session, run: Run) -> AnomaliRunOut:
     target, selesai = sesi.execute(
         select(
@@ -973,15 +988,31 @@ def _ringkas_anomali(sesi: Session, run: Run) -> AnomaliRunOut:
             RekapTarget.dasar == DASAR_TUGAS,
         )
     ).one()
-    return AnomaliRunOut(
-        run_id=run.id,
-        tanggal_data=run.tanggal_data,
-        pengunggah=run.user,
-        kdkab=run.kdkab,
-        target=int(target),
-        selesai=int(selesai),
-        anomali_versi=int(run.anomali_versi or 0),
-    )
+    return _out_anomali(run, int(target), int(selesai))
+
+
+@router.get("/anomali/riwayat", response_model=DaftarAnomaliRunOut)
+def riwayat_anomali(
+    kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
+    kdkab: str = Query(..., description="Kode kabupaten/kota (satu saja)"),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> DaftarAnomaliRunOut:
+    """Riwayat run Proses B sukses satu kabupaten/kota (terbaru dulu).
+
+    Dipakai dropdown "Riwayat run" di halaman pencermatan supaya kondisi tiap
+    waktu bisa dibuka lagi, bukan hanya run terakhir.
+    """
+    kdprov, daftar_kab = _anomali_kdkab(pengguna, kdprov, [kdkab])
+    if len(daftar_kab) != 1:
+        raise HTTPException(
+            status_code=422, detail="riwayat run butuh tepat satu kabupaten/kota"
+        )
+    baris = [
+        _out_anomali(run, target, selesai)
+        for run, target, selesai in anomali.riwayat_runs(sesi, kdprov, daftar_kab[0])
+    ]
+    return DaftarAnomaliRunOut(baris=baris)
 
 
 @router.get("/anomali", response_model=AnomaliOut)
@@ -994,6 +1025,10 @@ def daftar_anomali(
         None, description="Kode jenis anomali (boleh diulang; kosong = semua)"
     ),
     q: str | None = Query(None, max_length=100, description="Cari id/kode SLS/bangunan"),
+    run_b_id: int | None = Query(
+        None,
+        description="Id run B tertentu (riwayat); kosong = run B terakhir tiap kabupaten",
+    ),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     sesi: Session = Depends(get_session),
@@ -1003,6 +1038,8 @@ def daftar_anomali(
 
     Rekap memakai klaim kabupaten; endpoint ini menunjukkan titik mana yang
     menurut sistem masih bermasalah, sehingga selisih angkanya bisa ditelusuri.
+    ``run_b_id`` memilih satu run dari riwayat (hanya bila tepat satu
+    kabupaten/kota dipilih); tanpa itu dipakai run B sukses terakhir.
     """
     kdprov, daftar_kab = _anomali_kdkab(pengguna, kdprov, kdkab)
     daftar_jenis_diminta = [satu.strip() for satu in (jenis or []) if satu.strip()]
@@ -1012,7 +1049,7 @@ def daftar_anomali(
             status_code=422, detail=f"jenis anomali tidak dikenal: {', '.join(asing)}"
         )
 
-    runs = anomali.run_b_terakhir_banyak(sesi, kdprov, daftar_kab)
+    runs = anomali.run_terpilih(sesi, kdprov, daftar_kab, run_b_id)
     ringkas = [_ringkas_anomali(sesi, satu) for satu in runs]
     ids = [satu.id for satu in runs]
     jumlah = anomali.hitung_per_jenis(sesi, ids)
@@ -1062,12 +1099,16 @@ def ekspor_anomali(
     kdkab: list[str] | None = Query(None, description="Kode kabupaten/kota (boleh diulang)"),
     jenis: list[str] | None = Query(None, description="Kode jenis anomali (boleh diulang)"),
     q: str | None = Query(None, max_length=100, description="Cari id/kode SLS/bangunan"),
+    run_b_id: int | None = Query(
+        None, description="Id run B tertentu (riwayat); kosong = run B terakhir"
+    ),
     sesi: Session = Depends(get_session),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> StreamingResponse:
     """Unduh anomali sesuai filter aktif sebagai Excel.
 
     Satu lembar per jenis; bila jenis tidak dipilih, semua jenis ikut diunduh.
+    ``run_b_id`` mengikuti dropdown riwayat run (bila memilih run lama).
     """
     kdprov, daftar_kab = _anomali_kdkab(pengguna, kdprov, kdkab)
     diminta = [satu.strip() for satu in (jenis or []) if satu.strip()]
@@ -1077,7 +1118,7 @@ def ekspor_anomali(
             status_code=422, detail=f"jenis anomali tidak dikenal: {', '.join(asing)}"
         )
 
-    runs = anomali.run_b_terakhir_banyak(sesi, kdprov, daftar_kab)
+    runs = anomali.run_terpilih(sesi, kdprov, daftar_kab, run_b_id)
     if not runs:
         raise HTTPException(
             status_code=404, detail="belum ada Proses B yang sukses untuk wilayah ini"

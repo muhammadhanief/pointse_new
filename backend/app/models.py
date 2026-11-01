@@ -160,6 +160,10 @@ class Run(Base):
     titik_ramping: Mapped[int] = mapped_column(AngkaKecil, default=0)
     #: 1 = anomali titik job B ini sudah dihitung (tabel ``anomali_titik``).
     anomali_versi: Mapped[int] = mapped_column(AngkaKecil, default=0)
+    #: Jumlah titik anomali job B ini (0 = bersih). Disimpan permanen per run
+    #: supaya tren "pencermatan" tetap terbaca walau detail ``anomali_titik``
+    #: run tersebut kelak dirapikan. NULL = job lama sebelum fitur ini.
+    jumlah_anomali: Mapped[int | None] = mapped_column(Integer, default=0)
     pesan: Mapped[str | None] = mapped_column(Text)
     tanggal_data: Mapped[date] = mapped_column(Date, default=hari_ini)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
@@ -454,10 +458,11 @@ class RekapTarget(Base):
 class AnomaliTitik(Base):
     """Titik yang menurut sistem masih bermasalah pada satu job Proses B.
 
-    Diisi di akhir job B (sebelum ``titik_hasil`` dipangkas), hanya untuk run B
-    terakhir per kabupaten/kota: run B baru menghapus baris run B lama. Menu
-    anomali membaca tabel ini; rekap tetap memakai klaim kabupaten
-    (``titik_hasil.flag_repair_unggah``).
+    Diisi di akhir job B (sebelum ``titik_hasil`` dipangkas), untuk **setiap** run
+    B sukses per kabupaten/kota: detail tiap waktu disimpan agar riwayat/tren
+    pencermatan terbaca. Totalnya juga tercatat di ``runs.jumlah_anomali``
+    (0 = bersih). Menu anomali membaca tabel ini; rekap tetap memakai klaim
+    kabupaten (``titik_hasil.flag_repair_unggah``).
 
     ``jenis`` salah satu :data:`app.anomali.JENIS`.
     """

@@ -96,6 +96,15 @@ def _titik(
     )
 
 
+def _titik_beres(sesi: Session, run: Run, *assignments: str) -> None:
+    """Isi B dengan titik target A yang cocok dan beres (tanpa anomali)."""
+    w = sesi.scalar(select(Wilayah).where(Wilayah.idsubsls == KODE_A))
+    for urut, assignment in enumerate(assignments):
+        _titik(
+            sesi, run, urut, assignment, KODE_A, flag_model=0, flag_unggah=0, wilayah=w
+        )
+
+
 def _siapkan(sesi: Session) -> tuple[Run, Run]:
     """A dengan tujuh titik + B yang memunculkan semua jenis anomali."""
     w_a = _wilayah(sesi, KODE_A)
@@ -151,6 +160,7 @@ def test_simpan_anomali_mengisi_semua_jenis(sesi: Session) -> None:
 
     assert jumlah == 7
     assert run_b.anomali_versi == 1
+    assert run_b.jumlah_anomali == 7
     per_jenis = _jenis(sesi, run_b)
     assert {kode: len(baris) for kode, baris in per_jenis.items()} == {
         "hilang": 1,
@@ -213,27 +223,68 @@ def test_titik_baru_memakai_id_lengkap_berkas_a(
     assert [baris.assignment_id for baris in _jenis(sesi, run_b)["titik_baru"]] == ["z1"]
 
 
-def test_simpan_anomali_mengganti_anomali_run_b_lama(sesi: Session) -> None:
-    """Anomali hanya disimpan untuk run B terakhir per kabupaten/kota."""
+def test_simpan_anomali_menyimpan_semua_run_b(sesi: Session) -> None:
+    """Tiap run B menyimpan anomalinya sendiri (riwayat, bukan hanya terakhir)."""
     run_a, run_b = _siapkan(sesi)
     simpan_anomali(sesi, run_b)
     sesi.flush()
-    lama = sesi.scalar(select(AnomaliTitik).limit(1))
-    assert lama is not None
-    w_a = sesi.scalar(select(Wilayah).where(Wilayah.idsubsls == KODE_A))
+    assert run_b.jumlah_anomali == 7
 
+    # Run B berikutnya: semua target A hadir dan beres (tidak ada anomali).
     run_baru = _run(sesi, TIPE_B, sumber_a=run_a.id)
-    _titik(sesi, run_baru, 0, "a6", KODE_A, flag_model=0, flag_unggah=0, wilayah=w_a)
+    _titik_beres(sesi, run_baru, "a1", "a2", "a3", "a4", "a5")
     sesi.flush()
     simpan_anomali(sesi, run_baru)
     sesi.flush()
 
-    assert sesi.scalars(
+    # Anomali run lama TIDAK dihapus: riwayat tiap waktu tetap tersimpan.
+    lama = sesi.scalars(
         select(AnomaliTitik).where(AnomaliTitik.run_b_id == run_b.id)
-    ).all() == []
-    assert sesi.scalars(
-        select(AnomaliTitik).where(AnomaliTitik.run_b_id == run_baru.id)
-    ).all() != []
+    ).all()
+    assert len(lama) == 7
+    assert (
+        sesi.scalars(
+            select(AnomaliTitik).where(AnomaliTitik.run_b_id == run_baru.id)
+        ).all()
+        == []
+    )
+    assert run_baru.anomali_versi == 1
+    # Run bersih tetap tercatat 0 supaya tren bisa menunjukkan "sudah bersih".
+    assert run_baru.jumlah_anomali == 0
+
+
+def test_riwayat_runs_terbaru_dulu_dengan_target(sesi: Session) -> None:
+    """``anomali.riwayat_runs`` mengembalikan run terbaru dulu + target/selesai."""
+    run_a, run_b = _siapkan(sesi)
+    simpan_anomali(sesi, run_b)
+    simpan_rekap_target(sesi, run_b)
+    sesi.flush()
+
+    run_baru = _run(sesi, TIPE_B, sumber_a=run_a.id)
+    sesi.flush()
+
+    riwayat = anomali.riwayat_runs(sesi, "33", "3325")
+    assert [run.id for run, _, _ in riwayat] == [run_baru.id, run_b.id]
+    # Run terbaru belum punya rekap -> (0, 0); run lama punya angka.
+    assert (riwayat[0][1], riwayat[0][2]) == (0, 0)
+    assert riwayat[1][1] >= 1
+
+
+def test_run_terpilih_memakai_run_lama_saat_sah(sesi: Session) -> None:
+    """``run_terpilih`` memakai run pilihan; run asing/tidak sah jatuh ke terakhir."""
+    run_a, run_b = _siapkan(sesi)
+    simpan_anomali(sesi, run_b)
+    sesi.flush()
+    run_baru = _run(sesi, TIPE_B, sumber_a=run_a.id)
+    sesi.flush()
+
+    dipilih = anomali.run_terpilih(sesi, "33", ["3325"], run_b.id)
+    assert [run.id for run in dipilih] == [run_b.id]
+
+    # Tanpa id -> run terakhir.
+    assert [run.id for run in anomali.run_terpilih(sesi, "33", ["3325"], None)] == [
+        run_baru.id
+    ]
 
 
 def test_rekap_selesai_memakai_klaim_unggahan(sesi: Session) -> None:
@@ -302,6 +353,48 @@ def test_api_anomali_kabupaten_tanpa_run_b(klien) -> None:
     assert isi["baris"] == []
     assert len(isi["jenis"]) == 7
     assert all(satu["jumlah"] == 0 for satu in isi["jenis"])
+
+
+def test_api_anomali_riwayat_dan_pilih_run_lama(klien, sesi: Session) -> None:
+    """Dropdown riwayat run: daftar run per kabupaten + pilih run lama via ``run_b_id``."""
+    run_a, run_b = _siapkan(sesi)
+    simpan_anomali(sesi, run_b)
+    simpan_rekap_target(sesi, run_b)
+
+    # Run B berikutnya bersih (tidak ada anomali).
+    run_baru = _run(sesi, TIPE_B, sumber_a=run_a.id)
+    _titik_beres(sesi, run_baru, "a1", "a2", "a3", "a4", "a5")
+    simpan_anomali(sesi, run_baru)
+    simpan_rekap_target(sesi, run_baru)
+    sesi.commit()
+
+    riwayat = klien.get("/anomali/riwayat", params={"kdprov": "33", "kdkab": "3325"})
+    assert riwayat.status_code == 200
+    baris = riwayat.json()["baris"]
+    assert [satu["run_id"] for satu in baris] == [run_baru.id, run_b.id]
+    assert baris[0]["jumlah_anomali"] == 0
+    assert baris[1]["jumlah_anomali"] == 7
+
+    # Tanpa run_b_id -> run terakhir (bersih).
+    terakhir = klien.get("/anomali", params={"kdprov": "33", "kdkab": "3325"})
+    assert terakhir.status_code == 200
+    assert terakhir.json()["run"]["run_id"] == run_baru.id
+    assert terakhir.json()["total"] == 0
+
+    # Memilih run lama -> anomali run itu.
+    lama = klien.get(
+        "/anomali",
+        params={"kdprov": "33", "kdkab": "3325", "run_b_id": run_b.id},
+    )
+    assert lama.status_code == 200
+    assert lama.json()["run"]["run_id"] == run_b.id
+    assert lama.json()["total"] == 7
+
+
+def test_api_anomali_riwayat_butuh_satu_kabupaten(klien) -> None:
+    """Riwayat run menolak bila kabupaten/kota tidak jelas (bukan satu)."""
+    jawab = klien.get("/anomali/riwayat", params={"kdprov": "33"})
+    assert jawab.status_code == 422
 
 
 def test_api_anomali_banyak_kabupaten_dan_jenis(klien, sesi: Session) -> None:
@@ -394,6 +487,7 @@ def test_bersihkan_hasil_membuang_anomali_dan_penanda(sesi: Session) -> None:
     sesi.refresh(run_b)
 
     assert run_b.anomali_versi == 0
+    assert run_b.jumlah_anomali is None
     assert (
         sesi.scalars(
             select(AnomaliTitik).where(AnomaliTitik.run_b_id == run_b.id)

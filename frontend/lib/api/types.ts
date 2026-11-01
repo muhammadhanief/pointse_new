@@ -345,6 +345,11 @@ export type AnomaliRun = {
   target: number;
   selesai: number;
   anomali_versi: number;
+  jumlah_anomali: number | null;
+};
+
+export type DaftarAnomaliRun = {
+  baris: AnomaliRun[];
 };
 
 export type AnomaliJenis = {

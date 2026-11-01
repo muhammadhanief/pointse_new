@@ -26,8 +26,11 @@ Kategori (saling lepas, satu titik hanya masuk satu kategori):
 ``titik_baru``
     ``assignment_id`` di B yang tidak ada di A sama sekali.
 
-Baris dihitung di akhir job B **sebelum** ``titik_hasil`` dipangkas, dan hanya
-disimpan untuk run B terakhir per kabupaten/kota.
+Baris dihitung di akhir job B **sebelum** ``titik_hasil`` dipangkas, dan disimpan
+untuk **setiap** run B sukses per kabupaten/kota supaya riwayat/tren pencermatan
+terbaca. Totalnya juga disimpan di ``runs.jumlah_anomali`` (0 = bersih). Blok
+lama yang menghapus anomali run B lain sekabupaten masih ada di
+:func:`simpan_anomali` tetapi dinonaktifkan (dikomentari).
 """
 
 from __future__ import annotations
@@ -55,9 +58,11 @@ from sqlalchemy.orm import Session, aliased
 
 from app import rekap as modul_rekap
 from app.models import (
+    DASAR_TUGAS,
     STATUS_SUKSES,
     TIPE_B,
     AnomaliTitik,
+    RekapTarget,
     Run,
     TitikHasil,
     Wilayah,
@@ -358,24 +363,30 @@ def simpan_anomali(sesi: Session, run: Run) -> int:
         run.anomali_versi = 0
         return 0
 
-    # Hanya run B terakhir yang disimpan: buang anomali run B lain sekabupaten.
-    # Id run lain diambil dengan SELECT biasa lebih dulu, BUKAN subquery di dalam
-    # DELETE: MariaDB mengunci setiap baris ``runs`` yang dibaca subquery DML,
-    # sehingga worker kedua yang sedang memperbarui status/heartbeat run lain
-    # membuat DELETE ini menunggu sampai "Lock wait timeout exceeded" (job 80,
-    # 2026-10-28). SELECT biasa adalah consistent read tanpa lock.
-    lain = list(
-        sesi.scalars(
-            select(Run.id).where(
-                Run.tipe == TIPE_B,
-                Run.kdprov == run.kdprov,
-                Run.kdkab == run.kdkab,
-                Run.id != run.id,
-            )
-        )
-    )
-    if lain:
-        sesi.execute(delete(AnomaliTitik).where(AnomaliTitik.run_b_id.in_(lain)))
+    # DINONAKTIFKAN 2026-11-01: dulu hanya run B terakhir yang disimpan, jadi
+    # anomali run B lain sekabupaten dibuang di sini. Sekarang riwayat/tren
+    # pencermatan per kabupaten/kota per waktu dibutuhkan, jadi detail SEMUA run
+    # B dipertahankan. Kode lama dikomentari (bukan dihapus) -- mungkin dipakai
+    # lagi kalau tabel perlu dirapikan lewat :mod:`app.pemeliharaan`.
+    #
+    # lain = list(
+    #     sesi.scalars(
+    #         select(Run.id).where(
+    #             Run.tipe == TIPE_B,
+    #             Run.kdprov == run.kdprov,
+    #             Run.kdkab == run.kdkab,
+    #             Run.id != run.id,
+    #         )
+    #     )
+    # )
+    # if lain:
+    #     sesi.execute(delete(AnomaliTitik).where(AnomaliTitik.run_b_id.in_(lain)))
+    #
+    # Catatan lama: id run lain diambil dengan SELECT biasa lebih dulu, BUKAN
+    # subquery di dalam DELETE, karena MariaDB mengunci setiap baris ``runs`` yang
+    # dibaca subquery DML sehingga worker kedua bisa menunggu sampai "Lock wait
+    # timeout exceeded" (job 80, 2026-10-28). SELECT biasa = consistent read.
+    #
     # DELETE pada rentang kosong pun mengambil gap lock di MariaDB; lewati bila
     # memang tidak ada sisa anomali run ini.
     ada = sesi.scalar(
@@ -460,6 +471,9 @@ def simpan_anomali(sesi: Session, run: Run) -> int:
     )
 
     run.anomali_versi = 1
+    # Total per run disimpan permanen (0 = bersih) supaya tren tetap terbaca
+    # walau detail ``anomali_titik`` run ini tidak lagi lengkap.
+    run.jumlah_anomali = jumlah
     return jumlah
 
 
@@ -476,6 +490,16 @@ def hitung_per_jenis(sesi: Session, run_b_id: int | list[int]) -> dict[str, int]
             .group_by(AnomaliTitik.jenis)
         )
     }
+
+
+def _saring_run_b(kdprov: str | None, kdkab: str) -> list[Any]:
+    """Syarat SQL run Proses B **sukses** satu kabupaten/kota."""
+    return [
+        Run.tipe == TIPE_B,
+        Run.status == STATUS_SUKSES,
+        Run.kdprov == kdprov if kdprov else Run.kdprov.is_not(None),
+        Run.kdkab.in_(modul_rekap.kandidat_kdkab(kdprov, kdkab)),
+    ]
 
 
 def run_b_terakhir_banyak(
@@ -496,15 +520,65 @@ def run_b_terakhir(sesi: Session, kdprov: str | None, kdkab: str) -> Run | None:
     """Run Proses B sukses terakhir satu kabupaten/kota (sumber menu anomali)."""
     return sesi.scalars(
         select(Run)
-        .where(
-            Run.tipe == TIPE_B,
-            Run.status == STATUS_SUKSES,
-            Run.kdprov == kdprov if kdprov else Run.kdprov.is_not(None),
-            Run.kdkab.in_(modul_rekap.kandidat_kdkab(kdprov, kdkab)),
-        )
+        .where(*_saring_run_b(kdprov, kdkab))
         .order_by(Run.id.desc())
         .limit(1)
     ).first()
+
+
+def riwayat_runs(
+    sesi: Session, kdprov: str | None, kdkab: str
+) -> list[tuple[Run, int, int]]:
+    """Riwayat run Proses B sukses satu kabupaten/kota, terbaru dulu.
+
+    Kembalikan ``(run, target, selesai)``. ``target``/``selesai`` dijumlahkan
+    dari ``rekap_target`` dasar tugas dengan **satu** query (bukan per run) agar
+    dropdown riwayat tetap ringan walau run-nya banyak.
+    """
+    runs = list(
+        sesi.scalars(
+            select(Run).where(*_saring_run_b(kdprov, kdkab)).order_by(Run.id.desc())
+        )
+    )
+    if not runs:
+        return []
+    ids = [satu.id for satu in runs]
+    jumlah = {
+        int(run_id): (int(target), int(selesai))
+        for run_id, target, selesai in sesi.execute(
+            select(
+                RekapTarget.run_b_id,
+                func.coalesce(func.sum(RekapTarget.target), 0),
+                func.coalesce(func.sum(RekapTarget.selesai), 0),
+            )
+            .where(RekapTarget.run_b_id.in_(ids), RekapTarget.dasar == DASAR_TUGAS)
+            .group_by(RekapTarget.run_b_id)
+        )
+    }
+    return [(satu, *jumlah.get(satu.id, (0, 0))) for satu in runs]
+
+
+def run_terpilih(
+    sesi: Session, kdprov: str | None, daftar_kdkab: list[str], run_b_id: int | None
+) -> list[Run]:
+    """Run B untuk menu anomali: ``run_b_id`` bila sah, jika tidak run terakhir.
+
+    Riwayat run hanya bermakna saat tepat satu kabupaten/kota dipilih.
+    ``run_b_id`` yang bukan Proses B sukses milik wilayah itu diabaikan supaya
+    tautan lama tidak menampilkan wilayah lain atau run yang tidak relevan.
+    """
+    if run_b_id is not None and len(daftar_kdkab) == 1:
+        run = sesi.get(Run, run_b_id)
+        if (
+            run is not None
+            and run.tipe == TIPE_B
+            and run.status == STATUS_SUKSES
+            and (run.kdprov == kdprov if kdprov else True)
+            and run.kdkab in modul_rekap.kandidat_kdkab(kdprov, daftar_kdkab[0])
+        ):
+            return [run]
+    return run_b_terakhir_banyak(sesi, kdprov, daftar_kdkab)
+
 
 
 def kueri_baris(

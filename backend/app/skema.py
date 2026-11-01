@@ -635,6 +635,14 @@ class AnomaliRunOut(BaseModel):
     selesai: int = 0
     #: 0 = job ini belum dihitung ulang setelah fitur anomali ada.
     anomali_versi: int = 0
+    #: Total titik anomali run ini (0 = bersih). ``None`` = job lama.
+    jumlah_anomali: int | None = None
+
+
+class DaftarAnomaliRunOut(BaseModel):
+    """Riwayat run Proses B sukses satu kabupaten/kota (dropdown riwayat run)."""
+
+    baris: list[AnomaliRunOut] = []
 
 
 class AnomaliJenisOut(BaseModel):

@@ -12,7 +12,7 @@ import {
   pesanKesalahan,
   unduhBerkas,
 } from "@/lib/api/klien";
-import type { Anomali } from "@/lib/api/types";
+import type { Anomali, AnomaliRun, DaftarAnomaliRun } from "@/lib/api/types";
 import { formatAngka, formatTanggal } from "@/lib/format";
 import { daftarKabupaten } from "@/lib/wilayah/kabupaten";
 
@@ -44,6 +44,11 @@ export function AnomaliClient({
   const [galat, setGalat] = useState<string | null>(null);
   const [mengunduh, setMengunduh] = useState(false);
   const [bukaPenjelasan, setBukaPenjelasan] = useState(false);
+  // Riwayat run B sukses milik kabupaten yang sedang dipilih (dropdown riwayat).
+  const [riwayat, setRiwayat] = useState<AnomaliRun[]>([]);
+  // ``null`` = run terakhir (default). Hanya berlaku saat tepat satu kabupaten.
+  const [runTerpilih, setRunTerpilih] = useState<number | null>(null);
+  const kdkabSatu = kdkabs.length === 1 ? kdkabs[0] : null;
 
   const parameter = useMemo(() => {
     const isi = new URLSearchParams({
@@ -60,8 +65,11 @@ export function AnomaliClient({
     if (kataKunci) {
       isi.set("q", kataKunci);
     }
+    if (kdkabSatu && runTerpilih != null) {
+      isi.set("run_b_id", String(runTerpilih));
+    }
     return isi;
-  }, [kdprov, kdkabs, jenises, kataKunci, halaman]);
+  }, [kdprov, kdkabs, jenises, kataKunci, halaman, kdkabSatu, runTerpilih]);
 
   const muat = useCallback(
     async (signal?: AbortSignal) => {
@@ -95,6 +103,32 @@ export function AnomaliClient({
     void muat(kendali.signal);
     return () => kendali.abort();
   }, [muat]);
+
+  // Muat riwayat run kabupaten yang dipilih. Ganti kabupaten/kota -> balik ke
+  // run terakhir (pilihan lama milik kabupaten lain tidak berlaku).
+  useEffect(() => {
+    setRunTerpilih(null);
+    if (!kdkabSatu) {
+      setRiwayat([]);
+      return;
+    }
+    const kendali = new AbortController();
+    void (async () => {
+      try {
+        const isi = new URLSearchParams({ kdprov, kdkab: kdkabSatu });
+        const hasil = await ambilJson<DaftarAnomaliRun>(
+          `/anomali/riwayat?${isi}`,
+          { signal: kendali.signal },
+        );
+        setRiwayat(hasil.baris);
+      } catch (kesalahan) {
+        if (!adalahBatal(kesalahan)) {
+          setRiwayat([]);
+        }
+      }
+    })();
+    return () => kendali.abort();
+  }, [kdprov, kdkabSatu]);
 
   // ``runs`` baru ada di backend versi ini; sisa pakai ``run`` supaya halaman
   // tetap hidup saat frontend lebih dulu diperbarui.
@@ -141,6 +175,9 @@ export function AnomaliClient({
       if (kataKunci) {
         isi.set("q", kataKunci);
       }
+      if (kdkabSatu && runTerpilih != null) {
+        isi.set("run_b_id", String(runTerpilih));
+      }
       const label = jenises.length === 1 ? jenises[0] : "semua";
       await unduhBerkas(
         `/anomali.xlsx?${isi}`,
@@ -157,7 +194,7 @@ export function AnomaliClient({
     <div className="space-y-field">
       <Panel
         judul="Pencermatan Titik"
-        deskripsi="Titik yang menurut sistem masih bermasalah pada Proses B terakhir. Rekap memakai klaim kabupaten; halaman ini memperlihatkan selisihnya."
+        deskripsi="Titik yang menurut sistem masih bermasalah pada Proses B. Pilih run terakhir atau dari riwayat; rekap memakai klaim kabupaten, halaman ini memperlihatkan selisihnya."
       >
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-muted">
@@ -179,7 +216,7 @@ export function AnomaliClient({
           </button>
         </div>
 
-        <div className="mt-3 grid gap-field sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-3 grid gap-field sm:grid-cols-2 lg:grid-cols-5">
           {kdkabAwal ? (
             <div>
               <span className="block text-sm font-medium text-ink">
@@ -206,6 +243,51 @@ export function AnomaliClient({
               }}
             />
           )}
+
+          <div>
+            <label
+              htmlFor="riwayat-run"
+              className="block text-sm font-medium text-ink"
+            >
+              Riwayat run
+            </label>
+            <select
+              id="riwayat-run"
+              value={
+                kdkabSatu ? String(runTerpilih ?? riwayat[0]?.run_id ?? "") : ""
+              }
+              onChange={(kejadian) =>
+                setRunTerpilih(
+                  kejadian.target.value ? Number(kejadian.target.value) : null,
+                )
+              }
+              disabled={!kdkabSatu || riwayat.length === 0}
+              title={
+                !kdkabSatu
+                  ? "Pilih tepat satu kabupaten/kota untuk membuka riwayat run"
+                  : undefined
+              }
+              className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {kdkabSatu && riwayat.length > 0 ? (
+                riwayat.map((satu) => (
+                  <option key={satu.run_id} value={satu.run_id}>
+                    {`#${satu.run_id} · ${formatTanggal(satu.tanggal_data)} · ${
+                      satu.jumlah_anomali == null
+                        ? "–"
+                        : formatAngka(satu.jumlah_anomali)
+                    } anomali${satu.pengunggah ? ` · ${satu.pengunggah}` : ""}`}
+                  </option>
+                ))
+              ) : (
+                <option value="">
+                  {kdkabSatu
+                    ? "Run terakhir (otomatis)"
+                    : "Run terakhir (semua kabupaten)"}
+                </option>
+              )}
+            </select>
+          </div>
 
           <MultiPilih
             label="Jenis pencermatan"
