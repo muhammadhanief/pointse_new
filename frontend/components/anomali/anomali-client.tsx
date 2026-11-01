@@ -313,6 +313,10 @@ export function AnomaliClient({
   const selesai = runs.reduce((jumlah, satu) => jumlah + satu.selesai, 0);
   const perluHitungUlang = runs.some((satu) => satu.anomali_versi === 0);
   const banyakKabupaten = kdkabs.length > 1;
+  // API lama belum mengirim ``id`` baris, sehingga aksi konfirmasi tidak bisa
+  // dipakai. Beri tahu penyebabnya, jangan hanya menonaktifkan tombol diam-diam.
+  const apiLama =
+    (data?.baris.length ?? 0) > 0 && data!.baris.every((baris) => baris.id == null);
 
   const ringkasan = data?.ringkasan ?? {
     total: 0,
@@ -912,6 +916,21 @@ export function AnomaliClient({
             Ada job B yang diproses sebelum fitur pencermatan ada. Antrekan ulang
             berkas B terakhir kabupaten tersebut untuk menghitung pencermatan
             (tidak perlu unggah ulang).
+          </div>
+        ) : null}
+
+        {apiLama ? (
+          <div
+            role="alert"
+            className="mt-3 rounded-lg border border-danger/30 bg-danger-soft/60 px-3 py-2 text-sm text-ink"
+          >
+            <strong className="font-semibold">
+              API backend masih versi lama.
+            </strong>{" "}
+            Respons <code className="font-mono text-xs">/anomali</code> belum
+            memuat id baris, jadi tombol konfirmasi dinonaktifkan. Deploy
+            backend terbaru beserta migrasi <code className="font-mono text-xs">0017</code>,
+            lalu muat ulang halaman ini.
           </div>
         ) : null}
 
