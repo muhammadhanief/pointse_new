@@ -511,8 +511,9 @@ class KonfirmasiAnomali(Base):
 
     ``status`` bernilai :data:`KONFIRMASI_AKAN_DIPERBAIKI` atau
     :data:`KONFIRMASI_SESUAI_KENYATAAN`. ``catatan`` wajib untuk status
-    *sesuai kenyataan* (divalidasi di API). ``kategori_alasan`` dipilih dari
-    daftar tetap di :mod:`app.konfirmasi`.
+    *sesuai kenyataan* (divalidasi di API). Kolom ``kategori_alasan`` lama
+    dibiarkan (nullable) demi kompatibilitas migrasi, tetapi tidak dipakai
+    lagi.
 
     Konfirmasi lama yang tidak lagi muncul di run terbaru tetap tersimpan
     (riwayat) dan tidak mengganggu tampilan run berjalan.
@@ -535,6 +536,8 @@ class KonfirmasiAnomali(Base):
     unique_bang: Mapped[str | None] = mapped_column(String(64))
     level_6_full_code: Mapped[str | None] = mapped_column(String(16))
     status: Mapped[str] = mapped_column(String(24))
+    # Deprecated: tidak lagi diisi/dibaca (dulu "kategori alasan"). Dibiarkan
+    # demi kompatibilitas migrasi 0017.
     kategori_alasan: Mapped[str | None] = mapped_column(String(32))
     catatan: Mapped[str | None] = mapped_column(Text)
     #: Permintaan klarifikasi admin provinsi; tidak mengubah status kabupaten.

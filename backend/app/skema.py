@@ -695,20 +695,11 @@ class RingkasanKonfirmasiOut(BaseModel):
     per_status: list[StatusKonfirmasiOut] = []
 
 
-class KodeLabelOut(BaseModel):
-    """Pasangan kode/label sederhana (mis. kategori alasan)."""
-
-    kode: str
-    label: str
-
-
 class KonfirmasiAnomaliOut(BaseModel):
     """Konfirmasi satu titik (dibaca dari ``konfirmasi_anomali``)."""
 
     status: str
     label: str
-    kategori_alasan: str | None = None
-    label_alasan: str | None = None
     catatan: str | None = None
     oleh: str | None = None
     peran: str | None = None
@@ -735,8 +726,6 @@ class AnomaliOut(BaseModel):
     ringkasan: RingkasanKonfirmasiOut = RingkasanKonfirmasiOut()
     #: Daftar status konfirmasi untuk dropdown filter.
     status_pilihan: list[StatusKonfirmasiOut] = []
-    #: Daftar kategori alasan untuk drawer konfirmasi.
-    kategori_alasan: list[KodeLabelOut] = []
 
 
 class KonfirmasiMasuk(BaseModel):
@@ -749,7 +738,6 @@ class KonfirmasiMasuk(BaseModel):
     """
 
     status: str = ""
-    kategori_alasan: str | None = None
     catatan: str | None = Field(None, max_length=2000)
     #: Mode baris tertentu.
     anomali_ids: list[int] | None = None

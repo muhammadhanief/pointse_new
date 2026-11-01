@@ -152,7 +152,8 @@ def test_konfirmasi_ringkasan_dan_filter(klien: TestClient, sesi: Session) -> No
     assert data["ringkasan"]["belum"] == 1
     kode_status = {satu["kode"] for satu in data["status_pilihan"]}
     assert kode_status == {"belum", "akan_diperbaiki", "sesuai_kenyataan"}
-    assert data["kategori_alasan"]
+    # Kategori alasan sudah dihapus: cukup status + keterangan.
+    assert "kategori_alasan" not in data
 
     belum = klien.get("/anomali", params={"kdkab": "3325", "status": "belum"}).json()
     assert belum["total"] == 1
@@ -178,7 +179,6 @@ def test_konfirmasi_terbawa_ke_run_berikutnya(
         "/anomali/konfirmasi",
         json={
             "status": "sesuai_kenyataan",
-            "kategori_alasan": "titik_digeser",
             "catatan": "digeser sedikit menyesuaikan lapangan",
             "anomali_ids": [lama.id],
         },
@@ -267,7 +267,6 @@ def test_minta_klarifikasi_tanpa_ubah_status(
         "/anomali/konfirmasi",
         json={
             "status": "sesuai_kenyataan",
-            "kategori_alasan": "titik_digeser",
             "catatan": "titik digeser sesuai batas SLS",
             "anomali_ids": ids,
         },
@@ -279,7 +278,7 @@ def test_minta_klarifikasi_tanpa_ubah_status(
 
 
 def test_xlsx_memuat_kolom_konfirmasi(klien: TestClient, sesi: Session) -> None:
-    """Excel pencermatan memuat status/kategori/catatan/waktu konfirmasi."""
+    """Excel pencermatan memuat status/catatan/waktu konfirmasi."""
     _siapkan(sesi, jumlah=1)
     ids = _ids_anomali(sesi)
     klien.post(
@@ -298,7 +297,6 @@ def test_xlsx_memuat_kolom_konfirmasi(klien: TestClient, sesi: Session) -> None:
     header = [sel.value for sel in next(lembar.iter_rows(max_row=1))]
     for kolom in (
         "status_konfirmasi",
-        "kategori_alasan",
         "catatan_konfirmasi",
         "dikonfirmasi_oleh",
         "waktu_konfirmasi",

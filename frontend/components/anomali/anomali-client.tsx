@@ -140,11 +140,9 @@ export function AnomaliClient({
   // Drawer konfirmasi satu titik.
   const [drawer, setDrawer] = useState<AnomaliBaris | null>(null);
   const [formStatus, setFormStatus] = useState<KodeStatus>("akan_diperbaiki");
-  const [formKategori, setFormKategori] = useState("");
   const [formCatatan, setFormCatatan] = useState("");
-  // Modal alasan sekali untuk aksi massal "Sesuai Kondisi Kenyataan".
+  // Modal keterangan sekali untuk aksi massal "Sesuai Kondisi Kenyataan".
   const [bukaMassal, setBukaMassal] = useState(false);
-  const [massalKategori, setMassalKategori] = useState("");
   const [massalCatatan, setMassalCatatan] = useState("");
   // Permintaan klarifikasi admin provinsi untuk titik di drawer.
   const [bukaKlarifikasi, setBukaKlarifikasi] = useState(false);
@@ -332,7 +330,6 @@ export function AnomaliClient({
     data?.status_pilihan && data.status_pilihan.length > 0
       ? data.status_pilihan
       : STATUS_BAWAAN;
-  const kategoriAlasan = data?.kategori_alasan ?? [];
 
   const barisHalaman = data?.baris ?? [];
   const semuaHalamanDipilih =
@@ -507,7 +504,6 @@ export function AnomaliClient({
         ? statusLama
         : "akan_diperbaiki";
     setFormStatus(statusAwal ?? awal);
-    setFormKategori(baris.konfirmasi?.kategori_alasan ?? "");
     setFormCatatan(baris.konfirmasi?.catatan ?? "");
   }
 
@@ -521,7 +517,6 @@ export function AnomaliClient({
     }
     await kirimKonfirmasi({
       status: formStatus,
-      kategori_alasan: formKategori || null,
       catatan: formCatatan.trim() || null,
       anomali_ids: [id],
     });
@@ -551,11 +546,9 @@ export function AnomaliClient({
     const hasil = await kirimKonfirmasi({
       ...dasar,
       status: "sesuai_kenyataan",
-      kategori_alasan: massalKategori || null,
       catatan: massalCatatan.trim(),
     });
     if (hasil != null) {
-      setMassalKategori("");
       setMassalCatatan("");
     }
   }
@@ -1139,6 +1132,17 @@ export function AnomaliClient({
                             >
                               Konfirmasi
                             </button>
+                            {baris.konfirmasi ? (
+                              <button
+                                type="button"
+                                onClick={() => bukaDrawer(baris)}
+                                disabled={baris.id == null}
+                                className="hidden min-h-6 rounded-md border border-line-strong bg-surface px-1.5 text-[10px] font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong disabled:cursor-not-allowed disabled:opacity-60 lg:inline-flex"
+                                title="Ubah atau batalkan konfirmasi"
+                              >
+                                Ubah
+                              </button>
+                            ) : null}
                           </div>
                           {baris.konfirmasi?.catatan ? (
                             <p
@@ -1421,33 +1425,6 @@ export function AnomaliClient({
 
               <div>
                 <label
-                  htmlFor="kategori-alasan"
-                  className="block text-sm font-medium text-ink"
-                >
-                  Kategori alasan
-                  {formStatus === "sesuai_kenyataan" ? (
-                    <span className="ml-1 text-xs font-normal text-muted">
-                      (disarankan)
-                    </span>
-                  ) : null}
-                </label>
-                <select
-                  id="kategori-alasan"
-                  value={formKategori}
-                  onChange={(kejadian) => setFormKategori(kejadian.target.value)}
-                  className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
-                >
-                  <option value="">Pilih kategori…</option>
-                  {kategoriAlasan.map((satu) => (
-                    <option key={satu.kode} value={satu.kode}>
-                      {satu.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label
                   htmlFor="catatan-konfirmasi"
                   className="block text-sm font-medium text-ink"
                 >
@@ -1534,31 +1511,10 @@ export function AnomaliClient({
         onTutup={() => setBukaMassal(false)}
       >
         <p className="text-sm leading-6 text-muted">
-          Alasan dan keterangan di bawah dipakai untuk semua titik terpilih.
+          Keterangan di bawah dipakai untuk semua titik terpilih.
           Keterangan wajib diisi.
         </p>
         <div className="mt-3 space-y-3">
-          <div>
-            <label
-              htmlFor="kategori-massal"
-              className="block text-sm font-medium text-ink"
-            >
-              Kategori alasan
-            </label>
-            <select
-              id="kategori-massal"
-              value={massalKategori}
-              onChange={(kejadian) => setMassalKategori(kejadian.target.value)}
-              className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
-            >
-              <option value="">Pilih kategori…</option>
-              {kategoriAlasan.map((satu) => (
-                <option key={satu.kode} value={satu.kode}>
-                  {satu.label}
-                </option>
-              ))}
-            </select>
-          </div>
           <div>
             <label
               htmlFor="catatan-massal"

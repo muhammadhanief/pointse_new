@@ -65,7 +65,6 @@ from app.skema import (
     DaftarRunOut,
     HasilKonfirmasiOut,
     HasilOut,
-    KodeLabelOut,
     KonfirmasiAnomaliOut,
     KonfirmasiMasuk,
     MasterGeotagOut,
@@ -1081,13 +1080,6 @@ def _status_pilihan() -> list[StatusKonfirmasiOut]:
     ]
 
 
-def _kategori_alasan() -> list[KodeLabelOut]:
-    return [
-        KodeLabelOut(kode=kode, label=label)
-        for kode, label in konfirmasi.KATEGORI_ALASAN
-    ]
-
-
 def _pastikan_status(status: str | None) -> str | None:
     """Validasi filter/permintaan status; kembalikan ``None`` bila tidak diisi."""
     if not status:
@@ -1265,7 +1257,6 @@ def daftar_anomali(
             baris=[],
             ringkasan=ringkasan,
             status_pilihan=_status_pilihan(),
-            kategori_alasan=_kategori_alasan(),
         )
 
     kueri = anomali.kueri_baris(
@@ -1288,7 +1279,6 @@ def daftar_anomali(
         baris=baris,
         ringkasan=ringkasan,
         status_pilihan=_status_pilihan(),
-        kategori_alasan=_kategori_alasan(),
     )
 
 
@@ -1355,7 +1345,6 @@ def ekspor_anomali(
                 "flag_model",
                 "keterangan",
                 "status_konfirmasi",
-                "kategori_alasan",
                 "catatan_konfirmasi",
                 "dikonfirmasi_oleh",
                 "waktu_konfirmasi",
@@ -1384,10 +1373,6 @@ def ekspor_anomali(
                     konfirmasi.LABEL.get(
                         konfirmasi_db.status if konfirmasi_db is not None else "",
                         "Belum dikonfirmasi",
-                    ),
-                    konfirmasi.LABEL_ALASAN.get(
-                        konfirmasi_db.kategori_alasan if konfirmasi_db is not None else None,
-                        "",
                     ),
                     konfirmasi_db.catatan if konfirmasi_db is not None else None,
                     konfirmasi_db.nama if konfirmasi_db is not None else None,
@@ -1426,8 +1411,7 @@ def simpan_konfirmasi_anomali(
 
     Badan permintaan bisa memuat ``anomali_ids`` (baris tertentu) atau
     ``semua=true`` dengan filter (server yang mengambil id). Status
-    *sesuai kenyataan* wajib disertai ``catatan``; kategori alasan harus salah
-    satu dari daftar tetap.
+    *sesuai kenyataan* wajib disertai ``catatan``.
     """
     status = (permintaan.status or "").strip()
     if status not in konfirmasi.LABEL or status == konfirmasi.BELUM:
@@ -1436,11 +1420,6 @@ def simpan_konfirmasi_anomali(
             detail=(
                 "status konfirmasi harus 'akan_diperbaiki' atau 'sesuai_kenyataan'"
             ),
-        )
-    kategori = (permintaan.kategori_alasan or "").strip() or None
-    if kategori is not None and kategori not in konfirmasi.LABEL_ALASAN:
-        raise HTTPException(
-            status_code=422, detail=f"kategori alasan tidak dikenal: {kategori}"
         )
     catatan = (permintaan.catatan or "").strip() or None
     if status in konfirmasi.CATATAN_WAJIB and not catatan:
@@ -1457,7 +1436,6 @@ def simpan_konfirmasi_anomali(
         pengguna,
         baris=baris,
         status=status,
-        kategori_alasan=kategori,
         catatan=catatan,
     )
     aktivitas.catat(
@@ -1465,7 +1443,7 @@ def simpan_konfirmasi_anomali(
         pengguna,
         aksi="konfirmasi_anomali",
         objek="anomali",
-        detail=f"{status} {jumlah} titik (alasan: {kategori or '-'})",
+        detail=f"{status} {jumlah} titik",
     )
     return HasilKonfirmasiOut(jumlah=jumlah)
 

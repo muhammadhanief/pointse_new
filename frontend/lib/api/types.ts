@@ -380,8 +380,6 @@ export type AnomaliBaris = {
 export type KonfirmasiAnomali = {
   status: string;
   label: string;
-  kategori_alasan: string | null;
-  label_alasan: string | null;
   catatan: string | null;
   oleh: string | null;
   peran: string | null;
@@ -399,11 +397,6 @@ export type StatusKonfirmasi = {
   jumlah: number;
 };
 
-export type KodeLabel = {
-  kode: string;
-  label: string;
-};
-
 export type RingkasanKonfirmasi = {
   total: number;
   terkonfirmasi: number;
@@ -419,12 +412,10 @@ export type Anomali = {
   baris: AnomaliBaris[];
   ringkasan: RingkasanKonfirmasi;
   status_pilihan: StatusKonfirmasi[];
-  kategori_alasan: KodeLabel[];
 };
 
 export type PermintaanKonfirmasi = {
   status?: string;
-  kategori_alasan?: string | null;
   catatan?: string | null;
   anomali_ids?: number[];
   kdprov?: string;

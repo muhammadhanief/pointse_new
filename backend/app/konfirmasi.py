@@ -11,8 +11,8 @@ Dua status saja:
 ``akan_diperbaiki``
     Kabupaten/kota mengakui temuan dan akan memperbaikinya. Catatan opsional.
 ``sesuai_kenyataan``
-    Temuan dianggap sesuai kondisi lapangan. Wajib disertai catatan dan
-    kategori alasan (lihat :data:`CATATAN_WAJIB`).
+    Temuan dianggap sesuai kondisi lapangan. Wajib disertai catatan
+    (lihat :data:`CATATAN_WAJIB`).
 
 Modul ini **tidak** mengubah rekap progres: rekap tetap memakai klaim kabupaten
 (``titik_hasil.flag_repair_unggah``). Konfirmasi hanya lapisan tampilan/audit di
@@ -55,17 +55,6 @@ LABEL = dict(STATUS)
 BELUM = "belum"
 LABEL[BELUM] = "Belum dikonfirmasi"
 
-#: Kategori alasan yang bisa dipilih kabupaten/kota.
-KATEGORI_ALASAN: tuple[tuple[str, str], ...] = (
-    ("peta_tidak_sesuai", "Peta wilkerstat tidak sesuai kondisi lapangan"),
-    ("batas_sls_berbeda", "Batas SLS berbeda dengan penugasan"),
-    ("titik_digeser", "Titik digeser menyesuaikan kondisi lapangan"),
-    ("tidak_ditemukan", "Bangunan/titik tidak ditemukan di lapangan"),
-    ("master_salah", "Data Master GS keliru"),
-    ("lainnya", "Lainnya"),
-)
-LABEL_ALASAN = dict(KATEGORI_ALASAN)
-
 #: Status yang wajib disertai catatan.
 CATATAN_WAJIB: tuple[str, ...] = (SESUAI_KENYATAAN,)
 
@@ -103,8 +92,6 @@ def baris_ke_keluaran(satu: KonfirmasiAnomali) -> dict[str, Any]:
     return {
         "status": satu.status,
         "label": LABEL.get(satu.status, satu.status),
-        "kategori_alasan": satu.kategori_alasan,
-        "label_alasan": LABEL_ALASAN.get(satu.kategori_alasan or ""),
         "catatan": satu.catatan,
         "oleh": satu.nama,
         "peran": satu.peran,
@@ -123,7 +110,6 @@ def simpan(
     *,
     baris: Sequence[tuple[AnomaliTitik, str, str]],
     status: str,
-    kategori_alasan: str | None,
     catatan: str | None,
 ) -> int:
     """Upsert konfirmasi untuk baris terpilih; kembalikan jumlah baris.
@@ -162,7 +148,6 @@ def simpan(
                 sesi.add(target)
                 ada[kode] = target
             target.status = status
-            target.kategori_alasan = kategori_alasan
             target.catatan = catatan
             target.run_b_id = satu.run_b_id
             target.level_6_full_code = satu.level_6_full_code
