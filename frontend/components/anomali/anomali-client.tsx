@@ -44,9 +44,8 @@ const KELAS_HEAD =
 const KELAS_HEAD_KIRI =
   "sticky top-0 z-20 bg-paper px-3 py-2 font-semibold after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-line";
 /** Sel kiri yang ikut menempel saat tabel digulir ke samping. */
-const KELAS_SEL_KIRI = "sticky left-0 z-10 w-10 bg-surface px-2 py-2";
 const KELAS_STATUS_KIRI =
-  "sticky left-10 z-10 min-w-[10.5rem] border-r border-line bg-surface px-3 py-2";
+  "sticky left-0 z-10 min-w-[10.5rem] border-r border-line bg-surface px-3 py-2";
 
 /** Isi dropdown status saat API lama belum mengirim ``status_pilihan``. */
 const STATUS_BAWAAN: StatusKonfirmasi[] = [
@@ -156,7 +155,6 @@ export function AnomaliClient({
   // Pilihan untuk aksi massal: id baris tertentu, atau seluruh hasil filter.
   const [pilihan, setPilihan] = useState<Set<number>>(() => new Set());
   const [pilihSemua, setPilihSemua] = useState(false);
-  const kepalaPilih = useRef<HTMLInputElement>(null);
   // Drawer konfirmasi satu titik.
   const [drawer, setDrawer] = useState<AnomaliBaris | null>(null);
   const [formStatus, setFormStatus] = useState<KodeStatus>("akan_diperbaiki");
@@ -371,26 +369,8 @@ export function AnomaliClient({
       ? data.status_pilihan
       : STATUS_BAWAAN;
 
-  const barisHalaman = data?.baris ?? [];
-  const bisaDipilih = (baris: AnomaliBaris): boolean =>
-    baris.id != null && !wajibTangani(baris.jenis);
-  const barisBisaDipilih = barisHalaman.filter(bisaDipilih);
-  const semuaHalamanDipilih =
-    pilihSemua ||
-    (barisBisaDipilih.length > 0 &&
-      barisBisaDipilih.every((baris) => pilihan.has(baris.id as number)));
-  const sebagianHalaman =
-    pilihSemua ||
-    barisBisaDipilih.some((baris) => pilihan.has(baris.id as number));
   const jumlahDipilih = pilihSemua ? total : pilihan.size;
   const adaPilihan = pilihSemua || pilihan.size > 0;
-
-  useEffect(() => {
-    if (kepalaPilih.current) {
-      kepalaPilih.current.indeterminate =
-        sebagianHalaman && !semuaHalamanDipilih;
-    }
-  }, [sebagianHalaman, semuaHalamanDipilih]);
 
   const labelKabupaten = useMemo(() => {
     const peta = new Map(opsi.map((satu) => [satu.kode, satu.nama]));
@@ -435,35 +415,6 @@ export function AnomaliClient({
     setRunTerpilih(nilai);
     setHalaman(0);
     bersihkanPilihan();
-  }
-
-  function toggleBaris(baris: AnomaliBaris) {
-    const id = baris.id;
-    if (id == null) {
-      return;
-    }
-    setPilihSemua(false);
-    setPilihan((lama) => {
-      const baru = new Set(lama);
-      if (baru.has(id)) {
-        baru.delete(id);
-      } else {
-        baru.add(id);
-      }
-      return baru;
-    });
-  }
-
-  function toggleHalaman() {
-    if (semuaHalamanDipilih) {
-      bersihkanPilihan();
-      return;
-    }
-    setPilihSemua(false);
-    const id = barisHalaman
-      .filter(bisaDipilih)
-      .map((baris) => baris.id as number);
-    setPilihan(new Set(id));
   }
 
   /** Muatan aksi massal: baris tertentu, atau seluruh hasil filter (server). */
@@ -1105,19 +1056,7 @@ export function AnomaliClient({
               <table className="w-full min-w-[76rem] border-collapse text-[13px]">
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-wide text-muted">
-                    <th className={`${KELAS_HEAD_KIRI} w-10 px-2`}>
-                      <input
-                        ref={kepalaPilih}
-                        type="checkbox"
-                        checked={semuaHalamanDipilih}
-                        onChange={toggleHalaman}
-                        disabled
-                        aria-label="Pilih semua baris di halaman ini"
-                        title="Sementara dinonaktifkan"
-                        className="h-4 w-4 cursor-not-allowed accent-[var(--brand)] opacity-50"
-                      />
-                    </th>
-                    <th className={`${KELAS_HEAD_KIRI} left-10`}>Status</th>
+                    <th className={`${KELAS_HEAD_KIRI} left-0`}>Status</th>
                     {banyakKabupaten ? (
                       <th className={KELAS_HEAD}>Kabupaten/kota</th>
                     ) : null}
@@ -1136,25 +1075,11 @@ export function AnomaliClient({
                 </thead>
                 <tbody>
                   {data.baris.map((baris, indeks) => {
-                    const dipilih = baris.id != null && pilihan.has(baris.id);
                     return (
                       <tr
                         key={`${baris.id ?? "x"}-${baris.kdkab}-${baris.assignment_id}-${baris.assignment_id_baru}-${indeks}`}
                         className="border-b border-line/70 last:border-0"
                       >
-                        <td className={KELAS_SEL_KIRI}>
-                          <input
-                            type="checkbox"
-                            checked={
-                              !wajibTangani(baris.jenis) &&
-                              (dipilih || pilihSemua)
-                            }
-                            onChange={() => toggleBaris(baris)}
-                            disabled={baris.id == null || wajibTangani(baris.jenis)}
-                            aria-label="Pilih titik ini"
-                            className="h-4 w-4 accent-[var(--brand)]"
-                          />
-                        </td>
                         <td className={KELAS_STATUS_KIRI}>
                           <span
                             className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${kelasBadge(
