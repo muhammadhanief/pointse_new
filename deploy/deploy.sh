@@ -33,6 +33,10 @@ cd "${APP_DIR}/backend"
 systemctl daemon-reload
 systemctl enable pointse-api.service pointse-worker.service
 systemctl restart pointse-api.service pointse-worker.service
+# Worker tambahan (kalau dipasang) ikut di-restart supaya kode barunya dipakai.
+if systemctl is-enabled --quiet pointse-worker@2.service 2>/dev/null; then
+  systemctl restart pointse-worker@2.service
+fi
 
 echo "Deploy selesai. Periksa: systemctl status pointse-api pointse-worker"
 echo "Log: journalctl -u pointse-api -u pointse-worker -f"

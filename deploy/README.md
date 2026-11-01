@@ -153,7 +153,7 @@ Yang perlu diketahui sebelum menyalakan worker kedua:
   `sudo tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value pointse-worker@2)/environ | grep WORKER_`.
 - **Naikkan `JOB_TIMEOUT_MENIT` dulu.** Worker yang menganggur akan menandai
   job `jalan` yang heartbeat-nya lebih tua dari batas itu sebagai gagal. Pada
-  kabupaten besar fase akhir (rekap + pangkas + urut penuh) bisa >30 menit,
+  kabupaten besar fase akhir (rekap + urut penuh) bisa >30 menit,
   sedangkan heartbeat job bisa membeku karena baris `runs` dikunci transaksi
   itu. Dengan satu worker ini tidak terjadi (worker sibuk di dalam job), tetapi
   dengan dua worker job sehat bisa ikut dibatalkan. Setel mis. `120` di
@@ -164,19 +164,25 @@ Yang perlu diketahui sebelum menyalakan worker kedua:
   `free -m` menunjukkan tersedia di bawah ±1,5 GB, jangan menambah worker —
   turunkan anggaran atau biarkan satu worker.
 - **Antrean tetap adil dan berurutan per kabupaten/kota.** Klaim job memakai
-  `FOR UPDATE SKIP LOCKED` dan melewati job dengan (provinsi, kabupaten, tipe)
-  yang sedang dikerjakan, jadi dua worker tidak pernah memproses dua job
-  kabupaten/tipe yang sama.
+  `FOR UPDATE SKIP LOCKED` dan melewati job yang **kabupaten/kotanya** sedang
+  dikerjakan (tanpa memandang tipe). Proses A dan B sekabupaten memakai baris
+  `wilayah` yang sama, jadi menjalankannya bersamaan hanya menimbulkan
+  `1205 Lock wait timeout`. Setelah klaim, kepemilikan diverifikasi ulang: kalau
+  dua worker sempat mengklaim job sekabupaten pada saat yang hampir sama, yang
+  id-nya lebih besar dikembalikan ke `menunggu`.
 - **Job B menunggu A kabupaten/kota itu selesai.** Klaim menahan job B selama
   masih ada job A dengan id lebih kecil yang `menunggu`/`jalan`; sumber A-nya
   ditentukan ulang tepat sebelum diproses (A sukses terbaru) dan petanya disalin
   ke folder job. Jadi B yang diunggah saat A masih antre tidak lagi memakai peta
   A lama.
-- **Dua worker menulis tabel rekap yang sama.** Fase akhir job (rekap,
-  anomali, `rekap_target`, pangkas) menyentuh tabel yang sama untuk kabupaten
-  berbeda. Engine memakai `READ COMMITTED` (`app/db.py`) supaya tidak ada gap
-  lock antar rentang `run_id`; dengan `REPEATABLE READ` job bisa gagal
+- **Dua worker menulis tabel rekap yang sama.** Fase akhir job (rekap, anomali,
+  `rekap_target`) menyentuh tabel yang sama untuk kabupaten berbeda. Engine
+  memakai `READ COMMITTED` (`app/db.py`) supaya tidak ada gap lock antar rentang
+  `run_id`; dengan `REPEATABLE READ` job bisa gagal
   `1205 Lock wait timeout exceeded`.
+- **Pemangkasan `titik_hasil` tidak lagi di jalur job.** Job sukses hanya
+  menulis rekap + status; perampingan dikerjakan `app.pemeliharaan` (lihat §4b),
+  jadi transaksi job tetap pendek dan tidak saling menunggu kunci baris.
 - **CPU dan disk berbagi.** Di server 4 core, dua job memakai dua core dan
   menyisakan dua core untuk API/MariaDB. Karena penyimpanan HDD, kenaikan
   kecepatan biasanya ±1,3-1,6x, bukan 2x; lonjakan `iowait` terlihat di
@@ -190,6 +196,26 @@ Menghentikan worker tambahan:
 ```bash
 systemctl disable --now pointse-worker@2.service
 ```
+
+### 4b. Pemeliharaan `titik_hasil`
+
+Perampingan dipindah keluar jalur job (`app.pemeliharaan`): run lama dihapus
+(baris `runs` + rekap tetap utuh, `detail_tersedia` diset 0 lebih dulu), dan run
+yang disimpan hanya menyisakan titik yang perlu perhatian. Semua langkah
+idempoten dan memakai `fcntl.flock` (`<DIR_UNGGAHAN>/.pemeliharaan.lock`) supaya
+tidak ada dua proses memangkas bersamaan.
+
+Worker yang menganggur menjalankannya otomatis tiap
+`PEMELIHARAAN_INTERVAL_MENIT` menit (bawaan 30; `0` = matikan). Untuk memastikan
+tetap jalan walau worker selalu sibuk, pasang cron 30 menit:
+
+```cron
+*/30 * * * * cd /opt/pointse/backend && /opt/pointse/backend/.venv/bin/python -m app.pemeliharaan --sekali >> /var/log/pointse-pemeliharaan.log 2>&1
+```
+
+Putaran pertama setelah upgrade memindai run lama sekali (penanda
+`runs.titik_ramping` masih 0); batasi pekerjaan per putaran dengan `--batas`
+(mis. `--batas 20`) kalau ingin lebih ringan.
 
 ## 5. nginx aaPanel
 

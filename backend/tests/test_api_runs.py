@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -183,13 +185,37 @@ def test_status_dan_daftar_job(
     assert klien.get("/runs", params={"tipe": "B"}).json()["total"] == 0
     assert klien.get("/runs", params={"kdprov": "34"}).json()["total"] == 0
 
-    # Setelah dijalankan, yang tersimpan hanya titik yang perlu perhatian.
+    # Setelah dijalankan, jumlah tersimpan = titik perlu perhatian.
     jalankan(sesi_pabrik)
     status = klien.get(f"/runs/{run_id}").json()
     assert status["jumlah_tersimpan"] == 1
     assert status["jumlah_baris"] == 3
     assert status["jumlah_tanpa_wilayah"] == 0
     assert status["detail_tersedia"] is True
+
+
+def test_hasil_dan_ekspor_hanya_titik_bermasalah_tanpa_pemeliharaan(
+    klien: TestClient, sesi_pabrik: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Run yang belum dirampingkan tetap hanya menampilkan titik perlu perhatian.
+
+    Pemangkasan ada di ``app.pemeliharaan``; endpoint hasil/ekspor tidak boleh
+    bergantung pada sudah/belumnya pemeliharaan berjalan (kalau tidak, run baru
+    menampilkan titik ``benar_awal`` juga).
+    """
+    titik, peta = berkas_uji(tmp_path)
+    run_id = unggah(klien, titik, peta).json()["id"]
+    jalankan(sesi_pabrik)  # tanpa pemeliharaan
+
+    hasil = klien.get(f"/runs/{run_id}/hasil").json()
+    assert hasil["total"] == 1
+    assert [baris["assignment_id"] for baris in hasil["baris"]] == ["3"]
+
+    ekspor = klien.get(f"/runs/{run_id}/ekspor/titik.csv")
+    assert ekspor.status_code == 200
+    baris_csv = list(csv.reader(io.StringIO(ekspor.text)))
+    assert len(baris_csv) == 2  # header + satu titik
+    assert baris_csv[1][1] == "3"
 
 
 def test_daftar_job_paging_dan_pencarian(
@@ -532,8 +558,13 @@ def test_rekap_detail_dipangkas_dibalas_409(
     jalankan(sesi_pabrik)
     id_terakhir = unggah(klien, titik, peta).json()["id"]
     jalankan(sesi_pabrik)
+    # Pemeliharaan memangkas detail run tengah (di luar jalur job).
+    from app.pemeliharaan import jalankan as jalankan_pemeliharaan
 
-    # run tengah: detailnya dipangkas saat run terakhir sukses
+    with sesi_pabrik() as sesi:
+        jalankan_pemeliharaan(sesi)
+
+    # run tengah: detailnya dipangkas saat pemeliharaan berjalan
     assert klien.get(f"/runs/{id_tengah}").json()["detail_tersedia"] is False
     assert klien.get(f"/runs/{id_tengah}/hasil").json()["total"] == 0
     detail = klien.get(f"/runs/{id_tengah}/rekap", params={"tingkat": "subsls"})

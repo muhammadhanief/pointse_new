@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     #: Retensi dan jumlah maksimum baris ``worker_event``.
     worker_event_retensi_hari: int = Field(7, ge=1)
     worker_event_maks: int = Field(5000, ge=100)
+    #: Jeda pemeliharaan ``titik_hasil`` saat worker menganggur (menit).
+    #: 0 = pemeliharaan hanya lewat ``python -m app.pemeliharaan``.
+    pemeliharaan_interval_menit: int = Field(30, ge=0)
     #: Simpan berkas mentah semua run supaya tombol unduh tetap jalan. Bila
     #: ruang disk bebas turun di bawah ``berkas_min_free_mb``, berkas run
     #: tertua (selain run terbaru per kabupaten/tipe) dihapus lebih dulu.

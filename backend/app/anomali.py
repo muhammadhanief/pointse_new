@@ -346,9 +346,10 @@ def _siapkan_id_a(sesi: Session, run_a: Run) -> Any:
 def simpan_anomali(sesi: Session, run: Run) -> int:
     """Hitung dan simpan anomali job B; kembalikan jumlah baris.
 
-    Dipanggil di akhir job sukses **sebelum** :func:`app.rekap.pangkas_titik_hasil`
-    (butuh seluruh titik B, termasuk yang sudah benar). Job selain Proses B atau
-    B tanpa A yang detailnya tersimpan tidak menghasilkan baris.
+    Dipanggil di akhir job sukses **sebelum** ``titik_hasil`` dirampingkan oleh
+    :mod:`app.pemeliharaan` (butuh seluruh titik B, termasuk yang sudah benar).
+    Job selain Proses B atau B tanpa A yang detailnya tersimpan tidak
+    menghasilkan baris.
     """
     if run.tipe != TIPE_B:
         return 0

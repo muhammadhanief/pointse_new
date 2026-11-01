@@ -514,10 +514,17 @@ def ambil_run(sesi: Session, run_id: int) -> Run | None:
 
 
 def jumlah_tersimpan(sesi: Session, run_id: int) -> int:
-    """Jumlah baris hasil yang tersimpan untuk satu job."""
+    """Jumlah titik perlu perhatian pada satu job.
+
+    Dihitung dengan syarat :func:`app.rekap.perlu_perhatian`, bukan jumlah baris
+    mentah, supaya angkanya sama sebelum dan sesudah pemeliharaan merampingkan
+    ``titik_hasil``.
+    """
     return int(
         sesi.scalar(
-            select(func.count()).select_from(TitikHasil).where(TitikHasil.run_id == run_id)
+            select(func.count())
+            .select_from(TitikHasil)
+            .where(TitikHasil.run_id == run_id, modul_rekap.perlu_perhatian())
         )
         or 0
     )
@@ -736,8 +743,10 @@ def hasil_run(
 ) -> tuple[int, list[dict[str, object]]]:
     """Sebagian baris hasil (paging), urut seperti keluaran Proses A/B.
 
-    Yang tersimpan hanya titik yang perlu perhatian (``flag_repair`` = 1,
-    ``flag_edit_atr_repair`` = 1, atau tidak masuk poligon mana pun). Nama/kode
+    Yang dikembalikan hanya titik yang perlu perhatian (``flag_repair`` = 1,
+    ``flag_edit_atr_repair`` = 1, atau tidak masuk poligon mana pun), disaring
+    dengan :func:`app.rekap.perlu_perhatian` supaya hasilnya sama sebelum dan
+    sesudah :mod:`app.pemeliharaan` merampingkan ``titik_hasil``. Nama/kode
     wilayah diambil dari tabel ``wilayah`` lewat join: ``wilayah_tugas`` (dari
     ``level_6_full_code``), ``wilayah_asal`` (hasil join peta), dan ``wilayah_edit``
     (hasil join peta untuk Proses B).
@@ -755,7 +764,9 @@ def hasil_run(
 
     total = int(
         sesi.scalar(
-            select(func.count()).select_from(TitikHasil).where(TitikHasil.run_id == run_id)
+            select(func.count())
+            .select_from(TitikHasil)
+            .where(TitikHasil.run_id == run_id, modul_rekap.perlu_perhatian())
         )
         or 0
     )
@@ -764,7 +775,7 @@ def hasil_run(
         .join(tugas, tugas.idsubsls == TitikHasil.level_6_full_code, isouter=True)
         .join(asal, asal.id == TitikHasil.wilayah_asal_id, isouter=True)
         .join(edit, edit.id == TitikHasil.wilayah_edit_id, isouter=True)
-        .where(TitikHasil.run_id == run_id)
+        .where(TitikHasil.run_id == run_id, modul_rekap.perlu_perhatian())
         .order_by(TitikHasil.urut)
         .limit(limit)
         .offset(offset)
@@ -897,7 +908,7 @@ def _rekap_detail(sesi: Session, run: Run, tingkat: str, dasar: str) -> dict[str
         select(kolom_kode, kolom_nama, belum, ditindak_benar, ditindak_salah)
         .select_from(TitikHasil)
         .join(Wilayah, modul_rekap.klausa_wilayah(dasar), isouter=True)
-        .where(TitikHasil.run_id == run.id)
+        .where(TitikHasil.run_id == run.id, modul_rekap.perlu_perhatian())
         .group_by(kolom_kode, kolom_nama)
     ).all()
 
@@ -1094,7 +1105,7 @@ def _metrik_progres(
         sesi.scalar(
             select(func.count())
             .select_from(TitikHasil)
-            .where(TitikHasil.run_id == run.id)
+            .where(TitikHasil.run_id == run.id, modul_rekap.perlu_perhatian())
         )
         or 0
     )
@@ -2145,8 +2156,9 @@ def _titik_berubah(
 
     Kembaliannya hanya titik yang statusnya/flag-nya berbeda, dihitung di basis data
     (tiga bagian: hanya di run awal, berbeda, hanya di run akhir). Titik yang tidak
-    ada di ``titik_hasil`` sebuah run berarti tidak perlu perhatian pada run itu
-    (``benar_awal``), karena baris seperti itu sudah dipangkas dari penyimpanan.
+    memenuhi :func:`app.rekap.perlu_perhatian` pada sebuah run berarti tidak perlu
+    perhatian pada run itu (``benar_awal``); syarat itu dipasang di kueri supaya
+    hasilnya sama sebelum dan sesudah pemeliharaan merampingkan ``titik_hasil``.
     """
 
     def potongan(run_id: int) -> Any:
@@ -2157,7 +2169,7 @@ def _titik_berubah(
                 TitikHasil.flag_edit_atr_repair.label("flag_edit_atr_repair"),
                 TitikHasil.flag_repair_initial.label("flag_repair_initial"),
             )
-            .where(TitikHasil.run_id == run_id)
+            .where(TitikHasil.run_id == run_id, modul_rekap.perlu_perhatian())
             .subquery()
         )
 

@@ -44,11 +44,14 @@ Pekerjaan paralel bisa lewat dua cara:
   ``WORKER_LOCK_FILE`` sendiri (unit template ``deploy/pointse-worker@.service``),
   sehingga tiap proses punya anggaran memori sendiri.
 
-Dengan lebih dari satu worker, dua job berbeda kabupaten/tipe jalan paralel; kalau
-dua job dengan (kdprov, kdkab, tipe) yang sama sempat terklaim bersamaan (jendela
-balapan sempit pada ``SKIP LOCKED``), hasilnya tetap konsisten karena keduanya
-dikerjakan berurutan dan yang selesai terakhir menyimpan datanya sebagai "sukses
-terakhir".
+Dengan lebih dari satu worker, dua job berbeda kabupaten/kota jalan paralel. Job
+untuk kabupaten/kota yang sama tidak pernah dikerjakan bersamaan: klaim menahan
+satu job per kabupaten (lihat :func:`kueri_klaim`) dan diverifikasi ulang setelah
+commit (lihat :func:`klaim_job`), karena A dan B sekabupaten memakai baris
+``wilayah`` yang sama dan hanya akan menimbulkan lock wait.
+
+Pemangkasan ``titik_hasil`` **tidak** dikerjakan di jalur job; tugas itu ada di
+:mod:`app.pemeliharaan` supaya transaksi sukses tetap pendek.
 """
 
 from __future__ import annotations
@@ -61,6 +64,7 @@ import re
 import signal
 import socket
 import threading
+import time
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -154,6 +158,8 @@ _POLA_KOLOM_WAJIB = re.compile(
 )
 _POLA_TERLALU_PANJANG = re.compile(r"\(1406, \"Data too long for column '([^']+)'")
 _POLA_DUPLIKAT = re.compile(r"\(1062, \"Duplicate entry '([^']*)' for key '([^']+)'")
+_POLA_LOCK_WAIT = re.compile(r"\(1205, ['\"]Lock wait timeout exceeded")
+_POLA_DEADLOCK = re.compile(r"\(1213, ['\"]Deadlock found")
 
 
 def _sebut_berkas(run: Run | None) -> str:
@@ -192,6 +198,19 @@ def _jelaskan_galat(mentah: str, run: Run | None = None) -> str | None:
             f"Ada data ganda pada kunci unik '{cocok.group(2)}' (nilai "
             f"'{cocok.group(1)}'). {berkas.capitalize()} memuat baris yang sama "
             "dua kali untuk kunci itu."
+        )
+
+    if _POLA_LOCK_WAIT.search(mentah):
+        return (
+            "Basis data menunggu kunci baris terlalu lama (lock wait timeout): "
+            "ada proses lain yang sedang mengubah baris yang sama. Data tidak "
+            "rusak; job bisa diunggah ulang."
+        )
+
+    if _POLA_DEADLOCK.search(mentah):
+        return (
+            "Basis data mendeteksi deadlock: dua proses saling menunggu kunci "
+            "baris. Data tidak rusak; job bisa diunggah ulang."
         )
 
     return None
@@ -633,7 +652,7 @@ def pangkas_berkas(
 
     Hanya folder di dalam ``akar`` (folder unggahan) yang dihapus, dan berkas run
     dengan status lain (``menunggu``/``jalan``/``gagal``) tidak pernah ikut karena
-    :func:`app.rekap.pangkas_titik_hasil` hanya mengembalikan run sukses. Baris
+    :mod:`app.pemeliharaan` hanya mengirim id run sukses yang dipangkas. Baris
     ``runs`` tetap menyimpan nama berkasnya sebagai riwayat.
     """
     setelan = setelan or get_settings()
@@ -742,12 +761,14 @@ def proses_potongan(
 
 
 def kueri_klaim() -> Select[tuple[Run]]:
-    """Kueri pengambilan job: ``FOR UPDATE SKIP LOCKED`` (MySQL 8) + satu job per kab/tipe.
+    """Kueri pengambilan job: ``FOR UPDATE SKIP LOCKED`` (MySQL 8) + satu job per kab.
 
-    Satu job aktif per (kdprov, kdkab, tipe): job yang (kdprov, kdkab, tipe)-nya
-    sedang berstatus ``jalan`` dilewati. Diurutkan dari id terkecil (urutan unggah)
-    supaya job antre lama tetap dikerjakan **berurutan** dan tidak ada yang
-    dibatalkan; run yang sukses terakhir jadi run dengan id terbesar.
+    Satu job aktif per (kdprov, kdkab) -- **tanpa memandang tipe**. Proses A dan B
+    untuk kabupaten/kota yang sama memakai baris ``wilayah`` yang sama, jadi
+    menjalankannya bersamaan hanya menimbulkan lock wait (MySQL 1205). Job yang
+    kabupatennya sedang dikerjakan dilewati. Diurutkan dari id terkecil (urutan
+    unggah) supaya job antre lama tetap dikerjakan **berurutan** dan tidak ada
+    yang dibatalkan; run yang sukses terakhir jadi run dengan id terbesar.
 
     Job B juga ditahan selama masih ada Proses A untuk kabupaten/kota yang sama
     dengan id lebih kecil yang belum selesai. Tanpa penjaga ini, worker kedua
@@ -758,7 +779,6 @@ def kueri_klaim() -> Select[tuple[Run]]:
         select(lain.id)
         .where(
             lain.status == STATUS_JALAN,
-            lain.tipe == Run.tipe,
             lain.kdprov == Run.kdprov,
             lain.kdkab == Run.kdkab,
         )
@@ -791,9 +811,15 @@ def kueri_klaim() -> Select[tuple[Run]]:
 def klaim_job(sesi: Session) -> Run | None:
     """Ambil satu job ``menunggu`` dengan ``FOR UPDATE SKIP LOCKED`` (MySQL 8).
 
-    Job yang (kdprov, kdkab, tipe)-nya sedang dikerjakan worker lain dilewati; job
-    antre lain untuk kabupaten/tipe itu dibiarkan ``menunggu`` (dikerjakan
-    berurutan, tidak ada yang ditandai batal).
+    Job yang kabupaten/kotanya sedang dikerjakan worker lain dilewati; job antre
+    lain untuk kabupaten itu dibiarkan ``menunggu`` (dikerjakan berurutan, tidak
+    ada yang ditandai batal).
+
+    Setelah klaim, kepemilikan diverifikasi ulang: dua worker bisa lolos saringan
+    ``sedang_jalan`` pada jendela balapan sempit (keduanya membaca snapshot
+    sebelum status lawannya di-commit). Yang kalah -- id run lebih besar --
+    dikembalikan ke ``menunggu`` supaya tidak ada dua job sekabupaten menulis
+    baris ``wilayah`` bersamaan.
     """
     run = sesi.execute(kueri_klaim()).scalar_one_or_none()
     if run is None:
@@ -804,7 +830,30 @@ def klaim_job(sesi: Session) -> Run | None:
     run.heartbeat_at = sekarang()
     run.pesan = None
     sesi.commit()
+
+    if _ada_job_sekabupaten_lebih_dulu(sesi, run):
+        run.status = STATUS_MENUNGGU
+        run.started_at = None
+        run.heartbeat_at = None
+        sesi.commit()
+        logger.info("job %s ditunda: kabupaten %s sedang dikerjakan job lain", run.id, run.kdkab)
+        return None
     return run
+
+
+def _ada_job_sekabupaten_lebih_dulu(sesi: Session, run: Run) -> bool:
+    """True bila ada job ``jalan`` lain di kabupaten/kota yang sama dengan id kecil."""
+    lain = sesi.scalar(
+        select(func.count())
+        .select_from(Run)
+        .where(
+            Run.status == STATUS_JALAN,
+            Run.kdprov == run.kdprov,
+            Run.kdkab == run.kdkab,
+            Run.id < run.id,
+        )
+    )
+    return bool(lain)
 
 
 def sumber_a_untuk_b(sesi: Session, run: Run) -> Run | None:
@@ -1150,17 +1199,18 @@ def proses_satu_job(
             run.status = STATUS_SUKSES
             run.heartbeat_at = sekarang()
             run.finished_at = sekarang()
-            # Satu transaksi: rekap + status sukses + pemangkasan titik_hasil.
-            buang = modul_rekap.pangkas_titik_hasil(sesi, run)
+            # Detail run terbaru tersedia; pemangkasan (baris tidak perlu
+            # perhatian + run lama) dikerjakan app.pemeliharaan, bukan di sini,
+            # supaya transaksi sukses tetap pendek dan tidak menunggu lock.
+            run.detail_tersedia = 1
             if potongan:
                 terapkan_urut_penuh(sesi, run_id)
             sesi.commit()
         logger.info(
-            "job %s sukses: %s baris (anomali: %s, titik_hasil run lain dipangkas: %s)",
+            "job %s sukses: %s baris (anomali: %s)",
             run_id,
             jumlah,
             jumlah_anomali,
-            buang or "tidak ada",
         )
         _catat_event_aman(
             sesi_pabrik,
@@ -1170,12 +1220,6 @@ def proses_satu_job(
             jenis="job_sukses",
             pesan=f"Job {run_id} sukses: {jumlah} baris",
         )
-        with sesi_pabrik() as sesi:
-            terhapus = pangkas_berkas(
-                sesi, buang, Path(setelan.dir_unggahan), setelan
-            )
-        if terhapus:
-            logger.info("berkas mentah dihapus: %s", terhapus)
     except WorkerDihentikan:
         logger.info("job %s dihentikan setelah batch; dikembalikan ke antrean", run_id)
         _catat_event_aman(
@@ -1305,6 +1349,37 @@ def jalankan_sekali(
         kunci.lepas()
 
 
+def _pemeliharaan_bila_jeda(setelan: Settings, terakhir: float) -> float:
+    """Rapikan ``titik_hasil`` saat worker menganggur (maks. sekali per interval).
+
+    Kembaliannya waktu (``time.monotonic``) percobaan terakhir, supaya worker yang
+    terus-menerus menganggur tidak memanggil pemeliharaan tiap putaran poll.
+    """
+    if setelan.pemeliharaan_interval_menit <= 0:
+        return terakhir
+    sekarang_detik = time.monotonic()
+    jeda = setelan.pemeliharaan_interval_menit * 60
+    if terakhir and sekarang_detik - terakhir < jeda:
+        return terakhir
+    try:
+        from app.pemeliharaan import jalankan_pemeliharaan
+
+        ringkasan = jalankan_pemeliharaan(setelan)
+    except Exception:  # noqa: BLE001 - pemeliharaan tidak boleh mematikan worker
+        logger.exception("pemeliharaan titik_hasil gagal")
+        return sekarang_detik
+    if ringkasan is None:
+        return sekarang_detik
+    if ringkasan.run_dipangkas or ringkasan.run_dirampingkan:
+        logger.info(
+            "pemeliharaan: %s run dipangkas, %s run dirampingkan, %s baris dihapus",
+            len(ringkasan.run_dipangkas),
+            len(ringkasan.run_dirampingkan),
+            ringkasan.baris_dihapus,
+        )
+    return sekarang_detik
+
+
 def jalankan_worker(
     penghenti: threading.Event,
     sesi_pabrik: sessionmaker[Session] | None = None,
@@ -1325,6 +1400,7 @@ def jalankan_worker(
                 setelan=setelan,
             )
             sesi.commit()
+        terakhir_pemeliharaan = 0.0
         while not penghenti.is_set():
             try:
                 ada_job = proses_satu_job(
@@ -1334,6 +1410,9 @@ def jalankan_worker(
                 logger.exception("worker gagal mengambil job")
                 ada_job = False
             if not ada_job:
+                terakhir_pemeliharaan = _pemeliharaan_bila_jeda(
+                    setelan, terakhir_pemeliharaan
+                )
                 penghenti.wait(setelan.worker_poll_detik)
     finally:
         _catat_event_aman(

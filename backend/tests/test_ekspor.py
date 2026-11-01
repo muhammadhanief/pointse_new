@@ -222,6 +222,10 @@ def test_run_tengah_tanpa_detail_titik_tapi_berkas_mentah_tetap_ada(
         titik, peta = berkas_uji(tmp_path / f"r{nomor}", BARIS_A_PERHATIAN)
         id_run.append(unggah(klien, titik, peta).json()["id"])
     jalankan_penuh(sesi_pabrik, setelan)
+    # Pemeliharaan memangkas detail run tengah (di luar jalur job).
+    from app.pemeliharaan import jalankan as jalankan_pemeliharaan
+
+    jalankan_pemeliharaan(sesi)
 
     tengah = id_run[1]
     sesi.expire_all()

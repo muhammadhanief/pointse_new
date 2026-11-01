@@ -112,6 +112,13 @@ def test_mode_potongan_identik_dengan_mode_biasa(
     # lebih dulu. Titik yang perlu perhatian tinggal "3" (di luar poligon) dan
     # urutnya tetap celah posisi penuh (4), sama seperti mode biasa.
     assert ringkasan_hasil(sesi, normal.id) == ringkasan_hasil(sesi, potong.id)
+
+    # Perampingan (di luar jalur job) menyisakan titik perlu perhatian saja.
+    from app.pemeliharaan import jalankan as jalankan_pemeliharaan
+
+    jalankan_pemeliharaan(sesi)
+    sesi.expire_all()
+
     hasil = baris_hasil(sesi, potong.id)
     assert [satu.assignment_id for satu in hasil] == ["3"]
     assert hasil[0].urut == 4

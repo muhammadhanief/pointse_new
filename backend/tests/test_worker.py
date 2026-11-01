@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NamedTuple
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session, sessionmaker
@@ -208,8 +209,8 @@ def test_proses_a_menyimpan_hasil_dan_status_sukses(
 ) -> None:
     """Worker Proses A: status sukses, jumlah baris, dan isi hasil benar.
 
-    Yang tersimpan hanya titik yang perlu perhatian (titik 3: ``flag_repair`` = 1);
-    titik ``benar_awal`` (1 dan 2) hanya terhitung di rekap.
+    Semua titik tersimpan di ``titik_hasil``; perampingan (hanya perlu perhatian)
+    dikerjakan ``app.pemeliharaan``, bukan di jalur job.
     """
     job = buat_job(sesi, tmp_path)
     sesi.rollback()
@@ -235,11 +236,14 @@ def test_proses_a_menyimpan_hasil_dan_status_sukses(
     ).all()
     assert jenis_event == ["job_klaim", "job_sukses"]
 
+    # Sebelum pemeliharaan: semua 3 titik tersimpan.
     hasil = baris_hasil(sesi, job.id)
-    assert [baris.assignment_id for baris in hasil] == ["3"]
-    assert [baris.urut for baris in hasil] == [2]
+    assert len(hasil) == 3
 
-    tersimpan = hasil[0]
+    # Titik perlu perhatian (assignment_id "3") tetap bisa diidentifikasi.
+    bermasalah = [b for b in hasil if b.assignment_id == "3"]
+    assert len(bermasalah) == 1
+    tersimpan = bermasalah[0]
     assert tersimpan.level_6_full_code == "A1"
     assert kode_wilayah(sesi, tersimpan.wilayah_asal_id) == "A2"
     assert tersimpan.flag_repair == 1 and tersimpan.flag_repair_initial == 1
@@ -470,15 +474,26 @@ def test_kode_subsls_tak_ada_di_peta_masuk_kategori_tanpa_wilayah(
 def test_titik_hasil_hanya_menyimpan_yang_perlu_perhatian(
     sesi: Session, sesi_pabrik: sessionmaker[Session], tmp_path: Path
 ) -> None:
-    """``titik_hasil`` hanya memuat titik perlu perhatian; rekap tetap utuh."""
+    """``titik_hasil`` menyimpan semua titik; hanya setelah pemeliharaan sisa hanya perlu perhatian."""
     job = buat_job(sesi, tmp_path)
     sesi.rollback()
 
     assert proses_satu_job(sesi_pabrik) is True
     sesi.expire_all()
 
+    # Sebelum pemeliharaan: detail tersedia, semua baris masih ada.
+    assert sesi.get(Run, job.id).detail_tersedia == 1
+    assert len(baris_hasil(sesi, job.id)) == 3  # semua titik (belum dirampingkan)
+
+    # Pemeliharaan merampingkan → hanya titik perlu perhatian tersisa.
+    from app.pemeliharaan import jalankan
+
+    jalankan(sesi)
+    sesi.expire_all()
+
     assert [satu.assignment_id for satu in baris_hasil(sesi, job.id)] == ["3"]
     assert sesi.get(Run, job.id).detail_tersedia == 1
+    assert sesi.get(Run, job.id).titik_ramping == 1
     # titik benar_awal (1 dan 2) tetap terhitung di rekap
     assert rekap_kabupaten(sesi, job.id, DASAR_TUGAS) == Hitungan(
         jumlah=3, belum=1, benar_awal=2
@@ -497,8 +512,8 @@ def test_proses_b_menghitung_flag_penggeseran(
     assert job.status == STATUS_SUKSES, job.pesan
 
     hasil = {baris.assignment_id: baris for baris in baris_hasil(sesi, job.id)}
-    # titik 1 sudah benar tanpa tindakan manual, jadi tidak disimpan (benar_awal)
-    assert set(hasil) == {"2", "3"}
+    # Sebelum pemeliharaan: semua 3 titik tersimpan.
+    assert set(hasil) == {"1", "2", "3"}
 
     digeser = hasil["2"]
     assert digeser.flag_position == 1
@@ -592,14 +607,25 @@ def test_pemangkasan_menyimpan_baseline_dan_run_terbaru(
 ) -> None:
     """Detail titik hanya disimpan untuk baseline + sukses terakhir (PRD §7).
 
-    Baris ``runs`` dan seluruh snapshot rekap tidak pernah dihapus; yang dipangkas
-    hanya ``titik_hasil`` run yang bukan keduanya.
+    Baris ``runs`` dan seluruh snapshot rekap tidak pernah dihapus; pemeliharaan
+    menghapus ``titik_hasil`` run yang bukan keduanya.
     """
     pertama, tengah, terakhir = ids_job(sesi, tmp_path, 3)
     sesi.rollback()
 
     for _ in range(3):
         assert proses_satu_job(sesi_pabrik) is True
+    sesi.expire_all()
+
+    # Sebelum pemeliharaan: semua run punya detail.
+    for run_id in (pertama, tengah, terakhir):
+        assert sesi.get(Run, run_id).status == STATUS_SUKSES
+        assert sesi.get(Run, run_id).detail_tersedia == 1
+
+    # Pemeliharaan memangkas run tengah dan merampingkan baseline + terakhir.
+    from app.pemeliharaan import jalankan
+
+    jalankan(sesi)
     sesi.expire_all()
 
     # rekap & baris runs utuh untuk ketiga run
@@ -636,6 +662,17 @@ def test_berkas_mentah_hanya_baseline_dan_terbaru(
         assert proses_satu_job(sesi_pabrik, setelan) is True
     sesi.expire_all()
 
+    # Sebelum pemeliharaan: semua berkas masih ada.
+    assert {jalur.name for jalur in akar.iterdir()} == {"job0", "job1", "job2"}
+
+    # Pemeliharaan (dengan pangkas_berkas) menghapus berkas run tengah.
+    from app.pemeliharaan import jalankan
+
+    ringkasan = jalankan(sesi)
+    from app.worker import pangkas_berkas
+
+    pangkas_berkas(sesi, ringkasan.run_dipangkas, akar, setelan)
+
     assert {jalur.name for jalur in akar.iterdir()} == {"job0", "job2"}
     # nama berkas tetap tersimpan di baris runs sebagai riwayat
     assert {sesi.get(Run, satu).nama_file_input for satu in ids} == {"titik.geojson"}
@@ -653,6 +690,11 @@ def test_berkas_mentah_semua_run_disimpan(
 
     for _ in range(3):
         assert proses_satu_job(sesi_pabrik, setelan) is True
+
+    # Pemeliharaan: run tengah dipangkas, tapi berkas tetap disimpan.
+    from app.pemeliharaan import jalankan
+
+    jalankan(sesi)
     sesi.expire_all()
 
     assert {jalur.name for jalur in akar.iterdir()} == {"job0", "job1", "job2"}
@@ -740,7 +782,7 @@ def test_pangkas_berkas_mode_lama_menghapus_run_yang_dipangkas(
 
 
 def test_klaim_melewati_job_yang_sedang_jalan(sesi: Session, tmp_path: Path) -> None:
-    """Job dengan (kdprov, kdkab, tipe) yang sedang jalan tidak diambil lagi."""
+    """Job di kabupaten/kota yang sedang jalan tidak diambil lagi (semua tipe)."""
     sedang = buat_job(sesi, tmp_path, nama="sedang", kdkab="3307")
     sedang.status = STATUS_JALAN
     lain_kabupaten = buat_job(sesi, tmp_path, nama="lain", kdkab="3308")
@@ -749,6 +791,50 @@ def test_klaim_melewati_job_yang_sedang_jalan(sesi: Session, tmp_path: Path) -> 
     diambil = klaim_job(sesi)
     assert diambil is not None and diambil.id == lain_kabupaten.id
     assert diambil.status == STATUS_JALAN
+
+
+def test_klaim_menahan_tipe_lain_sekabupaten(sesi: Session, tmp_path: Path) -> None:
+    """Proses A yang jalan menahan Proses B di kabupaten/kota yang sama.
+
+    A dan B sekabupaten memakai baris ``wilayah`` yang sama; menjalankannya
+    bersamaan hanya menimbulkan ``1205 Lock wait timeout``.
+    """
+    a = buat_job(sesi, tmp_path, nama="a", kdkab="3307")
+    a.status = STATUS_JALAN
+    b = buat_job(sesi, tmp_path, tipe=TIPE_B, nama="b", kdkab="3307")
+    lain = buat_job(sesi, tmp_path, nama="lain", kdkab="3308")
+    sesi.commit()
+
+    diambil = klaim_job(sesi)
+    assert diambil is not None and diambil.id == lain.id
+    assert sesi.get(Run, b.id).status == STATUS_MENUNGGU
+
+
+def test_klaim_balapan_mengembalikan_job_yang_kalah(
+    sesi: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Job sekabupaten yang terklaim belakangan dikembalikan ke ``menunggu``.
+
+    Jendela balapan ``SKIP LOCKED``: dua worker sama-sama lolos saringan
+    ``sedang_jalan``. Verifikasi setelah commit membuat yang id-nya lebih besar
+    mundur, jadi tidak ada dua job sekabupaten menulis bersamaan.
+    """
+    lebih_dulu = buat_job(sesi, tmp_path, nama="dulu", kdkab="3307")
+    lebih_dulu.status = STATUS_JALAN
+    kalah = buat_job(sesi, tmp_path, nama="kalah", kdkab="3307")
+    sesi.commit()
+
+    monkeypatch.setattr(
+        modul_worker, "kueri_klaim", lambda: select(Run).where(Run.id == kalah.id)
+    )
+
+    assert klaim_job(sesi) is None
+    sesi.expire_all()
+    baris_kalah = sesi.get(Run, kalah.id)
+    assert baris_kalah.status == STATUS_MENUNGGU
+    assert baris_kalah.started_at is None
+    assert baris_kalah.heartbeat_at is None
+    assert sesi.get(Run, lebih_dulu.id).status == STATUS_JALAN
 
 
 def test_tandai_job_terhenti_memakai_heartbeat_worker(
@@ -916,6 +1002,22 @@ def test_pesan_galat_menyebut_berkas_yang_diproses() -> None:
     pesan = modul_worker.pesan_galat(Exception(mentah), run)  # type: ignore[arg-type]
 
     assert "berkas Proses B (3307_geotagging_1.geojson)" in pesan
+
+
+def test_pesan_galat_lock_wait_dan_deadlock_dijelaskan() -> None:
+    """Galat 1205/1213 diberi penjelasan bahwa data tidak rusak."""
+    kunci = modul_worker.pesan_galat(
+        Exception("(1205, 'Lock wait timeout exceeded; try restarting transaction')")
+    )
+    assert "lock wait timeout" in kunci.lower()
+    assert "tidak rusak" in kunci
+    assert "Pesan galat mentah:" in kunci
+
+    deadlock = modul_worker.pesan_galat(
+        Exception("(1213, 'Deadlock found when trying to get lock')")
+    )
+    assert "deadlock" in deadlock.lower()
+    assert "tidak rusak" in deadlock
 
 
 def test_pesan_galat_tak_dikenal_hanya_mentah() -> None:

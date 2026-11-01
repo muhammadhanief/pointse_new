@@ -155,6 +155,9 @@ class Run(Base):
     # Titik yang tidak masuk/menyentuh poligon wilkerstat mana pun (hasil join kosong).
     jumlah_tanpa_wilayah: Mapped[int | None] = mapped_column(Integer)
     detail_tersedia: Mapped[int] = mapped_column(AngkaKecil, default=0)
+    #: 1 = baris run ini yang tidak perlu perhatian sudah dibuang
+    #: (:mod:`app.pemeliharaan`); dipakai supaya perampingan tidak diulang.
+    titik_ramping: Mapped[int] = mapped_column(AngkaKecil, default=0)
     #: 1 = anomali titik job B ini sudah dihitung (tabel ``anomali_titik``).
     anomali_versi: Mapped[int] = mapped_column(AngkaKecil, default=0)
     pesan: Mapped[str | None] = mapped_column(Text)

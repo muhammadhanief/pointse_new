@@ -55,6 +55,7 @@ from app.models import (
 )
 from app.proses_a import pastikan_crs4326, proses_a
 from app.proses_b import KOLOM_HASIL_B, proses_b
+from app.rekap import perlu_perhatian
 from app.worker import baca_masukan
 
 #: Nama layer GPKG keluaran Proses A (sama dengan model QGIS).
@@ -507,7 +508,7 @@ def _baris_titik(sesi: Session, run_id: int) -> Iterator[dict[str, Any]]:
         .join(tugas, tugas.idsubsls == TitikHasil.level_6_full_code, isouter=True)
         .join(asal, asal.id == TitikHasil.wilayah_asal_id, isouter=True)
         .join(edit, edit.id == TitikHasil.wilayah_edit_id, isouter=True)
-        .where(TitikHasil.run_id == run_id)
+        .where(TitikHasil.run_id == run_id, perlu_perhatian())
         .order_by(TitikHasil.urut)
     )
     for satu in sesi.execute(pernyataan).yield_per(UKURAN_POTONGAN).mappings():

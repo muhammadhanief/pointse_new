@@ -437,10 +437,11 @@ def _tambahkan_regresi(sesi: Session, run_a: Run, run_b: Run, dasar: str) -> Non
 def simpan_rekap_target(sesi: Session, run: Run) -> None:
     """Isi ``rekap_target`` untuk job B (target A dicocokkan per ``assignment_id``).
 
-    Dipanggil di akhir job sukses **sebelum** :func:`pangkas_titik_hasil`, jadi
-    titik B yang sudah benar (``flag_repair = 0``) masih ada saat dicocokkan.
-    Job selain Proses B, atau B tanpa A yang detailnya tersimpan, tidak membuat
-    baris: dashboard memakai hitungan lama untuk run seperti itu.
+    Dipanggil di akhir job sukses **sebelum** ``titik_hasil`` dirampingkan oleh
+    :mod:`app.pemeliharaan`, jadi titik B yang sudah benar (``flag_repair = 0``)
+    masih ada saat dicocokkan. Job selain Proses B, atau B tanpa A yang detailnya
+    tersimpan, tidak membuat baris: dashboard memakai hitungan lama untuk run
+    seperti itu.
     """
     sesi.execute(delete(RekapTarget).where(RekapTarget.run_b_id == run.id))
     run_a = run_a_pasangan(sesi, run)
@@ -531,9 +532,10 @@ def run_disimpan(sesi: Session, run: Run) -> set[int]:
 def pangkas_titik_hasil(sesi: Session, run: Run) -> list[int]:
     """Rampingkan ``titik_hasil``: buang titik tidak perlu perhatian & run lama.
 
-    Urutannya sengaja rekap dulu (dipanggil pemanggil sebelum fungsi ini) supaya
-    angka rekap tidak terpengaruh. Kembaliannya: id run yang ``titik_hasil``-nya
-    dipangkas (berkas mentahnya ikut dihapus oleh worker).
+    **Tidak lagi dipanggil di jalur job** sejak pemangkasan dipindah ke
+    :mod:`app.pemeliharaan` (transaksi job jadi pendek, dua worker tidak saling
+    menunggu kunci). Fungsi ini dipertahankan karena migrasi lama memakainya;
+    untuk kode baru pakai :mod:`app.pemeliharaan`.
     """
     # 1. Run ini sendiri: hanya titik yang perlu perhatian (PRD §7).
     sesi.execute(delete(TitikHasil).where(TitikHasil.run_id == run.id, ~perlu_perhatian()))
