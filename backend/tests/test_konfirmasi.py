@@ -152,7 +152,7 @@ def test_konfirmasi_ringkasan_dan_filter(klien: TestClient, sesi: Session) -> No
     assert data["ringkasan"]["terkonfirmasi"] == 2
     assert data["ringkasan"]["belum"] == 1
     kode_status = {satu["kode"] for satu in data["status_pilihan"]}
-    assert kode_status == {"belum", "akan_diperbaiki", "sesuai_kenyataan"}
+    assert kode_status == {"belum", "sudah", "akan_diperbaiki", "sesuai_kenyataan"}
     # Kategori alasan sudah dihapus: cukup status + keterangan.
     assert "kategori_alasan" not in data
 
@@ -167,6 +167,18 @@ def test_konfirmasi_ringkasan_dan_filter(klien: TestClient, sesi: Session) -> No
     assert all(
         satu["konfirmasi"]["status"] == "akan_diperbaiki" for satu in akan["baris"]
     )
+
+    # "Sudah dikonfirmasi" = gabungan kedua status.
+    sudah = klien.get("/anomali", params={"kdkab": "3325", "status": "sudah"}).json()
+    assert sudah["total"] == 2
+    assert all(satu["konfirmasi"] is not None for satu in sudah["baris"])
+
+    # "sudah" hanya nilai filter: tidak boleh dipakai sebagai status simpan.
+    tolak = klien.post(
+        "/anomali/konfirmasi",
+        json={"status": "sudah", "anomali_ids": ids[:1]},
+    )
+    assert tolak.status_code == 422
 
 
 def test_konfirmasi_terbawa_ke_run_berikutnya(

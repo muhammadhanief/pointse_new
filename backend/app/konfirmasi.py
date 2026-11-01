@@ -55,6 +55,10 @@ LABEL = dict(STATUS)
 BELUM = "belum"
 LABEL[BELUM] = "Belum dikonfirmasi"
 
+#: Nilai filter "sudah dikonfirmasi" (gabungan kedua status; bukan nilai kolom).
+SUDAH = "sudah"
+LABEL[SUDAH] = "Sudah dikonfirmasi"
+
 #: Status yang wajib disertai catatan.
 CATATAN_WAJIB: tuple[str, ...] = (SESUAI_KENYATAAN,)
 

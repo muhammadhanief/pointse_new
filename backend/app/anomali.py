@@ -613,6 +613,8 @@ def _saring_status(kueri: Any, status: str | None) -> Any:
     """Terapkan filter status konfirmasi (``belum`` = tanpa konfirmasi)."""
     if status == modul_konfirmasi.BELUM:
         return kueri.where(KonfirmasiAnomali.id.is_(None))
+    if status == modul_konfirmasi.SUDAH:
+        return kueri.where(KonfirmasiAnomali.id.is_not(None))
     if status:
         return kueri.where(KonfirmasiAnomali.status == status)
     return kueri

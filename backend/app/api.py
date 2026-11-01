@@ -1068,10 +1068,13 @@ def _ringkasan_konfirmasi(
 
 
 def _status_pilihan() -> list[StatusKonfirmasiOut]:
-    """Daftar status untuk dropdown filter (belum + dua status)."""
+    """Daftar status untuk dropdown filter (belum, sudah, + dua status)."""
     return [
         StatusKonfirmasiOut(
             kode=konfirmasi.BELUM, label=konfirmasi.LABEL[konfirmasi.BELUM]
+        ),
+        StatusKonfirmasiOut(
+            kode=konfirmasi.SUDAH, label=konfirmasi.LABEL[konfirmasi.SUDAH]
         ),
         *[
             StatusKonfirmasiOut(kode=kode, label=label)
@@ -1426,7 +1429,10 @@ def simpan_konfirmasi_anomali(
     *sesuai kenyataan* wajib disertai ``catatan``.
     """
     status = (permintaan.status or "").strip()
-    if status not in konfirmasi.LABEL or status == konfirmasi.BELUM:
+    if status not in konfirmasi.LABEL or status in (
+        konfirmasi.BELUM,
+        konfirmasi.SUDAH,
+    ):
         raise HTTPException(
             status_code=422,
             detail=(

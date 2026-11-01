@@ -51,6 +51,7 @@ const KELAS_STATUS_KIRI =
 /** Isi dropdown status saat API lama belum mengirim ``status_pilihan``. */
 const STATUS_BAWAAN: StatusKonfirmasi[] = [
   { kode: "belum", label: "Belum dikonfirmasi", jumlah: 0 },
+  { kode: "sudah", label: "Sudah dikonfirmasi", jumlah: 0 },
   { kode: "akan_diperbaiki", label: "Akan Diperbaiki", jumlah: 0 },
   { kode: "sesuai_kenyataan", label: "Sesuai Kondisi Kenyataan", jumlah: 0 },
 ];
@@ -968,14 +969,18 @@ export function AnomaliClient({
             judul={
               statusFilter === "belum" && ringkasan.total > 0
                 ? "Semua titik sudah dikonfirmasi"
-                : "Tidak ada titik yang perlu dicermati"
+                : statusFilter === "sudah"
+                  ? "Belum ada titik yang dikonfirmasi"
+                  : "Tidak ada titik yang perlu dicermati"
             }
           >
             {statusFilter === "belum" && ringkasan.total > 0
               ? "Tidak ada temuan yang belum dijelaskan pada filter ini. Ganti filter Status untuk melihat yang sudah dikonfirmasi."
-              : jenises.length > 0
-                ? "Jenis yang dipilih kosong untuk run terakhir."
-                : "Semua titik target cocok dan tidak ada kerusakan baru menurut sistem."}
+              : statusFilter === "sudah"
+                ? "Belum ada konfirmasi pada filter ini. Ganti filter Status ke Belum dikonfirmasi untuk mulai menjelaskan temuan."
+                : jenises.length > 0
+                  ? "Jenis yang dipilih kosong untuk run terakhir."
+                  : "Semua titik target cocok dan tidak ada kerusakan baru menurut sistem."}
           </EmptyState>
         ) : null}
 
