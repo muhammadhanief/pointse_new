@@ -34,7 +34,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from app import aktivitas, anomali, auth, ekspor, layanan, unggahan
+from app import aktivitas, anomali, auth, ekspor, konfirmasi, layanan, unggahan
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.layanan import (
@@ -44,7 +44,16 @@ from app.layanan import (
     KesalahanUnggahan,
     Tingkat,
 )
-from app.models import DASAR_TUGAS, STATUS_SUKSES, TIPE_A, TIPE_B, RekapTarget, Run
+from app.models import (
+    DASAR_TUGAS,
+    STATUS_SUKSES,
+    TIPE_A,
+    TIPE_B,
+    AnomaliTitik,
+    KonfirmasiAnomali,
+    RekapTarget,
+    Run,
+)
 from app.peran import PERAN_ADMIN_PROVINSI
 from app.skema import (
     AnomaliBarisOut,
@@ -54,15 +63,21 @@ from app.skema import (
     DaftarAnomaliRunOut,
     DaftarMasterOut,
     DaftarRunOut,
+    HasilKonfirmasiOut,
     HasilOut,
+    KodeLabelOut,
+    KonfirmasiAnomaliOut,
+    KonfirmasiMasuk,
     MasterGeotagOut,
     PerubahanOut,
     ProgresBOut,
     RekapDetailOut,
     RekapOut,
+    RingkasanKonfirmasiOut,
     RingkasanOut,
     RunDetailOut,
     RunOut,
+    StatusKonfirmasiOut,
     TabulasiProgresOut,
     TrenOut,
 )
@@ -991,6 +1006,178 @@ def _ringkas_anomali(sesi: Session, run: Run) -> AnomaliRunOut:
     return _out_anomali(run, int(target), int(selesai))
 
 
+def _out_baris_anomali(
+    satu: AnomaliTitik,
+    konfirmasi_db: KonfirmasiAnomali | None,
+    nmsls: str | None,
+    nmdesa: str | None,
+    kode_kab: str,
+) -> AnomaliBarisOut:
+    """Bentuk satu baris anomali untuk tabel (termasuk status konfirmasi)."""
+    wilayah = nmsls or nmdesa
+    return AnomaliBarisOut(
+        id=satu.id,
+        jenis=satu.jenis,
+        kdkab=kode_kab,
+        assignment_id=satu.assignment_id,
+        assignment_id_baru=satu.assignment_id_baru,
+        unique_bang=satu.unique_bang,
+        level_6_full_code=satu.level_6_full_code,
+        level_6_full_code_b=satu.level_6_full_code_b,
+        wilayah=wilayah,
+        latitude=satu.latitude,
+        longitude=satu.longitude,
+        flag_unggah=satu.flag_unggah,
+        flag_model=satu.flag_model,
+        keterangan=anomali.keterangan(satu, wilayah),
+        kunci=konfirmasi.kunci(satu.jenis, satu.assignment_id, satu.unique_bang),
+        konfirmasi=(
+            KonfirmasiAnomaliOut(**konfirmasi.baris_ke_keluaran(konfirmasi_db))
+            if konfirmasi_db is not None
+            else None
+        ),
+    )
+
+
+def _ringkasan_konfirmasi(
+    sesi: Session,
+    ids: list[int],
+    jenis: list[str] | None,
+    cari: str | None,
+) -> RingkasanKonfirmasiOut:
+    """Progres konfirmasi untuk filter jenis/pencarian aktif."""
+    hitung = anomali.hitung_status_konfirmasi(sesi, ids, jenis, cari)
+    belum = hitung.get(None, 0)
+    per_status = [
+        StatusKonfirmasiOut(
+            kode=konfirmasi.BELUM,
+            label=konfirmasi.LABEL[konfirmasi.BELUM],
+            jumlah=belum,
+        )
+    ]
+    for kode, label in konfirmasi.STATUS:
+        per_status.append(
+            StatusKonfirmasiOut(kode=kode, label=label, jumlah=hitung.get(kode, 0))
+        )
+    total = sum(satu.jumlah for satu in per_status)
+    return RingkasanKonfirmasiOut(
+        total=total,
+        terkonfirmasi=total - belum,
+        belum=belum,
+        per_status=per_status,
+    )
+
+
+def _status_pilihan() -> list[StatusKonfirmasiOut]:
+    """Daftar status untuk dropdown filter (belum + dua status)."""
+    return [
+        StatusKonfirmasiOut(
+            kode=konfirmasi.BELUM, label=konfirmasi.LABEL[konfirmasi.BELUM]
+        ),
+        *[
+            StatusKonfirmasiOut(kode=kode, label=label)
+            for kode, label in konfirmasi.STATUS
+        ],
+    ]
+
+
+def _kategori_alasan() -> list[KodeLabelOut]:
+    return [
+        KodeLabelOut(kode=kode, label=label)
+        for kode, label in konfirmasi.KATEGORI_ALASAN
+    ]
+
+
+def _pastikan_status(status: str | None) -> str | None:
+    """Validasi filter/permintaan status; kembalikan ``None`` bila tidak diisi."""
+    if not status:
+        return None
+    if status == konfirmasi.BELUM:
+        return status
+    if status in konfirmasi.LABEL:
+        return status
+    raise HTTPException(status_code=422, detail=f"status konfirmasi tidak dikenal: {status}")
+
+
+def _boleh_baris(pengguna: auth.Pengguna, kdprov: str, kdkab: str) -> bool:
+    """True bila pengguna berhak atas baris wilayah tersebut."""
+    try:
+        prov, kab = auth.saring_akses(pengguna, kdprov, kdkab)
+    except auth.AksesDitolak:
+        return False
+    return kab == kdkab and (prov is None or prov == kdprov)
+
+
+def _baris_konfirmasi_ids(
+    sesi: Session,
+    pengguna: auth.Pengguna,
+    ids: list[int],
+) -> list[tuple[AnomaliTitik, str, str]]:
+    """Ambil baris anomali dari daftar id; tolak bila ada di luar kewenangan."""
+    unik = list(dict.fromkeys(int(satu) for satu in ids))
+    if not unik:
+        return []
+    hasil: list[tuple[AnomaliTitik, str, str]] = []
+    # Pecah supaya ``IN`` tidak terlalu panjang pada permintaan besar.
+    for awal in range(0, len(unik), 1000):
+        potongan = unik[awal : awal + 1000]
+        for satu, kdkab, kdprov in sesi.execute(
+            select(AnomaliTitik, Run.kdkab, Run.kdprov)
+            .join(Run, Run.id == AnomaliTitik.run_b_id)
+            .where(AnomaliTitik.id.in_(potongan))
+        ):
+            if not _boleh_baris(pengguna, kdprov, kdkab):
+                raise HTTPException(
+                    status_code=403,
+                    detail="ada titik di luar kewenangan wilayah Anda",
+                )
+            hasil.append((satu, kdkab, kdprov))
+    return hasil
+
+
+def _baris_konfirmasi_filter(
+    sesi: Session,
+    pengguna: auth.Pengguna,
+    permintaan: KonfirmasiMasuk,
+) -> list[tuple[AnomaliTitik, str, str]]:
+    """Ambil baris anomali dari filter aktif (mode "pilih semua hasil filter")."""
+    kdprov, daftar_kab = _anomali_kdkab(pengguna, permintaan.kdprov, permintaan.kdkab)
+    diminta = [satu.strip() for satu in (permintaan.jenis or []) if satu.strip()]
+    asing = [satu for satu in diminta if satu not in anomali.LABEL]
+    if asing:
+        raise HTTPException(
+            status_code=422, detail=f"jenis anomali tidak dikenal: {', '.join(asing)}"
+        )
+    runs = anomali.run_terpilih(sesi, kdprov, daftar_kab, permintaan.run_b_id)
+    if not runs:
+        return []
+    ids = [satu.id for satu in runs]
+    status = _pastikan_status(permintaan.status_filter)
+    return list(
+        sesi.execute(
+            anomali.kueri_konfirmasi(
+                ids,
+                diminta or None,
+                permintaan.q.strip() if permintaan.q else None,
+                status,
+            )
+        )
+    )
+
+
+def _baris_konfirmasi(
+    sesi: Session,
+    pengguna: auth.Pengguna,
+    permintaan: KonfirmasiMasuk,
+) -> list[tuple[AnomaliTitik, str, str]]:
+    """Pilih baris yang dikonfirmasi dari mode id atau mode filter."""
+    if permintaan.anomali_ids:
+        return _baris_konfirmasi_ids(sesi, pengguna, permintaan.anomali_ids)
+    if permintaan.semua:
+        return _baris_konfirmasi_filter(sesi, pengguna, permintaan)
+    raise HTTPException(status_code=422, detail="tidak ada titik yang dipilih")
+
+
 @router.get("/anomali/riwayat", response_model=DaftarAnomaliRunOut)
 def riwayat_anomali(
     kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
@@ -1025,6 +1212,13 @@ def daftar_anomali(
         None, description="Kode jenis anomali (boleh diulang; kosong = semua)"
     ),
     q: str | None = Query(None, max_length=100, description="Cari id/kode SLS/bangunan"),
+    status: str | None = Query(
+        None,
+        description=(
+            "Filter status konfirmasi: belum / akan_diperbaiki / sesuai_kenyataan "
+            "(kosong = semua)"
+        ),
+    ),
     run_b_id: int | None = Query(
         None,
         description="Id run B tertentu (riwayat); kosong = run B terakhir tiap kabupaten",
@@ -1040,8 +1234,11 @@ def daftar_anomali(
     menurut sistem masih bermasalah, sehingga selisih angkanya bisa ditelusuri.
     ``run_b_id`` memilih satu run dari riwayat (hanya bila tepat satu
     kabupaten/kota dipilih); tanpa itu dipakai run B sukses terakhir.
+    ``status`` menyaring menurut konfirmasi kabupaten/kota; ``ringkasan`` tetap
+    dihitung tanpa filter status agar progres "dikonfirmasi X dari Y" utuh.
     """
     kdprov, daftar_kab = _anomali_kdkab(pengguna, kdprov, kdkab)
+    status_aktif = _pastikan_status(status)
     daftar_jenis_diminta = [satu.strip() for satu in (jenis or []) if satu.strip()]
     asing = [satu for satu in daftar_jenis_diminta if satu not in anomali.LABEL]
     if asing:
@@ -1057,39 +1254,41 @@ def daftar_anomali(
         AnomaliJenisOut(kode=kode, label=label, jumlah=jumlah.get(kode, 0))
         for kode, label in anomali.JENIS
     ]
+    cari = q.strip() if q else None
+    ringkasan = _ringkasan_konfirmasi(sesi, ids, daftar_jenis_diminta or None, cari)
     if not runs:
-        return AnomaliOut(run=None, runs=[], jenis=daftar_jenis, total=0, baris=[])
+        return AnomaliOut(
+            run=None,
+            runs=[],
+            jenis=daftar_jenis,
+            total=0,
+            baris=[],
+            ringkasan=ringkasan,
+            status_pilihan=_status_pilihan(),
+            kategori_alasan=_kategori_alasan(),
+        )
 
-    kueri = anomali.kueri_baris(ids, daftar_jenis_diminta or None, q.strip() if q else None)
+    kueri = anomali.kueri_baris(
+        ids, daftar_jenis_diminta or None, cari, status_aktif
+    )
     total = int(
         sesi.scalar(select(func.count()).select_from(kueri.subquery())) or 0
     )
-    baris = []
-    for satu, nmsls, nmdesa, kode_kab in sesi.execute(kueri.limit(limit).offset(offset)):
-        wilayah = nmsls or nmdesa
-        baris.append(
-            AnomaliBarisOut(
-                jenis=satu.jenis,
-                kdkab=kode_kab,
-                assignment_id=satu.assignment_id,
-                assignment_id_baru=satu.assignment_id_baru,
-                unique_bang=satu.unique_bang,
-                level_6_full_code=satu.level_6_full_code,
-                level_6_full_code_b=satu.level_6_full_code_b,
-                wilayah=wilayah,
-                latitude=satu.latitude,
-                longitude=satu.longitude,
-                flag_unggah=satu.flag_unggah,
-                flag_model=satu.flag_model,
-                keterangan=anomali.keterangan(satu, wilayah),
-            )
+    baris = [
+        _out_baris_anomali(satu, konfirmasi_db, nmsls, nmdesa, kode_kab)
+        for satu, nmsls, nmdesa, kode_kab, konfirmasi_db in sesi.execute(
+            kueri.limit(limit).offset(offset)
         )
+    ]
     return AnomaliOut(
         run=ringkas[0] if len(ringkas) == 1 else None,
         runs=ringkas,
         jenis=daftar_jenis,
         total=total,
         baris=baris,
+        ringkasan=ringkasan,
+        status_pilihan=_status_pilihan(),
+        kategori_alasan=_kategori_alasan(),
     )
 
 
@@ -1099,6 +1298,13 @@ def ekspor_anomali(
     kdkab: list[str] | None = Query(None, description="Kode kabupaten/kota (boleh diulang)"),
     jenis: list[str] | None = Query(None, description="Kode jenis anomali (boleh diulang)"),
     q: str | None = Query(None, max_length=100, description="Cari id/kode SLS/bangunan"),
+    status: str | None = Query(
+        None,
+        description=(
+            "Filter status konfirmasi: belum / akan_diperbaiki / sesuai_kenyataan "
+            "(kosong = semua)"
+        ),
+    ),
     run_b_id: int | None = Query(
         None, description="Id run B tertentu (riwayat); kosong = run B terakhir"
     ),
@@ -1108,9 +1314,11 @@ def ekspor_anomali(
     """Unduh anomali sesuai filter aktif sebagai Excel.
 
     Satu lembar per jenis; bila jenis tidak dipilih, semua jenis ikut diunduh.
-    ``run_b_id`` mengikuti dropdown riwayat run (bila memilih run lama).
+    ``run_b_id`` mengikuti dropdown riwayat run (bila memilih run lama), dan
+    ``status`` mengikuti filter status konfirmasi di tabel.
     """
     kdprov, daftar_kab = _anomali_kdkab(pengguna, kdprov, kdkab)
+    status_aktif = _pastikan_status(status)
     diminta = [satu.strip() for satu in (jenis or []) if satu.strip()]
     asing = [satu for satu in diminta if satu not in anomali.LABEL]
     if asing:
@@ -1146,10 +1354,17 @@ def ekspor_anomali(
                 "flag_unggah",
                 "flag_model",
                 "keterangan",
+                "status_konfirmasi",
+                "kategori_alasan",
+                "catatan_konfirmasi",
+                "dikonfirmasi_oleh",
+                "waktu_konfirmasi",
             ]
         )
-        for satu, nmsls, nmdesa, kode_kab in sesi.execute(
-            anomali.kueri_baris(ids, [kode], q.strip() if q else None)
+        for satu, nmsls, nmdesa, kode_kab, konfirmasi_db in sesi.execute(
+            anomali.kueri_baris(
+                ids, [kode], q.strip() if q else None, status_aktif
+            )
         ):
             wilayah = nmsls or nmdesa
             lembar.append(
@@ -1166,6 +1381,21 @@ def ekspor_anomali(
                     satu.flag_unggah,
                     satu.flag_model,
                     anomali.keterangan(satu, wilayah),
+                    konfirmasi.LABEL.get(
+                        konfirmasi_db.status if konfirmasi_db is not None else "",
+                        "Belum dikonfirmasi",
+                    ),
+                    konfirmasi.LABEL_ALASAN.get(
+                        konfirmasi_db.kategori_alasan if konfirmasi_db is not None else None,
+                        "",
+                    ),
+                    konfirmasi_db.catatan if konfirmasi_db is not None else None,
+                    konfirmasi_db.nama if konfirmasi_db is not None else None,
+                    (
+                        konfirmasi_db.updated_at.strftime("%Y-%m-%d %H:%M")
+                        if konfirmasi_db is not None and konfirmasi_db.updated_at
+                        else None
+                    ),
                 ]
             )
 
@@ -1184,3 +1414,119 @@ def ekspor_anomali(
         media_type=MEDIA_XLSX,
         headers={"Content-Disposition": f'attachment; filename="{nama}"'},
     )
+
+
+@router.post("/anomali/konfirmasi", response_model=HasilKonfirmasiOut)
+def simpan_konfirmasi_anomali(
+    permintaan: KonfirmasiMasuk,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> HasilKonfirmasiOut:
+    """Simpan konfirmasi pencermatan untuk satu atau banyak titik.
+
+    Badan permintaan bisa memuat ``anomali_ids`` (baris tertentu) atau
+    ``semua=true`` dengan filter (server yang mengambil id). Status
+    *sesuai kenyataan* wajib disertai ``catatan``; kategori alasan harus salah
+    satu dari daftar tetap.
+    """
+    status = (permintaan.status or "").strip()
+    if status not in konfirmasi.LABEL or status == konfirmasi.BELUM:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "status konfirmasi harus 'akan_diperbaiki' atau 'sesuai_kenyataan'"
+            ),
+        )
+    kategori = (permintaan.kategori_alasan or "").strip() or None
+    if kategori is not None and kategori not in konfirmasi.LABEL_ALASAN:
+        raise HTTPException(
+            status_code=422, detail=f"kategori alasan tidak dikenal: {kategori}"
+        )
+    catatan = (permintaan.catatan or "").strip() or None
+    if status in konfirmasi.CATATAN_WAJIB and not catatan:
+        raise HTTPException(
+            status_code=422,
+            detail="catatan wajib diisi untuk status 'Sesuai Kondisi Kenyataan'",
+        )
+
+    baris = _baris_konfirmasi(sesi, pengguna, permintaan)
+    if not baris:
+        raise HTTPException(status_code=404, detail="tidak ada titik anomali yang cocok")
+    jumlah = konfirmasi.simpan(
+        sesi,
+        pengguna,
+        baris=baris,
+        status=status,
+        kategori_alasan=kategori,
+        catatan=catatan,
+    )
+    aktivitas.catat(
+        sesi,
+        pengguna,
+        aksi="konfirmasi_anomali",
+        objek="anomali",
+        detail=f"{status} {jumlah} titik (alasan: {kategori or '-'})",
+    )
+    return HasilKonfirmasiOut(jumlah=jumlah)
+
+
+@router.post("/anomali/konfirmasi/batal", response_model=HasilKonfirmasiOut)
+def batal_konfirmasi_anomali(
+    permintaan: KonfirmasiMasuk,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> HasilKonfirmasiOut:
+    """Batalkan konfirmasi satu atau banyak titik (kembali "Belum dikonfirmasi")."""
+    if not permintaan.anomali_ids and not permintaan.semua:
+        raise HTTPException(status_code=422, detail="tidak ada titik yang dipilih")
+    baris = _baris_konfirmasi(sesi, pengguna, permintaan)
+    if not baris:
+        raise HTTPException(status_code=404, detail="tidak ada titik anomali yang cocok")
+    jumlah = konfirmasi.hapus(sesi, baris=baris)
+    aktivitas.catat(
+        sesi,
+        pengguna,
+        aksi="batal_konfirmasi_anomali",
+        objek="anomali",
+        detail=f"{jumlah} titik",
+    )
+    return HasilKonfirmasiOut(jumlah=jumlah)
+
+
+@router.post("/anomali/konfirmasi/klarifikasi", response_model=HasilKonfirmasiOut)
+def minta_klarifikasi_anomali(
+    permintaan: KonfirmasiMasuk,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> HasilKonfirmasiOut:
+    """Admin provinsi meminta klarifikasi atas konfirmasi kabupaten/kota.
+
+    Status konfirmasi **tidak** diubah; tanda "perlu klarifikasi" beserta
+    catatan provinsi ditampilkan di baris. Konfirmasi ulang oleh kabupaten/kota
+    menghapus tanda ini.
+    """
+    auth.pastikan_peran(pengguna, PERAN_ADMIN_PROVINSI)
+    catatan = (permintaan.catatan or "").strip()
+    if not catatan:
+        raise HTTPException(
+            status_code=422, detail="catatan permintaan klarifikasi wajib diisi"
+        )
+    baris = _baris_konfirmasi(sesi, pengguna, permintaan)
+    if not baris:
+        raise HTTPException(status_code=404, detail="tidak ada titik anomali yang cocok")
+    jumlah = konfirmasi.minta_klarifikasi(
+        sesi, pengguna, baris=baris, catatan=catatan
+    )
+    if jumlah == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="belum ada konfirmasi pada titik yang dipilih",
+        )
+    aktivitas.catat(
+        sesi,
+        pengguna,
+        aksi="klarifikasi_anomali",
+        objek="anomali",
+        detail=f"{jumlah} titik",
+    )
+    return HasilKonfirmasiOut(jumlah=jumlah)

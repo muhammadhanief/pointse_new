@@ -56,12 +56,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session, aliased
 
+from app import konfirmasi as modul_konfirmasi
 from app import rekap as modul_rekap
 from app.models import (
     DASAR_TUGAS,
     STATUS_SUKSES,
     TIPE_B,
     AnomaliTitik,
+    KonfirmasiAnomali,
     RekapTarget,
     Run,
     TitikHasil,
@@ -581,23 +583,12 @@ def run_terpilih(
 
 
 
-def kueri_baris(
-    run_b_id: int | list[int],
-    jenis: str | list[str] | None = None,
-    cari: str | None = None,
+def _saring_anomali(
+    kueri: Any,
+    jenis: str | list[str] | None,
+    cari: str | None,
 ) -> Any:
-    """Query baris anomali + nama wilayah (SLS/desa) untuk satu/beberapa run B.
-
-    Kembaliannya ``(AnomaliTitik, nmsls, nmdesa, kdkab)`` supaya tabel dan Excel
-    bisa menandai asal kabupaten/kota saat filter memilih lebih dari satu.
-    """
-    ids = [run_b_id] if isinstance(run_b_id, int) else list(run_b_id)
-    kueri = (
-        select(AnomaliTitik, Wilayah.nmsls, Wilayah.nmdesa, Run.kdkab)
-        .join(Wilayah, Wilayah.id == AnomaliTitik.wilayah_id, isouter=True)
-        .join(Run, Run.id == AnomaliTitik.run_b_id)
-        .where(AnomaliTitik.run_b_id.in_(ids))
-    )
+    """Terapkan filter jenis + pencarian pada query baris anomali."""
     if jenis:
         daftar = [jenis] if isinstance(jenis, str) else list(jenis)
         if daftar:
@@ -615,11 +606,117 @@ def kueri_baris(
                 Wilayah.nmdesa.like(pola),
             )
         )
+    return kueri
+
+
+def _saring_status(kueri: Any, status: str | None) -> Any:
+    """Terapkan filter status konfirmasi (``belum`` = tanpa konfirmasi)."""
+    if status == modul_konfirmasi.BELUM:
+        return kueri.where(KonfirmasiAnomali.id.is_(None))
+    if status:
+        return kueri.where(KonfirmasiAnomali.status == status)
+    return kueri
+
+
+def kueri_baris(
+    run_b_id: int | list[int],
+    jenis: str | list[str] | None = None,
+    cari: str | None = None,
+    status: str | None = None,
+) -> Any:
+    """Query baris anomali + nama wilayah + konfirmasi untuk satu/beberapa run B.
+
+    Kembaliannya
+    ``(AnomaliTitik, nmsls, nmdesa, kdkab, KonfirmasiAnomali | None)`` supaya
+    tabel dan Excel bisa menandai asal kabupaten/kota sekaligus status
+    konfirmasinya. ``status``: ``"belum"`` (tanpa konfirmasi),
+    ``"akan_diperbaiki"``, ``"sesuai_kenyataan"``, atau ``None`` (semua).
+    """
+    ids = [run_b_id] if isinstance(run_b_id, int) else list(run_b_id)
+    kueri = (
+        select(
+            AnomaliTitik,
+            Wilayah.nmsls,
+            Wilayah.nmdesa,
+            Run.kdkab,
+            KonfirmasiAnomali,
+        )
+        .join(Wilayah, Wilayah.id == AnomaliTitik.wilayah_id, isouter=True)
+        .join(Run, Run.id == AnomaliTitik.run_b_id)
+        .join(
+            KonfirmasiAnomali,
+            modul_konfirmasi.syarat_cocok(),
+            isouter=True,
+        )
+        .where(AnomaliTitik.run_b_id.in_(ids))
+    )
+    kueri = _saring_status(_saring_anomali(kueri, jenis, cari), status)
     return kueri.order_by(
         Run.kdkab,
         AnomaliTitik.level_6_full_code,
         AnomaliTitik.assignment_id,
     )
+
+
+def kueri_konfirmasi(
+    run_b_id: int | list[int],
+    jenis: str | list[str] | None = None,
+    cari: str | None = None,
+    status: str | None = None,
+) -> Any:
+    """Query baris untuk aksi konfirmasi massal: ``(AnomaliTitik, kdkab, kdprov)``.
+
+    Lebih ringan dari :func:`kueri_baris` karena tidak perlu nama wilayah, tetapi
+    tetap memakai filter dan join konfirmasi yang sama supaya mode "pilih semua
+    hasil filter" memakai himpunan baris yang persis sama dengan tabel.
+    """
+    ids = [run_b_id] if isinstance(run_b_id, int) else list(run_b_id)
+    kueri = (
+        select(AnomaliTitik, Run.kdkab, Run.kdprov)
+        .join(Wilayah, Wilayah.id == AnomaliTitik.wilayah_id, isouter=True)
+        .join(Run, Run.id == AnomaliTitik.run_b_id)
+        .join(
+            KonfirmasiAnomali,
+            modul_konfirmasi.syarat_cocok(),
+            isouter=True,
+        )
+        .where(AnomaliTitik.run_b_id.in_(ids))
+    )
+    kueri = _saring_status(_saring_anomali(kueri, jenis, cari), status)
+    return kueri.order_by(Run.kdkab, AnomaliTitik.id)
+
+
+def hitung_status_konfirmasi(
+    sesi: Session,
+    run_b_id: int | list[int],
+    jenis: str | list[str] | None = None,
+    cari: str | None = None,
+) -> dict[str | None, int]:
+    """Jumlah baris per status konfirmasi (``None`` = belum) untuk ringkasan.
+
+    Filter status **tidak** diterapkan di sini supaya progres "dikonfirmasi X
+    dari Y" tetap utuh walau tabel sedang difilter ke satu status.
+    """
+    ids = [run_b_id] if isinstance(run_b_id, int) else list(run_b_id)
+    if not ids:
+        return {None: 0}
+    kueri = (
+        select(KonfirmasiAnomali.status, func.count())
+        .select_from(AnomaliTitik)
+        .join(Wilayah, Wilayah.id == AnomaliTitik.wilayah_id, isouter=True)
+        .join(Run, Run.id == AnomaliTitik.run_b_id)
+        .join(
+            KonfirmasiAnomali,
+            modul_konfirmasi.syarat_cocok(),
+            isouter=True,
+        )
+        .where(AnomaliTitik.run_b_id.in_(ids))
+    )
+    kueri = _saring_anomali(kueri, jenis, cari).group_by(KonfirmasiAnomali.status)
+    hasil: dict[str | None, int] = {None: 0}
+    for status, jumlah in sesi.execute(kueri):
+        hasil[None if status is None else str(status)] = int(jumlah)
+    return hasil
 
 
 def keterangan(baris: AnomaliTitik, wilayah: str | None = None) -> str:

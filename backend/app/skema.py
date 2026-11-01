@@ -656,6 +656,8 @@ class AnomaliJenisOut(BaseModel):
 class AnomaliBarisOut(BaseModel):
     """Satu titik yang menurut sistem masih bermasalah."""
 
+    #: Id baris ``anomali_titik`` (dipakai aksi konfirmasi per baris).
+    id: int | None = None
     jenis: str
     #: Kode kabupaten/kota asal baris (untuk filter banyak wilayah).
     kdkab: str | None = None
@@ -670,6 +672,53 @@ class AnomaliBarisOut(BaseModel):
     flag_unggah: int | None = None
     flag_model: int | None = None
     keterangan: str | None = None
+    #: Kunci stabil temuan (``jenis|assignment_id|unique_bang``).
+    kunci: str | None = None
+    #: Konfirmasi kabupaten/kota untuk temuan ini, bila ada.
+    konfirmasi: KonfirmasiAnomaliOut | None = None
+
+
+class StatusKonfirmasiOut(BaseModel):
+    """Satu status konfirmasi beserta jumlahnya (filter & ringkasan)."""
+
+    kode: str
+    label: str
+    jumlah: int = 0
+
+
+class RingkasanKonfirmasiOut(BaseModel):
+    """Progres konfirmasi untuk filter aktif ("dikonfirmasi X dari Y")."""
+
+    total: int = 0
+    terkonfirmasi: int = 0
+    belum: int = 0
+    per_status: list[StatusKonfirmasiOut] = []
+
+
+class KodeLabelOut(BaseModel):
+    """Pasangan kode/label sederhana (mis. kategori alasan)."""
+
+    kode: str
+    label: str
+
+
+class KonfirmasiAnomaliOut(BaseModel):
+    """Konfirmasi satu titik (dibaca dari ``konfirmasi_anomali``)."""
+
+    status: str
+    label: str
+    kategori_alasan: str | None = None
+    label_alasan: str | None = None
+    catatan: str | None = None
+    oleh: str | None = None
+    peran: str | None = None
+    pada: datetime | None = None
+    kunci: str | None = None
+    #: Admin provinsi meminta klarifikasi atas konfirmasi ini.
+    perlu_klarifikasi: bool = False
+    klarifikasi_catatan: str | None = None
+    klarifikasi_oleh: str | None = None
+    klarifikasi_pada: datetime | None = None
 
 
 class AnomaliOut(BaseModel):
@@ -682,3 +731,39 @@ class AnomaliOut(BaseModel):
     jenis: list[AnomaliJenisOut]
     total: int
     baris: list[AnomaliBarisOut]
+    #: Progres konfirmasi untuk filter jenis/pencarian aktif.
+    ringkasan: RingkasanKonfirmasiOut = RingkasanKonfirmasiOut()
+    #: Daftar status konfirmasi untuk dropdown filter.
+    status_pilihan: list[StatusKonfirmasiOut] = []
+    #: Daftar kategori alasan untuk drawer konfirmasi.
+    kategori_alasan: list[KodeLabelOut] = []
+
+
+class KonfirmasiMasuk(BaseModel):
+    """Permintaan simpan/batal konfirmasi (satu atau banyak titik).
+
+    Dua mode: ``anomali_ids`` (baris tertentu) atau filter (``semua=true``
+    dengan ``kdprov``/``kdkab``/``jenis``/``q``/``run_b_id``/``status_filter``);
+    server yang menentukan id pada mode filter supaya klien tidak bisa
+    mengonfirmasi baris di luar filter.
+    """
+
+    status: str = ""
+    kategori_alasan: str | None = None
+    catatan: str | None = Field(None, max_length=2000)
+    #: Mode baris tertentu.
+    anomali_ids: list[int] | None = None
+    #: Mode filter (dipakai bila ``semua``).
+    kdprov: str | None = None
+    kdkab: list[str] | None = None
+    jenis: list[str] | None = None
+    q: str | None = Field(None, max_length=100)
+    run_b_id: int | None = None
+    status_filter: str | None = None
+    semua: bool = False
+
+
+class HasilKonfirmasiOut(BaseModel):
+    """Hasil aksi konfirmasi/batal: jumlah baris yang terpengaruh."""
+
+    jumlah: int

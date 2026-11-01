@@ -359,6 +359,7 @@ export type AnomaliJenis = {
 };
 
 export type AnomaliBaris = {
+  id: number | null;
   jenis: string;
   kdkab: string | null;
   assignment_id: string | null;
@@ -372,6 +373,42 @@ export type AnomaliBaris = {
   flag_unggah: number | null;
   flag_model: number | null;
   keterangan: string | null;
+  kunci: string | null;
+  konfirmasi: KonfirmasiAnomali | null;
+};
+
+export type KonfirmasiAnomali = {
+  status: string;
+  label: string;
+  kategori_alasan: string | null;
+  label_alasan: string | null;
+  catatan: string | null;
+  oleh: string | null;
+  peran: string | null;
+  pada: string | null;
+  kunci: string | null;
+  perlu_klarifikasi: boolean;
+  klarifikasi_catatan: string | null;
+  klarifikasi_oleh: string | null;
+  klarifikasi_pada: string | null;
+};
+
+export type StatusKonfirmasi = {
+  kode: string;
+  label: string;
+  jumlah: number;
+};
+
+export type KodeLabel = {
+  kode: string;
+  label: string;
+};
+
+export type RingkasanKonfirmasi = {
+  total: number;
+  terkonfirmasi: number;
+  belum: number;
+  per_status: StatusKonfirmasi[];
 };
 
 export type Anomali = {
@@ -380,4 +417,25 @@ export type Anomali = {
   jenis: AnomaliJenis[];
   total: number;
   baris: AnomaliBaris[];
+  ringkasan: RingkasanKonfirmasi;
+  status_pilihan: StatusKonfirmasi[];
+  kategori_alasan: KodeLabel[];
+};
+
+export type PermintaanKonfirmasi = {
+  status?: string;
+  kategori_alasan?: string | null;
+  catatan?: string | null;
+  anomali_ids?: number[];
+  kdprov?: string;
+  kdkab?: string[];
+  jenis?: string[];
+  q?: string;
+  run_b_id?: number;
+  status_filter?: string;
+  semua?: boolean;
+};
+
+export type HasilKonfirmasi = {
+  jumlah: number;
 };

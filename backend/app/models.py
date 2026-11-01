@@ -91,6 +91,10 @@ WORKER_MENANGGUR = "menganggur"
 WORKER_JALAN = "jalan"
 WORKER_BERHENTI = "berhenti"
 
+# Nilai kolom ``konfirmasi_anomali.status`` (lihat :mod:`app.konfirmasi`).
+KONFIRMASI_AKAN_DIPERBAIKI = "akan_diperbaiki"
+KONFIRMASI_SESUAI_KENYATAAN = "sesuai_kenyataan"
+
 #: Kolom hitungan tabel rekap (selain kunci dan kode wilayah).
 KOLOM_HITUNGAN: tuple[str, ...] = (
     "jumlah",
@@ -494,6 +498,62 @@ class AnomaliTitik(Base):
     flag_unggah: Mapped[int | None] = mapped_column(AngkaKecil)
     #: ``flag_repair`` hasil hitung ulang model.
     flag_model: Mapped[int | None] = mapped_column(AngkaKecil)
+
+
+class KonfirmasiAnomali(Base):
+    """Penjelasan kabupaten/kota untuk satu temuan anomali (pencermatan).
+
+    Anomali tidak wajib habis; tiap temuan cukup dijelaskan. Baris ini dikunci
+    **kunci** yang stabil antar run (``jenis | assignment_id | unique_bang``,
+    kosong ditulis ``''``), jadi konfirmasi tetap berlaku saat run B berikutnya
+    memunculkan temuan yang sama. Satu baris per (``kdprov``, ``kdkab``,
+    ``kunci``).
+
+    ``status`` bernilai :data:`KONFIRMASI_AKAN_DIPERBAIKI` atau
+    :data:`KONFIRMASI_SESUAI_KENYATAAN`. ``catatan`` wajib untuk status
+    *sesuai kenyataan* (divalidasi di API). ``kategori_alasan`` dipilih dari
+    daftar tetap di :mod:`app.konfirmasi`.
+
+    Konfirmasi lama yang tidak lagi muncul di run terbaru tetap tersimpan
+    (riwayat) dan tidak mengganggu tampilan run berjalan.
+    """
+
+    __tablename__ = "konfirmasi_anomali"
+    __table_args__ = (
+        UniqueConstraint("kdprov", "kdkab", "kunci", name="uq_konfirmasi_anomali_kunci"),
+        Index("ix_konfirmasi_anomali_kab_status", "kdprov", "kdkab", "status"),
+        Index("ix_konfirmasi_anomali_run", "run_b_id"),
+    )
+
+    id: Mapped[int] = mapped_column(IdBesar, primary_key=True, autoincrement=True)
+    kdprov: Mapped[str] = mapped_column(String(4))
+    kdkab: Mapped[str] = mapped_column(String(4))
+    #: Identitas stabil temuan: ``jenis | assignment_id | unique_bang``.
+    kunci: Mapped[str] = mapped_column(String(191))
+    jenis: Mapped[str] = mapped_column(String(24))
+    assignment_id: Mapped[str | None] = mapped_column(String(64))
+    unique_bang: Mapped[str | None] = mapped_column(String(64))
+    level_6_full_code: Mapped[str | None] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(24))
+    kategori_alasan: Mapped[str | None] = mapped_column(String(32))
+    catatan: Mapped[str | None] = mapped_column(Text)
+    #: Permintaan klarifikasi admin provinsi; tidak mengubah status kabupaten.
+    perlu_klarifikasi: Mapped[int] = mapped_column(AngkaKecil, default=0)
+    klarifikasi_catatan: Mapped[str | None] = mapped_column(Text)
+    klarifikasi_oleh: Mapped[str | None] = mapped_column(String(128))
+    klarifikasi_pada: Mapped[datetime | None] = mapped_column(DateTime)
+    #: Run B saat konfirmasi terakhir diubah (riwayat; ``SET NULL`` bila dihapus).
+    run_b_id: Mapped[int | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL")
+    )
+    # Pelaku tindakan terakhir.
+    sub: Mapped[str] = mapped_column(String(128))
+    username: Mapped[str] = mapped_column(String(64))
+    nama: Mapped[str] = mapped_column(String(128))
+    nip: Mapped[str | None] = mapped_column(String(32))
+    peran: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
 
 
 class RekapKabupaten(Base):

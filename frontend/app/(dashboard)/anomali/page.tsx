@@ -25,7 +25,11 @@ export default async function AnomaliPage() {
           kabupaten, halaman ini alat auditnya.
         </p>
       </header>
-      <AnomaliClient kdprov={sesi.kdprov} kdkabAwal={sesi.kdkab} />
+      <AnomaliClient
+        kdprov={sesi.kdprov}
+        kdkabAwal={sesi.kdkab}
+        peran={sesi.peran}
+      />
     </div>
   );
 }
