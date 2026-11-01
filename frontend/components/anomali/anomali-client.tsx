@@ -1052,7 +1052,9 @@ export function AnomaliClient({
                   setPilihSemua(true);
                   setPilihan(new Set());
                 }}
-                className="rounded-md border border-accent/40 bg-surface px-2 py-1 text-xs font-semibold text-accent transition-colors hover:border-accent"
+                disabled
+                title="Sementara dinonaktifkan"
+                className="cursor-not-allowed rounded-md border border-accent/40 bg-surface px-2 py-1 text-xs font-semibold text-accent opacity-50"
               >
                 Pilih semua {formatAngka(total)} hasil filter
               </button>
@@ -1109,8 +1111,10 @@ export function AnomaliClient({
                         type="checkbox"
                         checked={semuaHalamanDipilih}
                         onChange={toggleHalaman}
+                        disabled
                         aria-label="Pilih semua baris di halaman ini"
-                        className="h-4 w-4 accent-[var(--brand)]"
+                        title="Sementara dinonaktifkan"
+                        className="h-4 w-4 cursor-not-allowed accent-[var(--brand)] opacity-50"
                       />
                     </th>
                     <th className={`${KELAS_HEAD_KIRI} left-10`}>Status</th>
