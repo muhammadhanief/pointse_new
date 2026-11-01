@@ -57,6 +57,9 @@ KOLOM_TITIK_HASIL: tuple[str, ...] = (
     "longitude_origin",
     "latitude_edited",
     "longitude_edited",
+    # Dihitung worker dari keempat koordinat di atas (app.geser), bukan kolom
+    # keluaran model QGIS.
+    "jarak_geser_m",
 )
 
 # Kolom keluaran Proses A/B yang sengaja tidak disimpan (atribut bangunan dan
@@ -100,6 +103,7 @@ def test_semua_kolom_keluaran_proses_diputuskan() -> None:
         "wilayah_asal_id",
         "wilayah_edit_id",
         "flag_repair_unggah",
+        "jarak_geser_m",
     }
 
 

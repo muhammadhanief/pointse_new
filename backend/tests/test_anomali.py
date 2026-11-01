@@ -78,6 +78,8 @@ def _titik(
     flag_unggah: int | None = None,
     unique_bang: str | None = None,
     wilayah: Wilayah | None = None,
+    jarak_geser_m: float | None = None,
+    flag_edit: int | None = None,
 ) -> None:
     sesi.add(
         TitikHasil(
@@ -91,7 +93,12 @@ def _titik(
             flag_repair_initial=flag_model,
             flag_repair=flag_model,
             flag_repair_unggah=flag_unggah,
-            flag_edit_atr_repair=None if run.tipe == TIPE_A else 0,
+            flag_edit_atr_repair=(
+                flag_edit
+                if flag_edit is not None
+                else (None if run.tipe == TIPE_A else 0)
+            ),
+            jarak_geser_m=jarak_geser_m,
         )
     )
 
@@ -342,6 +349,50 @@ def test_api_anomali_menampilkan_jenis_dan_baris(klien, sesi: Session) -> None:
     assert "tidak ada" in isi["baris"][0]["keterangan"]
 
 
+def test_digeser_hanya_bila_bergeser_minimal_ambang(sesi: Session) -> None:
+    """Titik benar yang bergeser <10 m diabaikan; >=10 m jadi pengamatan."""
+    w = _wilayah(sesi, KODE_A)
+    run_a = _run(sesi, TIPE_A)
+    for urut, assignment in enumerate(("a1", "a2", "a3", "a4")):
+        _titik(sesi, run_a, urut, assignment, KODE_A, flag_model=0, wilayah=w)
+    sesi.flush()
+
+    run_b = _run(sesi, TIPE_B, sumber_a=run_a.id)
+    # a1: 6 m -> getaran GPS, bukan pengamatan.
+    _titik(
+        sesi, run_b, 0, "a1", KODE_A, flag_model=0, flag_unggah=0,
+        wilayah=w, jarak_geser_m=6.0,
+    )
+    # a2: 25 m -> pengamatan "digeser".
+    _titik(
+        sesi, run_b, 1, "a2", KODE_A, flag_model=0, flag_unggah=0,
+        wilayah=w, jarak_geser_m=25.0,
+    )
+    # a3: 40 m tetapi petugas mengubah atribut flag -> sudah ditindak, bukan digeser.
+    _titik(
+        sesi, run_b, 2, "a3", KODE_A, flag_model=0, flag_unggah=0,
+        wilayah=w, jarak_geser_m=40.0, flag_edit=1,
+    )
+    # a4: 80 m tetapi model masih menandainya bermasalah -> kategori lain.
+    _titik(
+        sesi, run_b, 3, "a4", KODE_A, flag_model=1, flag_unggah=0,
+        wilayah=w, jarak_geser_m=80.0,
+    )
+    sesi.flush()
+
+    simpan_anomali(sesi, run_b)
+    sesi.flush()
+
+    baris = _jenis(sesi, run_b).get("digeser", [])
+    assert [satu.assignment_id for satu in baris] == ["a2"]
+    assert baris[0].jarak_geser_m == pytest.approx(25.0)
+    # Kode Master GS dan Geotag Kabkot sama (titik tetap di SLS tugasnya).
+    assert baris[0].level_6_full_code == KODE_A
+    assert baris[0].level_6_full_code_b == KODE_A
+    assert "25,0 m" in anomali.keterangan(baris[0], "SLS 013")
+    assert hitung_per_jenis(sesi, run_b.id)["digeser"] == 1
+
+
 def test_api_anomali_kabupaten_tanpa_run_b(klien) -> None:
     """Wilayah yang belum pernah sukses Proses B mengembalikan daftar kosong."""
     jawab = klien.get("/anomali", params={"kdprov": "33", "kdkab": "3399"})
@@ -351,7 +402,7 @@ def test_api_anomali_kabupaten_tanpa_run_b(klien) -> None:
     assert isi["runs"] == []
     assert isi["total"] == 0
     assert isi["baris"] == []
-    assert len(isi["jenis"]) == 7
+    assert len(isi["jenis"]) == len(anomali.JENIS)
     assert all(satu["jumlah"] == 0 for satu in isi["jenis"])
 
 

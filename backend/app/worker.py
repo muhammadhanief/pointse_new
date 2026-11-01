@@ -70,6 +70,7 @@ from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 from sqlalchemy import (
     Float,
@@ -89,6 +90,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, aliased, sessionmaker
 
+from app import geser as modul_geser
 from app import rekap as modul_rekap
 from app import wilayah
 from app.anomali import simpan_anomali
@@ -417,6 +419,38 @@ def kode_hasil(hasil: gpd.GeoDataFrame) -> set[str]:
     return kode
 
 
+def tambah_kolom_jarak(hasil: gpd.GeoDataFrame) -> pd.Series:
+    """Jarak (meter) titik hasil edit dari posisi asal, vektor tanpa baris.
+
+    Hanya Proses B yang punya kolom ``latitude_edited``/``longitude_edited``;
+    Proses A menghasilkan ``None``. Rumusnya sama dengan
+    :func:`app.geser.jarak_meter` (haversine), tetapi dihitung dengan numpy
+    supaya ratusan ribu titik tidak perlu di-``map`` di Python.
+    """
+    kolom = (
+        "latitude_origin",
+        "longitude_origin",
+        "latitude_edited",
+        "longitude_edited",
+    )
+    if not all(nama in hasil.columns for nama in kolom):
+        return pd.Series([None] * len(hasil), index=hasil.index, dtype="float64")
+
+    lat1, lon1, lat2, lon2 = (
+        np.radians(
+            pd.to_numeric(hasil[nama], errors="coerce").to_numpy(dtype="float64")
+        )
+        for nama in kolom
+    )
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+    jarak = 2 * modul_geser.R_BUMI_M * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+    # NaN koordinat -> NaN jarak (tersimpan NULL), bukan 0.
+    jarak[np.isnan(a)] = np.nan
+    return pd.Series(jarak, index=hasil.index)
+
+
 def tambah_kolom_wilayah(
     hasil: gpd.GeoDataFrame, id_wilayah: dict[str, int]
 ) -> gpd.GeoDataFrame:
@@ -431,6 +465,7 @@ def tambah_kolom_wilayah(
         else:  # Proses A tidak punya idsubsls_edited
             seri = pd.Series([None] * len(hasil), index=hasil.index)
         keluaran[kolom_db] = seri.astype("Int64")
+    keluaran["jarak_geser_m"] = tambah_kolom_jarak(hasil)
     return keluaran
 
 

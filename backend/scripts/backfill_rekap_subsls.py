@@ -9,6 +9,12 @@ dihitung ulang: ``titik_hasil``, rekap, dan snapshot level 6.
 
 Urutan wajib A lalu B per kabupaten/kota supaya target B mengikuti A terbaru.
 
+Proses ulang memakai jalur worker yang sama, jadi selain snapshot level 6 yang
+dihitung ulang juga ``titik_hasil``, rekap, ``rekap_target``, dan
+``anomali_titik``. Ini berguna setelah rumus/ambang anomali berubah (mis.
+temuan "Digeser >= 10 m" pada :mod:`app.geser`): run lama dihitung ulang dari
+**berkas B yang sudah tersimpan**, tanpa meminta kabupaten/kota mengunggah ulang.
+
 Contoh (dari folder ``backend``)::
 
     .venv/bin/python scripts/backfill_rekap_subsls.py --dry-run

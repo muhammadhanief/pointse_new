@@ -21,6 +21,12 @@ Kategori (saling lepas, satu titik hanya masuk satu kategori):
 ``kode_berubah``
     Titik ada di B dan model menganggapnya beres, tetapi ``level_6_full_code``
     di B berbeda dari kode penugasan A.
+``digeser``
+    Titik yang sudah benar (``flag_repair`` akhir 0, atribut flag tidak diedit)
+    tetapi posisinya bergeser **>= 10 m** dari titik asal (Master GS). Pergeseran
+    di bawah ambang dianggap getaran GPS dan tidak dimunculkan. Jaraknya dihitung
+    dari kedua koordinat (:mod:`app.geser`), bukan hanya ``latitude`` seperti
+    ``flag_position`` model.
 ``regresi``
     Titik di B yang bukan target A tetapi ``flag_repair = 1`` (kerusakan baru).
 ``titik_baru``
@@ -57,6 +63,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session, aliased
 
 from app import konfirmasi as modul_konfirmasi
+from app import geser as modul_geser
 from app import rekap as modul_rekap
 from app.models import (
     DASAR_TUGAS,
@@ -77,6 +84,7 @@ JENIS: tuple[tuple[str, str], ...] = (
     ("luar_wilayah", "Di luar wilayah"),
     ("posisi_menyimpang", "Posisi menyimpang"),
     ("kode_berubah", "Kode SLS berubah"),
+    ("digeser", "Digeser ≥10 m"),
     ("regresi", "Bermasalah lagi (regresi)"),
     ("titik_baru", "Titik baru"),
 )
@@ -103,6 +111,7 @@ KOLOM: tuple[str, ...] = (
     "longitude",
     "flag_unggah",
     "flag_model",
+    "jarak_geser_m",
 )
 
 
@@ -137,6 +146,7 @@ def _kueri_pasangan(
             b.longitude_edited,
             b.flag_repair_unggah,
             b.flag_repair,
+            b.jarak_geser_m,
         )
         .select_from(a)
         .join(b, and_(b.run_id == run_b.id, b.assignment_id == a.assignment_id))
@@ -166,7 +176,52 @@ def _kueri_titik_b(
         b.longitude_edited,
         b.flag_repair_unggah,
         b.flag_repair,
+        b.jarak_geser_m,
     ).where(b.run_id == run_b.id, syarat(a, b))
+
+
+def _kueri_digeser(run_a: Run, run_b: Run, semua_a: Any) -> Any:
+    """Titik target A yang sudah benar tetapi bergeser >= ambang meter.
+
+    Ambangnya :data:`app.geser.JARAK_GESER_MIN_M`.
+
+    Bukan pasangan A selektif seperti :func:`_kueri_pasangan` karena titik
+    ``benar_awal`` di A sudah dipangkas dari ``titik_hasil`` (yang disimpan hanya
+    titik bermasalah). Keanggotaan target A dicek lewat tabel sementara
+    ``semua_a`` (daftar ``assignment_id`` berkas A), sehingga baris ini tidak
+    bertumpang tindih dengan ``titik_baru``.
+
+    Syarat "sudah benar": ``flag_repair`` akhir 0 dan ``flag_edit_atr_repair``
+    bukan 1 (kabupaten/kota tidak mengubah atribut flag). Titik yang dipindah
+    sampai pindah SubSLS akan ber-``flag_repair`` 1, jadi tidak ikut di sini --
+    itu kategori lain (``posisi_menyimpang``/``belum``).
+    """
+    b = aliased(TitikHasil)
+    return select(
+        literal(run_b.id),
+        literal(run_a.id),
+        literal("digeser"),
+        b.assignment_id,
+        literal(None, String(64)),
+        b.unique_bang,
+        # Model menganggap titik ini tetap di SubSLS tugasnya, jadi kode Master GS
+        # sama dengan kode Geotag Kabkot.
+        b.level_6_full_code,
+        b.level_6_full_code,
+        _wilayah_b(b),
+        b.latitude_edited,
+        b.longitude_edited,
+        b.flag_repair_unggah,
+        b.flag_repair,
+        b.jarak_geser_m,
+    ).where(
+        b.run_id == run_b.id,
+        b.assignment_id.in_(semua_a),
+        func.coalesce(b.flag_repair, 0) == 0,
+        func.coalesce(b.flag_edit_atr_repair, 0) == 0,
+        b.jarak_geser_m.is_not(None),
+        b.jarak_geser_m >= modul_geser.JARAK_GESER_MIN_M,
+    )
 
 
 def _sisip(sesi: Session, kueri: Any) -> int:
@@ -272,6 +327,8 @@ def _simpan_hilang(
                 "longitude": isi[4],
                 "flag_unggah": isi[5],
                 "flag_model": isi[6],
+                # Titik hilang/id berubah bukan temuan "digeser".
+                "jarak_geser_m": None,
             }
         )
     if baris:
@@ -446,6 +503,9 @@ def simpan_anomali(sesi: Session, run: Run) -> int:
             ),
         ),
     )
+    # Titik yang sudah benar tetapi posisinya bergeser >= 10 m (ambil jarak
+    # sebenarnya, bukan flag_position model yang hanya melihat latitude).
+    jumlah += _sisip(sesi, _kueri_digeser(run_a, run, semua_a))
     # Titik B yang tidak termasuk target A.
     jumlah += _sisip(
         sesi,
@@ -737,6 +797,12 @@ def keterangan(baris: AnomaliTitik, wilayah: str | None = None) -> str:
         return f"posisi masuk {wilayah or 'wilayah lain'}"
     if baris.jenis == "kode_berubah":
         return f"kode Geotag Kabkot {baris.level_6_full_code_b or '-'}"
+    if baris.jenis == "digeser":
+        jarak = getattr(baris, "jarak_geser_m", None)
+        if jarak is None:
+            return "posisi bergeser jauh dari titik asal"
+        angka = f"{float(jarak):.1f}".replace(".", ",")
+        return f"posisi bergeser {angka} m dari titik asal"
     if baris.jenis == "regresi":
         return "di Master GS sudah beres, ditandai bermasalah lagi di Geotag Kabkot"
     return "tidak ada di Master GS"

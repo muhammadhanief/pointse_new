@@ -294,6 +294,9 @@ class TitikHasil(Base):
     longitude_origin: Mapped[float | None] = mapped_column(Double)
     latitude_edited: Mapped[float | None] = mapped_column(Double)
     longitude_edited: Mapped[float | None] = mapped_column(Double)
+    #: Jarak (meter) titik hasil edit dari posisi asal; NULL untuk Proses A atau
+    #: baris yang koordinat asalnya kosong. Lihat :mod:`app.geser`.
+    jarak_geser_m: Mapped[float | None] = mapped_column(Double)
 
     run: Mapped[Run] = relationship(back_populates="hasil")
 
@@ -494,6 +497,8 @@ class AnomaliTitik(Base):
     wilayah_id: Mapped[int | None] = mapped_column(ForeignKey("wilayah.id"))
     latitude: Mapped[float | None] = mapped_column(Double)
     longitude: Mapped[float | None] = mapped_column(Double)
+    #: Jarak geser (meter) dari posisi asal; hanya untuk jenis ``digeser``.
+    jarak_geser_m: Mapped[float | None] = mapped_column(Double)
     #: ``flag_repair`` dari berkas unggahan (klaim kabupaten).
     flag_unggah: Mapped[int | None] = mapped_column(AngkaKecil)
     #: ``flag_repair`` hasil hitung ulang model.
