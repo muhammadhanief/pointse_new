@@ -150,7 +150,7 @@ def _teks_atau_none(nilai: object) -> str | None:
     return teks or None
 
 
-def _kode_kabupaten(kdprov: str, kdkab: str) -> str:
+def kode_kabupaten(kdprov: str, kdkab: str) -> str:
     """Normalisasi kode kabupaten/kota dari bentuk pendek peta (``07``)."""
     kab = str(kdkab).strip()
     if len(kab) == 2:
@@ -189,7 +189,7 @@ def saring_akses(
     if pengguna.peran.nama == PERAN_ADMIN_PROVINSI:
         if kab is None:
             return provinsi_pengguna, None
-        kode = _kode_kabupaten(provinsi_pengguna, kab)
+        kode = kode_kabupaten(provinsi_pengguna, kab)
         if len(kode) != 4 or not kode.isdigit() or not kode.startswith(provinsi_pengguna):
             raise AksesDitolak(f"kode kabupaten/kota '{kdkab}' tidak valid")
         return provinsi_pengguna, kode
@@ -198,7 +198,7 @@ def saring_akses(
     kewenangan = pengguna.peran.kdkab
     if kab is None:
         return provinsi_pengguna, kewenangan
-    kode = _kode_kabupaten(provinsi_pengguna, kab)
+    kode = kode_kabupaten(provinsi_pengguna, kab)
     if kode != kewenangan:
         raise AksesDitolak(
             f"tidak berhak mengakses kabupaten/kota {kode}; kewenangan Anda {kewenangan}"

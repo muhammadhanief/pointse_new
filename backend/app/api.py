@@ -1092,12 +1092,18 @@ def _pastikan_status(status: str | None) -> str | None:
 
 
 def _boleh_baris(pengguna: auth.Pengguna, kdprov: str, kdkab: str) -> bool:
-    """True bila pengguna berhak atas baris wilayah tersebut."""
+    """True bila pengguna berhak atas baris wilayah tersebut.
+
+    ``runs.kdkab`` bisa tersimpan dalam bentuk pendek peta (``02``), sedangkan
+    kewenangan pengguna memakai 4 digit (``3302``); samakan lebih dulu supaya
+    admin provinsi tidak ditolak hanya karena bentuk kode berbeda.
+    """
+    kode = auth.kode_kabupaten(kdprov, kdkab)
     try:
-        prov, kab = auth.saring_akses(pengguna, kdprov, kdkab)
+        prov, kab = auth.saring_akses(pengguna, kdprov, kode)
     except auth.AksesDitolak:
         return False
-    return kab == kdkab and (prov is None or prov == kdprov)
+    return (prov is None or prov == kdprov) and (kab is None or kab == kode)
 
 
 def _baris_konfirmasi_ids(
@@ -1266,8 +1272,14 @@ def daftar_anomali(
         sesi.scalar(select(func.count()).select_from(kueri.subquery())) or 0
     )
     baris = [
-        _out_baris_anomali(satu, konfirmasi_db, nmsls, nmdesa, kode_kab)
-        for satu, nmsls, nmdesa, kode_kab, konfirmasi_db in sesi.execute(
+        _out_baris_anomali(
+            satu,
+            konfirmasi_db,
+            nmsls,
+            nmdesa,
+            auth.kode_kabupaten(kdprov_baris, kode_kab),
+        )
+        for satu, nmsls, nmdesa, kdprov_baris, kode_kab, konfirmasi_db in sesi.execute(
             kueri.limit(limit).offset(offset)
         )
     ]
@@ -1350,7 +1362,7 @@ def ekspor_anomali(
                 "waktu_konfirmasi",
             ]
         )
-        for satu, nmsls, nmdesa, kode_kab, konfirmasi_db in sesi.execute(
+        for satu, nmsls, nmdesa, kdprov_baris, kode_kab, konfirmasi_db in sesi.execute(
             anomali.kueri_baris(
                 ids, [kode], q.strip() if q else None, status_aktif
             )
@@ -1358,7 +1370,7 @@ def ekspor_anomali(
             wilayah = nmsls or nmdesa
             lembar.append(
                 [
-                    kode_kab,
+                    auth.kode_kabupaten(kdprov_baris, kode_kab),
                     satu.assignment_id,
                     satu.assignment_id_baru,
                     satu.unique_bang,

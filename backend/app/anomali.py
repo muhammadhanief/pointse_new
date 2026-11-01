@@ -627,10 +627,13 @@ def kueri_baris(
     """Query baris anomali + nama wilayah + konfirmasi untuk satu/beberapa run B.
 
     Kembaliannya
-    ``(AnomaliTitik, nmsls, nmdesa, kdkab, KonfirmasiAnomali | None)`` supaya
-    tabel dan Excel bisa menandai asal kabupaten/kota sekaligus status
+    ``(AnomaliTitik, nmsls, nmdesa, kdprov, kdkab, KonfirmasiAnomali | None)``
+    supaya tabel dan Excel bisa menandai asal kabupaten/kota sekaligus status
     konfirmasinya. ``status``: ``"belum"`` (tanpa konfirmasi),
     ``"akan_diperbaiki"``, ``"sesuai_kenyataan"``, atau ``None`` (semua).
+
+    ``runs.kdkab`` bisa berupa kode pendek peta (``02``); pemanggil menormalkan
+    ke 4 digit dengan :func:`app.auth.kode_kabupaten` bila perlu.
     """
     ids = [run_b_id] if isinstance(run_b_id, int) else list(run_b_id)
     kueri = (
@@ -638,6 +641,7 @@ def kueri_baris(
             AnomaliTitik,
             Wilayah.nmsls,
             Wilayah.nmdesa,
+            Run.kdprov,
             Run.kdkab,
             KonfirmasiAnomali,
         )

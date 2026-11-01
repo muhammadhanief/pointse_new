@@ -14,7 +14,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import anomali
+from app import anomali, auth
+from app.main import app
 from app.models import (
     STATUS_SUKSES,
     TIPE_A,
@@ -304,3 +305,48 @@ def test_xlsx_memuat_kolom_konfirmasi(klien: TestClient, sesi: Session) -> None:
         assert kolom in header
     baris = [sel.value for sel in next(lembar.iter_rows(min_row=2, max_row=2))]
     assert baris[header.index("status_konfirmasi")] == "Akan Diperbaiki"
+
+
+def test_provinsi_boleh_konfirmasi_kdkab_pendek(
+    klien: TestClient, sesi: Session
+) -> None:
+    """Admin provinsi tetap boleh konfirmasi walau ``runs.kdkab`` bentuk pendek.
+
+    ``runs.kdkab`` dari peta wilkerstat disimpan 2 digit (``02``), sedangkan
+    kewenangan pengguna 4 digit (``3302``). Kode keluaran pun dinormalkan ke
+    4 digit supaya tabel/Excel menampilkan kabupaten yang benar.
+    """
+    from app.peran import PERAN_ADMIN_PROVINSI, Peran
+
+    w = _wilayah(sesi)
+    _run(sesi, TIPE_A)
+    run_b = _run(sesi, TIPE_B)
+    run_b.kdkab = "02"
+    _anomali(sesi, run_b, w, jenis="hilang", assignment="a0", unique_bang="U0")
+    sesi.commit()
+
+    provinsi = auth.Pengguna(
+        sub="prov",
+        username="prov",
+        nama="Admin Provinsi",
+        org="33",
+        peran=Peran(nama=PERAN_ADMIN_PROVINSI, kdprov="33", kdkab=None),
+    )
+    app.dependency_overrides[auth.pengguna_saat_ini] = lambda: provinsi
+
+    data = klien.get("/anomali", params={"kdkab": "3302"}).json()
+    assert data["total"] == 1
+    assert data["baris"][0]["kdkab"] == "3302"
+
+    simpan = klien.post(
+        "/anomali/konfirmasi",
+        json={"status": "akan_diperbaiki", "anomali_ids": _ids_anomali(sesi)},
+    )
+    assert simpan.status_code == 200, simpan.text
+    assert simpan.json()["jumlah"] == 1
+
+    batal = klien.post(
+        "/anomali/konfirmasi/batal", json={"anomali_ids": _ids_anomali(sesi)}
+    )
+    assert batal.status_code == 200
+    assert batal.json()["jumlah"] == 1
