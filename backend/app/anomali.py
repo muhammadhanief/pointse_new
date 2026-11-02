@@ -27,6 +27,11 @@ Kategori (saling lepas, satu titik hanya masuk satu kategori):
     di bawah ambang dianggap getaran GPS dan tidak dimunculkan. Jaraknya dihitung
     dari kedua koordinat (:mod:`app.geser`), bukan hanya ``latitude`` seperti
     ``flag_position`` model.
+
+    Jenis ini **bukan bagian menu pencermatan** (lihat :data:`JENIS`): barisnya
+    tetap disimpan di ``anomali_titik`` tetapi ditampilkan di halaman
+    "Pergeseran titik" dengan ambang meter pilihan pengguna
+    (:func:`kueri_geser`).
 ``regresi``
     Titik di B yang bukan target A tetapi ``flag_repair = 1`` (kerusakan baru).
 ``titik_baru``
@@ -34,7 +39,8 @@ Kategori (saling lepas, satu titik hanya masuk satu kategori):
 
 Baris dihitung di akhir job B **sebelum** ``titik_hasil`` dipangkas, dan disimpan
 untuk **setiap** run B sukses per kabupaten/kota supaya riwayat/tren pencermatan
-terbaca. Totalnya juga disimpan di ``runs.jumlah_anomali`` (0 = bersih). Blok
+terbaca. Total **pencermatan** (tanpa ``digeser``) juga disimpan di
+``runs.jumlah_anomali`` (0 = bersih). Blok
 lama yang menghapus anomali run B lain sekabupaten masih ada di
 :func:`simpan_anomali` tetapi dinonaktifkan (dikomentari).
 """
@@ -84,12 +90,21 @@ JENIS: tuple[tuple[str, str], ...] = (
     ("luar_wilayah", "Di luar wilayah"),
     ("posisi_menyimpang", "Posisi menyimpang"),
     ("kode_berubah", "Kode SLS berubah"),
-    ("digeser", "Digeser ≥10 m"),
     ("regresi", "Bermasalah lagi (regresi)"),
     ("titik_baru", "Titik baru"),
 )
 
+#: Jenis temuan yang tetap disimpan di ``anomali_titik`` tetapi **tidak** tampil
+#: di menu pencermatan: ditampilkan di halaman "Pergeseran titik" dengan ambang
+#: meter pilihan pengguna (lihat :func:`kueri_geser`).
+JENIS_GESER: tuple[tuple[str, str], ...] = (("digeser", "Digeser ≥10 m"),)
+
+#: Kode jenis internal yang disisihkan dari daftar pencermatan ("kosong = semua").
+JENIS_INTERNAL: tuple[str, ...] = tuple(kode for kode, _ in JENIS_GESER)
+
 LABEL: dict[str, str] = dict(JENIS)
+#: Label jenis internal (halaman pergeseran & Excel-nya).
+LABEL_GESER: dict[str, str] = dict(JENIS_GESER)
 
 logger = logging.getLogger(__name__)
 
@@ -505,7 +520,9 @@ def simpan_anomali(sesi: Session, run: Run) -> int:
     )
     # Titik yang sudah benar tetapi posisinya bergeser >= 10 m (ambil jarak
     # sebenarnya, bukan flag_position model yang hanya melihat latitude).
-    jumlah += _sisip(sesi, _kueri_digeser(run_a, run, semua_a))
+    # Barisnya disimpan, tetapi TIDAK dihitung sebagai pencermatan: jenis
+    # ``digeser`` punya halaman sendiri dengan ambang meter pilihan pengguna.
+    _sisip(sesi, _kueri_digeser(run_a, run, semua_a))
     # Titik B yang tidak termasuk target A.
     jumlah += _sisip(
         sesi,
@@ -533,8 +550,9 @@ def simpan_anomali(sesi: Session, run: Run) -> int:
     )
 
     run.anomali_versi = 1
-    # Total per run disimpan permanen (0 = bersih) supaya tren tetap terbaca
-    # walau detail ``anomali_titik`` run ini tidak lagi lengkap.
+    # Total pencermatan per run disimpan permanen (0 = bersih) supaya tren tetap
+    # terbaca walau detail ``anomali_titik`` run ini tidak lagi lengkap.
+    # ``digeser`` sengaja tidak dihitung (bukan pencermatan).
     run.jumlah_anomali = jumlah
     return jumlah
 
@@ -653,6 +671,10 @@ def _saring_anomali(
         daftar = [jenis] if isinstance(jenis, str) else list(jenis)
         if daftar:
             kueri = kueri.where(AnomaliTitik.jenis.in_(daftar))
+    else:
+        # "Semua jenis" pada menu pencermatan: sisihkan jenis internal
+        # (``digeser``) yang punya halaman sendiri, supaya tidak ikut tampil.
+        kueri = kueri.where(AnomaliTitik.jenis.not_in(JENIS_INTERNAL))
     if cari:
         pola = f"%{cari}%"
         kueri = kueri.where(
@@ -720,6 +742,49 @@ def kueri_baris(
     return kueri.order_by(
         Run.kdkab,
         AnomaliTitik.level_6_full_code,
+        AnomaliTitik.assignment_id,
+    )
+
+
+def kueri_geser(
+    run_b_id: int | list[int],
+    min_meter: float,
+    cari: str | None = None,
+) -> Any:
+    """Query titik bergeser (jenis ``digeser``) dengan ambang meter.
+
+    Halaman "Pergeseran titik": ambangnya milik pengguna, sehingga baris disaring
+    **saat dibaca** -- isi ``anomali_titik`` tidak diubah. Lantai ambangnya
+    :data:`app.geser.JARAK_GESER_MIN_M` (10 m): pergeseran di bawah itu tidak
+    pernah disimpan.
+
+    Kembaliannya ``(AnomaliTitik, nmsls, nmdesa, kdprov, kdkab)``; ``cari`` sama
+    dengan pencarian di menu pencermatan.
+    """
+    ids = [run_b_id] if isinstance(run_b_id, int) else list(run_b_id)
+    kueri = (
+        select(
+            AnomaliTitik,
+            Wilayah.nmsls,
+            Wilayah.nmdesa,
+            Run.kdprov,
+            Run.kdkab,
+        )
+        .join(Wilayah, Wilayah.id == AnomaliTitik.wilayah_id, isouter=True)
+        .join(Run, Run.id == AnomaliTitik.run_b_id)
+        .where(
+            AnomaliTitik.run_b_id.in_(ids),
+            AnomaliTitik.jenis == "digeser",
+            AnomaliTitik.jarak_geser_m.is_not(None),
+            AnomaliTitik.jarak_geser_m >= min_meter,
+        )
+    )
+    # ``jenis`` diisi supaya cabang "semua jenis" (yang menyisihkan ``digeser``)
+    # tidak ikut berlaku; hanya pencarian yang diambil dari helper itu.
+    kueri = _saring_anomali(kueri, "digeser", cari)
+    return kueri.order_by(
+        Run.kdkab,
+        AnomaliTitik.jarak_geser_m.desc(),
         AnomaliTitik.assignment_id,
     )
 

@@ -34,7 +34,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from app import aktivitas, anomali, auth, ekspor, konfirmasi, layanan, unggahan
+from app import aktivitas, anomali, auth, ekspor, geser, konfirmasi, layanan, unggahan
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.layanan import (
@@ -61,8 +61,12 @@ from app.skema import (
     AnomaliOut,
     AnomaliRunOut,
     DaftarAnomaliRunOut,
+    DaftarGeserRunOut,
     DaftarMasterOut,
     DaftarRunOut,
+    GeserBarisOut,
+    GeserOut,
+    GeserRunOut,
     HasilKonfirmasiOut,
     HasilOut,
     KonfirmasiAnomaliOut,
@@ -1005,6 +1009,66 @@ def _ringkas_anomali(sesi: Session, run: Run) -> AnomaliRunOut:
     return _out_anomali(run, int(target), int(selesai))
 
 
+def _jumlah_geser(
+    sesi: Session, ids: list[int], min_meter: float = geser.JARAK_GESER_MIN_M
+) -> dict[int, int]:
+    """Banyak baris ``digeser`` >= ``min_meter`` per run B."""
+    if not ids:
+        return {}
+    return {
+        int(run_id): int(jumlah)
+        for run_id, jumlah in sesi.execute(
+            select(AnomaliTitik.run_b_id, func.count())
+            .where(
+                AnomaliTitik.run_b_id.in_(ids),
+                AnomaliTitik.jenis == "digeser",
+                AnomaliTitik.jarak_geser_m >= min_meter,
+            )
+            .group_by(AnomaliTitik.run_b_id)
+        )
+    }
+
+
+def _geser_run(
+    run: Run, target: int, selesai: int, jumlah_geser: int
+) -> GeserRunOut:
+    """Ringkasan satu run B untuk halaman pergeseran titik."""
+    return GeserRunOut(
+        run_id=run.id,
+        tanggal_data=run.tanggal_data,
+        pengunggah=run.user,
+        kdkab=run.kdkab,
+        target=target,
+        selesai=selesai,
+        jumlah_geser=jumlah_geser,
+    )
+
+
+def _out_baris_geser(
+    satu: AnomaliTitik,
+    nmsls: str | None,
+    nmdesa: str | None,
+    kode_kab: str,
+) -> GeserBarisOut:
+    """Bentuk satu baris pergeseran titik untuk tabel/Excel."""
+    wilayah = nmsls or nmdesa
+    return GeserBarisOut(
+        id=satu.id,
+        kdkab=kode_kab,
+        assignment_id=satu.assignment_id,
+        unique_bang=satu.unique_bang,
+        level_6_full_code=satu.level_6_full_code,
+        level_6_full_code_b=satu.level_6_full_code_b,
+        wilayah=wilayah,
+        latitude=satu.latitude,
+        longitude=satu.longitude,
+        jarak_geser_m=satu.jarak_geser_m,
+        flag_unggah=satu.flag_unggah,
+        flag_model=satu.flag_model,
+        keterangan=anomali.keterangan(satu, wilayah),
+    )
+
+
 def _out_baris_anomali(
     satu: AnomaliTitik,
     konfirmasi_db: KonfirmasiAnomali | None,
@@ -1559,3 +1623,168 @@ def minta_klarifikasi_anomali(
         detail=f"{jumlah} titik",
     )
     return HasilKonfirmasiOut(jumlah=jumlah)
+
+
+@router.get("/geser/riwayat", response_model=DaftarGeserRunOut)
+def riwayat_geser(
+    kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
+    kdkab: str = Query(..., description="Kode kabupaten/kota (satu saja)"),
+    min_meter: float = Query(geser.JARAK_GESER_MIN_M, ge=0),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> DaftarGeserRunOut:
+    """Riwayat run Proses B sukses satu kabupaten/kota untuk halaman pergeseran.
+
+    ``jumlah_geser`` per run dihitung pada ambang yang sedang dipakai, supaya
+    dropdown riwayat menampilkan jumlah yang konsisten dengan tabel.
+    """
+    kdprov, daftar_kab = _anomali_kdkab(pengguna, kdprov, [kdkab])
+    if len(daftar_kab) != 1:
+        raise HTTPException(
+            status_code=422, detail="riwayat run butuh tepat satu kabupaten/kota"
+        )
+    ambang = max(float(min_meter), geser.JARAK_GESER_MIN_M)
+    riwayat = anomali.riwayat_runs(sesi, kdprov, daftar_kab[0])
+    jumlah = _jumlah_geser(sesi, [run.id for run, _, _ in riwayat], ambang)
+    return DaftarGeserRunOut(
+        baris=[
+            _geser_run(run, target, selesai, jumlah.get(run.id, 0))
+            for run, target, selesai in riwayat
+        ]
+    )
+
+
+@router.get("/geser", response_model=GeserOut)
+def daftar_geser(
+    kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
+    kdkab: list[str] | None = Query(
+        None, description="Kode kabupaten/kota (boleh diulang)"
+    ),
+    q: str | None = Query(None, max_length=100, description="Cari id/kode SLS/bangunan"),
+    min_meter: float = Query(
+        geser.JARAK_GESER_MIN_M, ge=0, description="Ambang jarak geser minimum (meter)"
+    ),
+    run_b_id: int | None = Query(
+        None, description="Id run B tertentu (riwayat); kosong = run terakhir"
+    ),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> GeserOut:
+    """Titik yang sudah benar tetapi bergeser dari titik asal (Master GS).
+
+    Halaman "Pergeseran titik" -- bukan pencermatan, hanya informasi jarak.
+    ``min_meter`` disaring **saat membaca** (default 10 m); pergeseran di bawah
+    10 m tidak pernah disimpan sehingga ambang yang lebih kecil tidak menambah
+    baris. Tidak ada kolom konfirmasi di sini.
+    """
+    kdprov, daftar_kab = _anomali_kdkab(pengguna, kdprov, kdkab)
+    ambang = max(float(min_meter), geser.JARAK_GESER_MIN_M)
+    runs = anomali.run_terpilih(sesi, kdprov, daftar_kab, run_b_id)
+    ids = [satu.id for satu in runs]
+    jumlah = _jumlah_geser(sesi, ids, ambang)
+    ringkas: list[GeserRunOut] = []
+    for satu in runs:
+        ring = _ringkas_anomali(sesi, satu)
+        ringkas.append(_geser_run(satu, ring.target, ring.selesai, jumlah.get(satu.id, 0)))
+    if not runs:
+        return GeserOut(run=None, runs=[], total=0, min_meter=ambang, baris=[])
+
+    kueri = anomali.kueri_geser(ids, ambang, q.strip() if q else None)
+    total = int(sesi.scalar(select(func.count()).select_from(kueri.subquery())) or 0)
+    baris = [
+        _out_baris_geser(
+            satu, nmsls, nmdesa, auth.kode_kabupaten(kdprov_baris, kode_kab)
+        )
+        for satu, nmsls, nmdesa, kdprov_baris, kode_kab in sesi.execute(
+            kueri.limit(limit).offset(offset)
+        )
+    ]
+    return GeserOut(
+        run=ringkas[0] if len(ringkas) == 1 else None,
+        runs=ringkas,
+        total=total,
+        min_meter=ambang,
+        baris=baris,
+    )
+
+
+@router.get("/geser.xlsx", response_class=StreamingResponse)
+def ekspor_geser(
+    kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
+    kdkab: list[str] | None = Query(None, description="Kode kabupaten/kota (boleh diulang)"),
+    q: str | None = Query(None, max_length=100, description="Cari id/kode SLS/bangunan"),
+    min_meter: float = Query(geser.JARAK_GESER_MIN_M, ge=0),
+    run_b_id: int | None = Query(None, description="Id run B tertentu (riwayat)"),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> StreamingResponse:
+    """Unduh titik bergeser sesuai filter aktif (ambang meter) sebagai Excel."""
+    kdprov, daftar_kab = _anomali_kdkab(pengguna, kdprov, kdkab)
+    ambang = max(float(min_meter), geser.JARAK_GESER_MIN_M)
+    runs = anomali.run_terpilih(sesi, kdprov, daftar_kab, run_b_id)
+    if not runs:
+        raise HTTPException(
+            status_code=404, detail="belum ada Proses B yang sukses untuk wilayah ini"
+        )
+    ids = [satu.id for satu in runs]
+
+    # Impor di dalam fungsi supaya API tetap ringan saat start.
+    from openpyxl import Workbook
+
+    buku = Workbook(write_only=True)
+    lembar = buku.create_sheet("Pergeseran titik")
+    lembar.append(
+        [
+            "kabupaten",
+            "assignment_id",
+            "unique_bang",
+            "level_6_fullcode Master GS",
+            "level_6_fullcode Geotag Kabkot",
+            "wilayah",
+            "latitude",
+            "longitude",
+            "jarak_meter",
+            "flag_unggah",
+            "flag_model",
+            "keterangan",
+        ]
+    )
+    for satu, nmsls, nmdesa, kdprov_baris, kode_kab in sesi.execute(
+        anomali.kueri_geser(ids, ambang, q.strip() if q else None)
+    ):
+        wilayah = nmsls or nmdesa
+        lembar.append(
+            [
+                auth.kode_kabupaten(kdprov_baris, kode_kab),
+                satu.assignment_id,
+                satu.unique_bang,
+                satu.level_6_full_code,
+                satu.level_6_full_code_b,
+                wilayah,
+                satu.latitude,
+                satu.longitude,
+                satu.jarak_geser_m,
+                satu.flag_unggah,
+                satu.flag_model,
+                anomali.keterangan(satu, wilayah),
+            ]
+        )
+
+    aliran = io.BytesIO()
+    buku.save(aliran)
+    aliran.seek(0)
+    kode_unduh = (
+        _kode_unduh(runs[0].kdprov, runs[0].kdkab)
+        if len(runs) == 1
+        else f"{runs[0].kdprov}-{len(runs)}kab"
+    )
+    meter = f"{ambang:g}".replace(".", ",")
+    nama = f"{kode_unduh}_pergeseran_{meter}m_{runs[0].tanggal_data}.xlsx"
+    return StreamingResponse(
+        aliran,
+        media_type=MEDIA_XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{nama}"'},
+    )
+

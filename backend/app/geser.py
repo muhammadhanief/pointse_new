@@ -3,8 +3,9 @@
 ``flag_position`` dari model QGIS hanya membandingkan ``latitude`` dan
 menganggap perbedaan sekecil apa pun (termasuk getaran GPS beberapa sentimeter)
 sebagai "digeser". Modul ini menghitung jarak datar sebenarnya dari **kedua**
-koordinat supaya menu pencermatan titik hanya memunculkan pergeseran yang
-berarti (:data:`JARAK_GESER_MIN_M`).
+koordinat supaya halaman "Pergeseran titik" hanya menyimpan pergeseran yang
+berarti (:data:`JARAK_GESER_MIN_M`); ambang tampilnya bisa dinaikkan pengguna di
+halaman itu (:func:`app.anomali.kueri_geser`).
 
 Modul sengaja tidak mengimpor pandas/geopandas/numpy supaya aman dipakai API
 (yang tidak boleh memuat pustaka berat saat startup). Versi vektor untuk worker
@@ -15,8 +16,9 @@ from __future__ import annotations
 
 import math
 
-#: Ambang pergeseran yang dianggap pengamatan (meter). Di bawah ini dianggap
-#: getaran GPS/pembulatan koordinat, bukan pergeseran yang perlu dicermati.
+#: Ambang pergeseran yang disimpan saat job (meter). Di bawah ini dianggap
+#: getaran GPS/pembulatan koordinat dan tidak disimpan; halaman pergeseran tidak
+#: bisa menurunkan ambang tampil di bawah nilai ini.
 JARAK_GESER_MIN_M = 10.0
 
 #: Jari-jari bumi rata-rata (meter) untuk rumus haversine.

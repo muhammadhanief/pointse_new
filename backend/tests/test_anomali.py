@@ -391,6 +391,101 @@ def test_digeser_hanya_bila_bergeser_minimal_ambang(sesi: Session) -> None:
     assert baris[0].level_6_full_code_b == KODE_A
     assert "25,0 m" in anomali.keterangan(baris[0], "SLS 013")
     assert hitung_per_jenis(sesi, run_b.id)["digeser"] == 1
+    # ``digeser`` bukan pencermatan: tidak ikut dihitung di ``jumlah_anomali``.
+    # Yang tersisa hanya ``regresi`` dari a4 (flag_repair 1 tetapi bukan target).
+    assert set(_jenis(sesi, run_b)) == {"digeser", "regresi"}
+    assert run_b.jumlah_anomali == 1
+
+
+def test_api_geser_menyaring_ambang_dan_terpisah_dari_pencermatan(
+    klien, sesi: Session
+) -> None:
+    """Halaman pergeseran: ambang meter disaring saat dibaca, terpisah dari pencermatan."""
+    w = _wilayah(sesi, KODE_A)
+    run_a = _run(sesi, TIPE_A)
+    for urut, assignment in enumerate(("a1", "a2")):
+        _titik(sesi, run_a, urut, assignment, KODE_A, flag_model=0, wilayah=w)
+    sesi.flush()
+
+    run_b = _run(sesi, TIPE_B, sumber_a=run_a.id)
+    # a1 bergeser 25 m, a2 bergeser 40 m (keduanya tetap di SubSLS tugasnya).
+    _titik(sesi, run_b, 0, "a1", KODE_A, flag_model=0, flag_unggah=0,
+           wilayah=w, jarak_geser_m=25.0)
+    _titik(sesi, run_b, 1, "a2", KODE_A, flag_model=0, flag_unggah=0,
+           wilayah=w, jarak_geser_m=40.0)
+    sesi.flush()
+    simpan_anomali(sesi, run_b)
+    simpan_rekap_target(sesi, run_b)
+    sesi.commit()
+
+    # Pencermatan bersih: digeser tidak dihitung sebagai pencermatan.
+    anom = klien.get("/anomali", params={"kdprov": "33", "kdkab": "3325"}).json()
+    assert anom["total"] == 0
+    assert "digeser" not in {satu["kode"] for satu in anom["jenis"]}
+
+    # Halaman pergeseran: ambang default 10 m, urut jarak menurun.
+    geser = klien.get("/geser", params={"kdprov": "33", "kdkab": "3325"}).json()
+    assert geser["min_meter"] == 10.0
+    assert geser["total"] == 2
+    assert [baris["assignment_id"] for baris in geser["baris"]] == ["a2", "a1"]
+    assert geser["baris"][0]["jarak_geser_m"] == pytest.approx(40.0)
+
+    # Ambang lebih tinggi -> hanya yang >= ambang.
+    tinggi = klien.get(
+        "/geser", params={"kdprov": "33", "kdkab": "3325", "min_meter": 30}
+    ).json()
+    assert tinggi["total"] == 1
+    assert tinggi["baris"][0]["assignment_id"] == "a2"
+
+    # Ambang di bawah lantai 10 m diangkat ke 10 m (data di bawahnya tidak ada).
+    rendah = klien.get(
+        "/geser", params={"kdprov": "33", "kdkab": "3325", "min_meter": 5}
+    ).json()
+    assert rendah["min_meter"] == 10.0
+    assert rendah["total"] == 2
+
+    # Riwayat run memuat jumlah geser pada ambang yang dipakai.
+    riwayat = klien.get(
+        "/geser/riwayat",
+        params={"kdprov": "33", "kdkab": "3325", "min_meter": 30},
+    ).json()
+    assert riwayat["baris"][0]["run_id"] == run_b.id
+    assert riwayat["baris"][0]["jumlah_geser"] == 1
+
+
+def test_ekspor_geser_xlsx(klien, sesi: Session) -> None:
+    """Excel pergeseran memuat kolom jarak dan hanya baris >= ambang."""
+    import io as modul_io
+
+    from openpyxl import load_workbook
+
+    w = _wilayah(sesi, KODE_A)
+    run_a = _run(sesi, TIPE_A)
+    _titik(sesi, run_a, 0, "a1", KODE_A, flag_model=0, wilayah=w)
+    sesi.flush()
+
+    run_b = _run(sesi, TIPE_B, sumber_a=run_a.id)
+    _titik(sesi, run_b, 0, "a1", KODE_A, flag_model=0, flag_unggah=0,
+           wilayah=w, jarak_geser_m=25.0)
+    sesi.flush()
+    simpan_anomali(sesi, run_b)
+    sesi.commit()
+
+    jawab = klien.get(
+        "/geser.xlsx", params={"kdprov": "33", "kdkab": "3325", "min_meter": 10}
+    )
+    assert jawab.status_code == 200
+    assert jawab.content[:2] == b"PK"
+    assert "pergeseran_10m" in jawab.headers["content-disposition"]
+
+    buku = load_workbook(modul_io.BytesIO(jawab.content))
+    lembar = buku["Pergeseran titik"]
+    header = [sel.value for sel in next(lembar.iter_rows(max_row=1))]
+    assert "jarak_meter" in header
+    baris = list(lembar.iter_rows(min_row=2, values_only=True))
+    assert len(baris) == 1
+    assert baris[0][header.index("assignment_id")] == "a1"
+    assert baris[0][header.index("jarak_meter")] == pytest.approx(25.0)
 
 
 def test_api_anomali_kabupaten_tanpa_run_b(klien) -> None:

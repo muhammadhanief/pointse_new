@@ -728,6 +728,55 @@ class AnomaliOut(BaseModel):
     status_pilihan: list[StatusKonfirmasiOut] = []
 
 
+class GeserRunOut(BaseModel):
+    """Run Proses B pada halaman Pergeseran titik."""
+
+    run_id: int
+    tanggal_data: date
+    pengunggah: str | None = None
+    kdkab: str | None = None
+    target: int = 0
+    selesai: int = 0
+    #: Banyak titik bergeser >= ambang simpan (10 m) pada run ini.
+    jumlah_geser: int = 0
+
+
+class DaftarGeserRunOut(BaseModel):
+    """Riwayat run Proses B sukses satu kabupaten/kota (dropdown riwayat)."""
+
+    baris: list[GeserRunOut] = []
+
+
+class GeserBarisOut(BaseModel):
+    """Satu titik yang bergeser dari titik asal (Master GS)."""
+
+    id: int | None = None
+    kdkab: str | None = None
+    assignment_id: str | None = None
+    unique_bang: str | None = None
+    level_6_full_code: str | None = None
+    level_6_full_code_b: str | None = None
+    wilayah: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    #: Jarak geser (meter) dari titik asal, hasil hitung :mod:`app.geser`.
+    jarak_geser_m: float | None = None
+    flag_unggah: int | None = None
+    flag_model: int | None = None
+    keterangan: str | None = None
+
+
+class GeserOut(BaseModel):
+    """Isi halaman Pergeseran titik."""
+
+    run: GeserRunOut | None = None
+    runs: list[GeserRunOut] = []
+    total: int
+    #: Ambang meter yang sedang dipakai (filter tampilan).
+    min_meter: float
+    baris: list[GeserBarisOut]
+
+
 class KonfirmasiMasuk(BaseModel):
     """Permintaan simpan/batal konfirmasi (satu atau banyak titik).
 

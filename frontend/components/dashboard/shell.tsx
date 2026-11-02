@@ -24,6 +24,7 @@ import {
   IkonAktivitas,
   IkonAnomali,
   IkonBeranda,
+  IkonGeser,
   IkonKeluar,
   IkonMaster,
   IkonMenu,
@@ -87,6 +88,7 @@ const MENU: GrupMenu[] = [
     item: [
       { href: "/rekap", label: "Rekap progres", ikon: IkonRekap },
       { href: "/anomali", label: "Pencermatan Titik", ikon: IkonAnomali },
+      { href: "/geser", label: "Pergeseran Titik", ikon: IkonGeser },
     ],
   },
   {

@@ -414,6 +414,44 @@ export type Anomali = {
   status_pilihan: StatusKonfirmasi[];
 };
 
+export type GeserRun = {
+  run_id: number;
+  tanggal_data: string;
+  pengunggah: string | null;
+  kdkab: string | null;
+  target: number;
+  selesai: number;
+  jumlah_geser: number;
+};
+
+export type DaftarGeserRun = {
+  baris: GeserRun[];
+};
+
+export type GeserBaris = {
+  id: number | null;
+  kdkab: string | null;
+  assignment_id: string | null;
+  unique_bang: string | null;
+  level_6_full_code: string | null;
+  level_6_full_code_b: string | null;
+  wilayah: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  jarak_geser_m: number | null;
+  flag_unggah: number | null;
+  flag_model: number | null;
+  keterangan: string | null;
+};
+
+export type Geser = {
+  run: GeserRun | null;
+  runs: GeserRun[];
+  total: number;
+  min_meter: number;
+  baris: GeserBaris[];
+};
+
 export type PermintaanKonfirmasi = {
   status?: string;
   catatan?: string | null;

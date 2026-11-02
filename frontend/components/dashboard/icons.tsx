@@ -82,6 +82,18 @@ export function IkonAnomali(props: Props) {
   );
 }
 
+export function IkonGeser(props: Props) {
+  return (
+    <Dasar {...props}>
+      <circle cx="7" cy="17" r="2.5" />
+      <circle cx="17" cy="7" r="2.5" />
+      <path d="M9 15 15 9" />
+      <path d="M6 10.5 5 7l3.5.5" />
+      <path d="M18 13.5 19 17l-3.5-.5" />
+    </Dasar>
+  );
+}
+
 export function IkonEkspor(props: Props) {
   return (
     <Dasar {...props}>

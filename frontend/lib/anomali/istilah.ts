@@ -20,7 +20,6 @@ export const LABEL_JENIS: Readonly<Record<string, string>> = {
   luar_wilayah: "Di luar wilayah",
   posisi_menyimpang: "Posisi menyimpang",
   kode_berubah: "Kode SLS berubah",
-  digeser: "Digeser ≥10 m",
   regresi: "Awal Tidak masalah, sekarang jadi masalah",
   titik_baru: "Titik baru",
 };
@@ -43,12 +42,6 @@ export const ISTILAH: readonly IstilahJenis[] = [
     kode: "posisi_menyimpang",
     judul: "Posisi menyimpang",
     isi: "Titik ada di geotag hasil perbaikan kabkot, kabupaten megklaim flag_repair = 0 (sudah beres) tapi sistem mendeteksi kalau titik jatuh tidak di subsls yang sama dengan level_6_fullcode di geotag master GS.",
-  },
-  {
-    kode: "digeser",
-    judul: "Digeser ≥10 m",
-    isi: "Titik yang menurut sistem sudah benar (flag_repair akhir 0 dan atribut flag tidak diedit petugas), tetapi posisinya bergeser 10 meter atau lebih dari titik asal di Master GS. Pergeseran di bawah 10 meter dianggap getaran GPS dan tidak dimunculkan. Jarak dihitung dari kedua koordinat (bukan hanya latitude seperti flag_position model), jadi geseran mendatar pun terhitung.",
-    solusi: "Periksa apakah pergeseran sejauh itu memang sesuai kondisi lapangan (misalnya titik asal salah tempat). Kalau sesuai, konfirmasi \"Sesuai Kondisi Kenyataan\" dengan catatan alasannya.",
   },
   {
     kode: "regresi",
