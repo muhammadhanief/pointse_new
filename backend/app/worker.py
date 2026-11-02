@@ -65,6 +65,8 @@ import signal
 import socket
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -73,6 +75,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 from sqlalchemy import (
+    Engine,
     Float,
     Integer,
     Numeric,
@@ -145,6 +148,14 @@ PESAN_TERHENTI = "proses terhenti, kemungkinan dimatikan server"
 #: Job dianggap yatim bila tidak ada heartbeat worker yang menyebutnya selama
 #: ini (detik). Worker yang mati berhenti memperbarui ``worker_heartbeat``.
 AMBANG_YATIM_DETIK = 300
+
+#: Kunci bernama MySQL yang menyerialkan fase akhir job antar worker.
+KUNCI_FASE_AKHIR = "pointse:fase_akhir"
+
+#: Lama menunggu kunci fase akhir (detik). Kunci bernama milik satu koneksi, jadi
+#: pemegangnya yang mati melepas kunci itu sendiri; menunggu lama lebih murah
+#: daripada job gagal lalu diulang operator.
+TUNGGU_KUNCI_FASE_AKHIR_DETIK = 3600
 
 #: Pesan saat worker berhenti rapi di tengah job.
 PESAN_DIHENTIKAN = "worker dihentikan, job dikembalikan ke antrean"
@@ -1091,6 +1102,118 @@ def terapkan_urut_penuh(sesi: Session, run_id: int) -> None:
         sesi.execute(text(f"DROP TEMPORARY TABLE {TABEL_URUT}"))
 
 
+@contextmanager
+def kunci_fase_akhir(bind: Engine) -> Iterator[None]:
+    """Serialkan fase akhir job antar worker (hanya MySQL/MariaDB).
+
+    Fase akhir menulis ulang kolom kunci utama ``titik_hasil.urut`` dan menyapu
+    ``titik_hasil``/``wilayah`` satu run sekaligus. Bila dua worker menjalankan
+    fase akhir bersamaan, keduanya saling menunggu kunci baris sampai ``lock wait
+    timeout`` (1205); itulah yang membuat worker tambahan menghentikan pekerjaan
+    yang sedang menyimpan batch, bukan mempercepat antrean.
+
+    Kuncinya dipasang di koneksi tersendiri (bukan koneksi job) supaya tidak ikut
+    transaksi job, dan MySQL melepasnya sendiri bila proses pemegangnya mati.
+    Dialek lain (SQLite di tes) tidak punya ``GET_LOCK``: tanpa kunci.
+    """
+    if bind.dialect.name not in ("mysql", "mariadb"):
+        yield
+        return
+    koneksi = bind.connect()
+    try:
+        dapat = koneksi.execute(
+            text("SELECT GET_LOCK(:nama, :detik)"),
+            {"nama": KUNCI_FASE_AKHIR, "detik": TUNGGU_KUNCI_FASE_AKHIR_DETIK},
+        ).scalar()
+        if not dapat:
+            raise RuntimeError(
+                f"tidak memperoleh kunci {KUNCI_FASE_AKHIR} dalam "
+                f"{TUNGGU_KUNCI_FASE_AKHIR_DETIK} detik"
+            )
+        try:
+            yield
+        finally:
+            koneksi.execute(
+                text("SELECT RELEASE_LOCK(:nama)"), {"nama": KUNCI_FASE_AKHIR}
+            )
+    except Exception:
+        # Koneksi yang masih memegang kunci tidak boleh kembali ke pool: kunci
+        # yang menggantung akan memblokir seluruh worker.
+        koneksi.invalidate()
+        raise
+    finally:
+        koneksi.close()
+
+
+def simpan_fase_akhir(sesi: Session, run: Run, jumlah: int, potongan: bool) -> int:
+    """Rekap, anomali, capaian target, dan perapian ``urut`` (transaksi penutup).
+
+    Kembalikan jumlah baris anomali. Semua langkah di sini menyapu
+    ``titik_hasil``/``wilayah`` satu run secara menyeluruh, jadi dijalankan di
+    bawah :func:`kunci_fase_akhir` supaya tidak bertabrakan dengan fase akhir job
+    lain.
+    """
+    run_id = run.id
+    with kunci_fase_akhir(sesi.get_bind()):
+        # Peringkat urut penuh dihitung sebelum titik tidak perlu perhatian
+        # dibuang, supaya celah urut sama dengan mode tanpa potongan.
+        if potongan:
+            siapkan_urut_penuh(sesi, run_id)
+
+        modul_rekap.simpan_rekap(sesi, run)
+        # Anomali titik (menu audit) juga butuh seluruh titik B sebelum dipangkas.
+        jumlah_anomali = simpan_anomali(sesi, run)
+        # Capaian per assignment_id (target A vs B), juga sebelum pemangkasan.
+        modul_rekap.simpan_rekap_target(sesi, run)
+
+        run.jumlah_baris = jumlah
+        run.jumlah_tanpa_wilayah = hitung_tanpa_wilayah(sesi, run_id)
+        run.status = STATUS_SUKSES
+        run.heartbeat_at = sekarang()
+        run.finished_at = sekarang()
+        # Detail run terbaru tersedia; pemangkasan (baris tidak perlu perhatian
+        # + run lama) dikerjakan app.pemeliharaan, bukan di sini,
+        # supaya transaksi sukses tetap pendek dan tidak menunggu lock.
+        run.detail_tersedia = 1
+        if potongan:
+            terapkan_urut_penuh(sesi, run_id)
+        sesi.commit()
+    return jumlah_anomali
+
+
+def denyut_worker(
+    worker_id: str, run_id: int, sesi_pabrik: sessionmaker[Session]
+) -> None:
+    """Tulis denyut worker di transaksi tersendiri (tidak boleh gagal).
+
+    Baris ``worker_heartbeat`` tidak pernah disentuh transaksi batch job, jadi
+    denyut ini tetap segar walau transaksi penutup job memegang kunci baris
+    ``runs`` lama. Itu penting karena :func:`tandai_job_terhenti` memakai baris
+    inilah untuk tahu job masih dipegang worker yang hidup.
+    """
+    with sesi_pabrik() as sesi:
+        perbarui_heartbeat_worker(sesi, worker_id, status=WORKER_JALAN, run_id=run_id)
+        sesi.commit()
+
+
+def denyut_job(run_id: int, sesi_pabrik: sessionmaker[Session]) -> bool:
+    """Perbarui ``runs.heartbeat_at``; ``False`` bila job sudah tidak ``jalan``.
+
+    Hanya informasi, jadi jangan menunggu 50 detik saat baris ``runs`` sedang
+    dikunci transaksi batch utama.
+    """
+    with sesi_pabrik() as sesi:
+        if sesi.get_bind().dialect.name in ("mysql", "mariadb"):
+            sesi.execute(text("SET SESSION innodb_lock_wait_timeout = 2"))
+        hasil = sesi.execute(
+            update(Run)
+            .where(Run.id == run_id, Run.status == STATUS_JALAN)
+            .values(heartbeat_at=sekarang())
+        )
+        sesi.commit()
+        return bool(hasil.rowcount)
+
+
 def _jaga_heartbeat(
     run_id: int,
     worker_id: str,
@@ -1098,29 +1221,27 @@ def _jaga_heartbeat(
     berhenti: threading.Event,
     interval: float,
 ) -> None:
-    """Perbarui heartbeat job dan worker tiap ``interval`` detik."""
+    """Perbarui denyut worker lalu denyut job tiap ``interval`` detik.
+
+    Keduanya ditulis di transaksi yang **terpisah**: kegagalan denyut job (baris
+    ``runs`` terkunci transaksi batch besar/penutup) tidak boleh ikut membekukan
+    denyut worker, karena denyut worker itulah bukti job masih dipegang proses
+    yang hidup -- tanpa pemisahan itu job sehat bisa disapu worker lain sebagai
+    yatim.
+    """
     while not berhenti.wait(interval):
         try:
-            with sesi_pabrik() as sesi:
-                # Jangan menunggu 50 detik bila baris ``runs`` sedang dikunci oleh
-                # transaksi batch utama; heartbeat hanya informasi, bukan data hasil.
-                if sesi.get_bind().dialect.name in ("mysql", "mariadb"):
-                    sesi.execute(text("SET SESSION innodb_lock_wait_timeout = 2"))
-                hasil = sesi.execute(
-                    update(Run)
-                    .where(Run.id == run_id, Run.status == STATUS_JALAN)
-                    .values(heartbeat_at=sekarang())
-                )
-                perbarui_heartbeat_worker(
-                    sesi, worker_id, status=WORKER_JALAN, run_id=run_id
-                )
-                sesi.commit()
-                if not hasil.rowcount:
-                    return
+            denyut_worker(worker_id, run_id, sesi_pabrik)
+        except Exception:  # noqa: BLE001 - denyut tidak boleh mematikan job
+            logger.exception("gagal memperbarui heartbeat worker %s", worker_id)
+
+        try:
+            if not denyut_job(run_id, sesi_pabrik):
+                return
         except OperationalError as galat:
             # 1205 = lock wait timeout, 1213 = deadlock; wajar saat batch besar
             # masih memegang lock baris runs. Jangan banjiri log tiap 15 detik;
-            # batch utama tetap memperbarui heartbeat.
+            # denyut worker sudah menandai job ini masih hidup.
             kode = getattr(getattr(galat, "orig", None), "args", (None,))[0]
             if kode in (1205, 1213):
                 logger.debug("heartbeat job %s tertunda: %s", run_id, galat)
@@ -1128,6 +1249,22 @@ def _jaga_heartbeat(
                 logger.warning("heartbeat job %s gagal: %s", run_id, galat)
         except Exception:  # noqa: BLE001 - heartbeat tidak boleh mematikan job
             logger.exception("gagal memperbarui heartbeat job %s", run_id)
+
+
+def pasang_batas_tunggu_kunci(sesi: Session, setelan: Settings) -> None:
+    """Longgarkan batas tunggu kunci baris untuk sesi job ini (MySQL/MariaDB).
+
+    Batch penyimpanan 10.000 baris hanya bisa menunggu worker lain menuntaskan
+    sapuannya; batas bawaan MySQL 50 detik membuat job gagal (1205) padahal
+    datanya tidak rusak. Nilai ini hanya menempel pada koneksi proses worker --
+    API berjalan di proses terpisah dengan pool-nya sendiri.
+    """
+    if sesi.get_bind().dialect.name not in ("mysql", "mariadb"):
+        return
+    sesi.execute(
+        text("SET SESSION innodb_lock_wait_timeout = :detik"),
+        {"detik": setelan.db_lock_wait_detik},
+    )
 
 
 def proses_satu_job(
@@ -1188,6 +1325,7 @@ def proses_satu_job(
     heartbeat.start()
     try:
         with sesi_pabrik() as sesi:
+            pasang_batas_tunggu_kunci(sesi, setelan)
             run = sesi.get(Run, run_id)
             if run is None:  # job dihapus saat sedang jalan
                 logger.warning("job %s hilang saat dikerjakan", run_id)
@@ -1222,29 +1360,9 @@ def proses_satu_job(
                     sesi, run, hasil, id_wilayah, setelan, penghenti
                 )
 
-            # Peringkat urut penuh dihitung sebelum titik tidak perlu perhatian
-            # dibuang, supaya celah urut sama dengan mode tanpa potongan.
-            if potongan:
-                siapkan_urut_penuh(sesi, run_id)
-
-            modul_rekap.simpan_rekap(sesi, run)
-            # Anomali titik (menu audit) juga butuh seluruh titik B sebelum dipangkas.
-            jumlah_anomali = simpan_anomali(sesi, run)
-            # Capaian per assignment_id (target A vs B), juga sebelum pemangkasan.
-            modul_rekap.simpan_rekap_target(sesi, run)
-
-            run.jumlah_baris = jumlah
-            run.jumlah_tanpa_wilayah = hitung_tanpa_wilayah(sesi, run_id)
-            run.status = STATUS_SUKSES
-            run.heartbeat_at = sekarang()
-            run.finished_at = sekarang()
-            # Detail run terbaru tersedia; pemangkasan (baris tidak perlu
-            # perhatian + run lama) dikerjakan app.pemeliharaan, bukan di sini,
-            # supaya transaksi sukses tetap pendek dan tidak menunggu lock.
-            run.detail_tersedia = 1
-            if potongan:
-                terapkan_urut_penuh(sesi, run_id)
-            sesi.commit()
+            # Fase akhir (rekap, anomali, capaian, perapian urut) dijalankan di
+            # bawah kunci antar-worker; lihat ``simpan_fase_akhir``.
+            jumlah_anomali = simpan_fase_akhir(sesi, run, jumlah, potongan)
         logger.info(
             "job %s sukses: %s baris (anomali: %s)",
             run_id,

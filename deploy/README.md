@@ -122,9 +122,16 @@ membaca, tidak mengubah job atau konfigurasi.
 
 Satu worker memproses satu job sekaligus, jadi antrean panjang (mis. 7
 kabupaten/kota) selesai berurutan. Worker tambahan dijalankan sebagai **proses
-terpisah** lewat unit template `pointse-worker@.service`; jangan memakai
-`MAX_WORKERS` karena nilai itu hanya untuk worker in-process
-(`WORKER_ENABLED=true`) dan `--loop` mengabaikannya.
+terpisah** lewat unit template `pointse-worker@.service` (instance `@2`, `@3`,
+...); jangan memakai `MAX_WORKERS` karena nilai itu hanya untuk worker
+in-process (`WORKER_ENABLED=true`) dan `--loop` mengabaikannya.
+
+**Mulai dari dua worker.** Setelah fase akhir diserialkan dan batch menunggu kunci
+(lihat di bawah), worker ketiga/keempat tidak lagi menggagalkan job — tetapi juga
+hampir tidak menambah keluaran: penyisipan 10.000 baris ke `titik_hasil` tetap
+mengantre pada satu tabel, dan satu-satunya penyapu tabel hanya satu pada satu
+waktu. Tambah worker hanya kalau pengukuran menunjukkan CPU/disk masih longgar
+sementara antrean `menunggu` tetap panjang.
 
 ```bash
 # 1) Pastikan RAM masih cukup: butuh ~700 MB x jumlah worker
@@ -151,13 +158,18 @@ Yang perlu diketahui sebelum menyalakan worker kedua:
   `ExecStart`, nilainya tidak muncul di `systemctl show -p Environment`;
   periksa lewat prosesnya:
   `sudo tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value pointse-worker@2)/environ | grep WORKER_`.
-- **Naikkan `JOB_TIMEOUT_MENIT` dulu.** Worker yang menganggur akan menandai
-  job `jalan` yang heartbeat-nya lebih tua dari batas itu sebagai gagal. Pada
-  kabupaten besar fase akhir (rekap + urut penuh) bisa >30 menit,
-  sedangkan heartbeat job bisa membeku karena baris `runs` dikunci transaksi
-  itu. Dengan satu worker ini tidak terjadi (worker sibuk di dalam job), tetapi
-  dengan dua worker job sehat bisa ikut dibatalkan. Setel mis. `120` di
-  `/etc/pointse/pointse.env` lalu restart.
+- **Denyut worker dipisah dari denyut job.** Baris `worker_heartbeat` ditulis
+  lebih dulu di transaksi tersendiri, jadi tetap segar walau transaksi penutup
+  job memegang kunci baris `runs` lama (fase rekap + urut penuh bisa puluhan
+  menit). Itu yang dibaca penyapu yatim, sehingga job hidup tidak lagi ditandai
+  gagal oleh worker yang menganggur. `JOB_TIMEOUT_MENIT` kini murni jaring
+  pengaman terakhir (mis. worker macet total), bukan pengaman fase akhir.
+- **Fase akhir diserialkan antar worker.** Rekap, anomali, `rekap_target`, dan
+  perapian `urut` menulis `titik_hasil`/`wilayah` satu run sekaligus, jadi
+  dijalankan di bawah kunci bernama `pointse:fase_akhir` (`GET_LOCK` di koneksi
+  terpisah, lihat `app/worker.py`). Hanya satu worker yang menyapu tabel itu
+  pada satu waktu; worker lain tetap menyimpan batch secara paralel. Kunci
+  dilepas otomatis bila proses pemegangnya mati.
 - **Anggaran memori dijumlahkan.** Instance @2 memakai
   `WORKER_MEM_BUDGET_MB=700` dan `MemoryMax=1100M`. Total dua worker ±1,4 GB
   lunak / 2,2 GB keras, ditambah API (1 GB) dan MariaDB (±0,9 GB). Kalau
@@ -178,15 +190,20 @@ Yang perlu diketahui sebelum menyalakan worker kedua:
 - **Dua worker menulis tabel rekap yang sama.** Fase akhir job (rekap, anomali,
   `rekap_target`) menyentuh tabel yang sama untuk kabupaten berbeda. Engine
   memakai `READ COMMITTED` (`app/db.py`) supaya tidak ada gap lock antar rentang
-  `run_id`; dengan `REPEATABLE READ` job bisa gagal
-  `1205 Lock wait timeout exceeded`.
+  `run_id`, dan fase akhir diserialkan (lihat di atas); dengan `REPEATABLE READ`
+  job bisa gagal `1205 Lock wait timeout exceeded`.
+- **Worker menunggu kunci, bukan menyerah.** Sesi job memakai
+  `DB_LOCK_WAIT_DETIK` (bawaan 180) untuk `innodb_lock_wait_timeout`, jadi batch
+  yang harus menunggu fase akhir worker lain tidak langsung gagal `1205`.
+  Karena denyut worker tetap segar, menunggu lama tidak lagi diartikan mati.
 - **Pemangkasan `titik_hasil` tidak lagi di jalur job.** Job sukses hanya
   menulis rekap + status; perampingan dikerjakan `app.pemeliharaan` (lihat §4b),
   jadi transaksi job tetap pendek dan tidak saling menunggu kunci baris.
 - **CPU dan disk berbagi.** Di server 4 core, dua job memakai dua core dan
-  menyisakan dua core untuk API/MariaDB. Karena penyimpanan HDD, kenaikan
-  kecepatan biasanya ±1,3-1,6x, bukan 2x; lonjakan `iowait` terlihat di
-  `iostat -x 5` atau `vmstat 5`.
+  menyisakan dua core untuk API. Kecepatan tidak naik lurus dengan jumlah
+  worker: fase akhir tetap berurutan (kunci di atas) dan `titik_hasil` tetap
+  satu tabel. Bila basis data berada di server lain (SSD), `iowait` server
+  aplikasi turun dan kenaikannya lebih besar; periksa `iostat -x 5` bila ragu.
 - **Status sistem** hanya membaca kunci worker utama (PID di
   `<WORKER_LOCK_FILE>.pid`). Worker kedua tetap terlihat di daftar heartbeat dan
   kolom "worker aktif" bertambah otomatis.
@@ -194,8 +211,15 @@ Yang perlu diketahui sebelum menyalakan worker kedua:
 Menghentikan worker tambahan:
 
 ```bash
-systemctl disable --now pointse-worker@2.service
+systemctl disable --now pointse-worker@2.service pointse-worker@3.service
 ```
+
+SIGTERM mengembalikan job yang sedang dikerjakan ke `menunggu` dan
+membersihkan hasil separuhnya, jadi tidak perlu diulang manual. Yang perlu
+diketahui hanya fase akhir (rekap + perapian `urut`): fase itu belum punya titik
+periksa SIGTERM, jadi `systemctl stop` bisa menunggu sampai
+`TimeoutStopSec` (600 detik). Biarkan saja selesai; `kill -s KILL` membuat jobnya
+tersapu jadi `gagal` dan harus diulang dari UI.
 
 ### 4b. Pemeliharaan `titik_hasil`
 

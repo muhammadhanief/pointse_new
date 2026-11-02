@@ -158,11 +158,18 @@ biasa. Nilai `0` (default) memakai mode lama (seluruh titik sekaligus).
 - `python -m app.worker --once` mengambil **paling banyak satu** job, memproses,
   lalu keluar. Baik `--loop` maupun `--once` memakai `fcntl.flock`
   (`WORKER_LOCK_FILE`), sehingga cron tidak berjalan bersamaan dengan service.
-- Worker memperbarui `runs.heartbeat_at` tiap 15 detik dan tiap batch. SIGTERM
-  menyelesaikan batch berjalan, menghapus hasil separuh, dan mengembalikan job ke
-  `menunggu` agar bisa diulang. Job `jalan` yang heartbeat-nya lebih lama dari
-  `JOB_TIMEOUT_MENIT` (default 10) ditandai `gagal` dengan pesan "proses terhenti,
-  kemungkinan dimatikan server".
+- Worker memperbarui `worker_heartbeat` tiap 15 detik (transaksi terpisah dari
+  `runs.heartbeat_at`, supaya tetap segar saat transaksi penutup job memegang
+  kunci baris `runs`). SIGTERM menyelesaikan batch berjalan, menghapus hasil
+  separuh, dan mengembalikan job ke `menunggu` agar bisa diulang. Job `jalan`
+  yang tidak lagi disebut heartbeat worker hidup selama ±5 menit ditandai `gagal`
+  dengan pesan "proses terhenti, kemungkinan dimatikan server";
+  `JOB_TIMEOUT_MENIT` (default 10) adalah jaring pengaman terakhir untuk worker
+  yang macet total.
+- Fase akhir job (rekap, anomali, `rekap_target`, perapian `urut`) dijalankan di
+  bawah kunci bernama MySQL `pointse:fase_akhir`, jadi hanya satu worker yang
+  menyapu `titik_hasil`/`wilayah` pada satu waktu; sesi job menunggu kunci baris
+  sampai `DB_LOCK_WAIT_DETIK` (default 180 detik) sebelum menyerah `1205`.
 
 ### Memantau worker
 

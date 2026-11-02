@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import threading
+import time
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NamedTuple
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import Engine, select
 from sqlalchemy.dialects import mysql
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 import data_kecil
@@ -1023,3 +1027,92 @@ def test_pesan_galat_lock_wait_dan_deadlock_dijelaskan() -> None:
 def test_pesan_galat_tak_dikenal_hanya_mentah() -> None:
     """Galat di luar pola yang dikenal dikembalikan apa adanya."""
     assert modul_worker.pesan_galat(ValueError("berkas rusak")) == "berkas rusak"
+
+
+def test_kunci_fase_akhir_dilewati_tanpa_get_lock(mesin: Engine) -> None:
+    """SQLite tidak punya ``GET_LOCK``: kunci fase akhir hanya dilewati."""
+    lewat = False
+    with modul_worker.kunci_fase_akhir(mesin):
+        lewat = True
+    assert lewat
+
+
+def test_fase_akhir_dijalankan_di_bawah_kunci(
+    sesi: Session,
+    sesi_pabrik: sessionmaker[Session],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fase akhir job (rekap..perapian urut) selalu di dalam kunci antar-worker.
+
+    Dua fase akhir yang berjalan bersamaan saling mengunci sampai 1205; kunci ini
+    yang menyerialkannya tanpa menahan fase penyimpanan batch.
+    """
+    jejak: list[str] = []
+
+    @contextmanager
+    def kunci_palsu(_bind: Engine) -> Iterator[None]:
+        jejak.append("ambil")
+        try:
+            yield
+        finally:
+            jejak.append("lepas")
+
+    monkeypatch.setattr(modul_worker, "kunci_fase_akhir", kunci_palsu)
+
+    job = buat_job(sesi, tmp_path)
+    sesi.rollback()
+
+    assert proses_satu_job(sesi_pabrik) is True
+
+    sesi.refresh(job)
+    assert job.status == STATUS_SUKSES, job.pesan
+    assert jejak == ["ambil", "lepas"]
+
+
+def test_denyut_worker_tetap_tertulis_saat_denyut_job_terkunci(
+    sesi: Session,
+    sesi_pabrik: sessionmaker[Session],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Denyut worker ditulis walau denyut job gagal (baris ``runs`` terkunci).
+
+    Baris ``worker_heartbeat`` inilah yang dibaca :func:`tandai_job_terhenti``
+    untuk tahu job masih dipegang worker hidup; kalau denyut itu ikut gagal saat
+    transaksi penutup memegang kunci ``runs``, job sehat akan disapu sebagai
+    yatim dan hasil separuhnya dibuang.
+    """
+    run = buat_job(sesi, tmp_path, nama="terkunci")
+    run.status = STATUS_JALAN
+    run.heartbeat_at = sekarang()
+    sesi.commit()
+
+    def denyut_job_terkunci(*_args: Any, **_kwargs: Any) -> bool:
+        raise OperationalError(
+            "UPDATE runs SET heartbeat_at = ...",
+            {},
+            Exception(1205, "Lock wait timeout exceeded"),
+        )
+
+    monkeypatch.setattr(modul_worker, "denyut_job", denyut_job_terkunci)
+
+    berhenti = threading.Event()
+    penjaga = threading.Thread(
+        target=modul_worker._jaga_heartbeat,
+        args=(run.id, "w-terkunci", sesi_pabrik, berhenti, 0.01),
+        name="uji-heartbeat",
+        daemon=True,
+    )
+    penjaga.start()
+    time.sleep(0.3)
+    berhenti.set()
+    penjaga.join(timeout=5)
+
+    assert not penjaga.is_alive()
+    with sesi_pabrik() as pemeriksa:
+        denyut = pemeriksa.get(WorkerHeartbeat, "w-terkunci")
+        assert denyut is not None
+        assert denyut.status == WORKER_JALAN
+        assert denyut.run_id == run.id
+

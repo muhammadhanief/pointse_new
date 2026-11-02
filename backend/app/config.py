@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     db_user: str = ""
     db_password: str = ""
     db_name: str = "pointse"
+    #: Batas tunggu kunci baris sesi worker (detik). Bawaan MySQL 50 detik terlalu
+    #: cepat untuk batch 10.000 baris yang harus menunggu worker lain menuntaskan
+    #: fase akhirnya (lihat :func:`app.worker.kunci_fase_akhir`); job yang menyerah
+    #: hanya membuang pekerjaan padahal datanya tidak rusak.
+    db_lock_wait_detik: int = Field(180, ge=1)
 
     # CORS: hanya origin frontend yang boleh memanggil API dari browser.
     cors_origins: list[str] = Field(
