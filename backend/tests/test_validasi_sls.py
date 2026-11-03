@@ -137,10 +137,10 @@ def test_pesan_tiga_blok() -> None:
     )
     lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, matching)
     assert not lolos
-    assert "skema: OK" in pesan
-    assert "duplikat: GAGAL (2 pasangan ganda; contoh: A|X, B|Y)" in pesan
+    assert "Validasi Kelengkapan Atribut: Sukses" in pesan
+    assert "Validasi Duplikat: Gagal" in pesan and "2 pasangan ganda" in pesan
     assert "tidak ada di peta=1" in pesan and "tidak ada di master=1" in pesan
-    assert "contoh: A, C" in pesan
+    assert "Contoh: A, C." in pesan
 
 
 def test_normalisasi_idsls() -> None:
@@ -200,9 +200,9 @@ def test_pesan_memuat_hitungan_jenis() -> None:
     )
     lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, matching)
     assert not lolos
-    assert "duplikat: OK" in pesan
+    assert "Validasi Duplikat: Sukses" in pesan
     assert "ganda=1" in pesan and "tidak ada di master=1" in pesan
-    assert "contoh: B, C02" in pesan
+    assert "Contoh: B, C02" in pesan
 
 
 def _tulis_master_xlsx(jalur, baris) -> None:
@@ -265,7 +265,7 @@ def test_berkas_split_subsls_sesuai_master_lolos(tmp_path) -> None:
     )
     hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
     assert hasil.lolos, hasil.pesan
-    assert "duplikat: OK" in hasil.pesan
+    assert "Validasi Duplikat: Sukses" in hasil.pesan
 
 
 def test_berkas_subsls_ganda_dan_beda_komposisi_gagal(tmp_path) -> None:

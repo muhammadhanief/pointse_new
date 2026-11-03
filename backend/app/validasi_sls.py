@@ -302,28 +302,40 @@ def bandingkan(
 def rangkum_pesan(
     skema: HasilSkema, duplikat: HasilDuplikat, matching: HasilMatching
 ) -> tuple[bool, str]:
-    """Susun ringkasan 3 blok untuk ``runs.pesan`` (tanpa rahasia)."""
+    """Susun ringkasan per blok, satu blok satu baris (tanpa rahasia)."""
     bagian: list[str] = []
     if skema.lolos:
-        bagian.append("skema: OK (17 kolom sesuai)")
+        bagian.append(
+            "Validasi Kelengkapan Atribut: Sukses \u2014 "
+            "17 kolom wajib sudah ada pada peta Anda."
+        )
+    elif skema.kolom_hilang:
+        bagian.append(
+            "Validasi Kelengkapan Atribut: Gagal \u2014 "
+            f"kolom hilang: {', '.join(skema.kolom_hilang)}."
+        )
     else:
-        if skema.kolom_hilang:
-            bagian.append(f"skema: GAGAL (kolom hilang: {', '.join(skema.kolom_hilang)})")
-        else:
-            rincian = "; ".join(
-                f"{satu.kolom} {satu.masalah} (contoh: {', '.join(satu.contoh)})"
-                for satu in skema.temuan
-            )
-            bagian.append(f"skema: GAGAL ({rincian})")
+        rincian = "; ".join(
+            f"{satu.kolom} {satu.masalah} (contoh: {', '.join(satu.contoh)})"
+            for satu in skema.temuan
+        )
+        bagian.append(f"Validasi Kelengkapan Atribut: Gagal \u2014 {rincian}.")
     if duplikat.lolos:
-        bagian.append("duplikat: OK (pasangan unik)")
+        bagian.append(
+            "Validasi Duplikat: Sukses \u2014 "
+            "tidak ada pasangan idsls+idsubsls yang ganda."
+        )
     else:
         contoh = ", ".join(duplikat.contoh)
         bagian.append(
-            f"duplikat: GAGAL ({duplikat.jumlah_ganda} pasangan ganda; contoh: {contoh})"
+            f"Validasi Duplikat: Gagal \u2014 "
+            f"{duplikat.jumlah_ganda} pasangan ganda; contoh: {contoh}."
         )
     if matching.lolos:
-        bagian.append("matching: OK (peta <-> master cocok)")
+        bagian.append(
+            "Validasi Matching dengan Master MFD: Sukses \u2014 "
+            "peta cocok dengan master (0 temuan)."
+        )
     else:
         hitung_jenis: dict[str, int] = {}
         for satu in matching.temuan:
@@ -333,16 +345,16 @@ def rangkum_pesan(
             for satu in matching.temuan[:CONTOH_N]
         )
         bagian.append(
-            "matching: GAGAL "
-            f"(tidak ada di peta={hitung_jenis.get(JENIS_TIDAK_DI_PETA, 0)}"
+            "Validasi Matching dengan Master MFD: Gagal \u2014 "
+            f"tidak ada di peta={hitung_jenis.get(JENIS_TIDAK_DI_PETA, 0)}"
             f"; tidak ada di master={hitung_jenis.get(JENIS_TIDAK_DI_MASTER, 0)}"
-            f"; ganda={hitung_jenis.get(JENIS_GANDA, 0)}"
-            + (f"; contoh: {contoh}" if contoh else "")
-            + ")"
+            f"; ganda={hitung_jenis.get(JENIS_GANDA, 0)}."
         )
+        if contoh:
+            bagian.append(f"Contoh: {contoh}.")
     lolos = skema.lolos and duplikat.lolos and matching.lolos
     judul = "Validasi SLS 2026 S1: LOLOS" if lolos else "Validasi SLS 2026 S1: GAGAL"
-    return lolos, f"{judul} — " + " | ".join(bagian)
+    return lolos, judul + "\n" + "\n".join(bagian)
 
 
 def gabungkan_hasil(

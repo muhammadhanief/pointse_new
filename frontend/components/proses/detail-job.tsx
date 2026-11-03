@@ -168,7 +168,7 @@ export function DetailJob({
               <section aria-label="Hasil job">
                 <h3 className="text-sm font-semibold text-ink">Hasil</h3>
                 <p
-                  className={`mt-1 rounded-lg px-3 py-2 text-sm leading-normal ${
+                  className={`mt-1 rounded-lg px-3 py-2 text-sm leading-normal whitespace-pre-line ${
                     run.status === "gagal"
                       ? "bg-danger-soft text-danger"
                       : "bg-paper text-ink"
