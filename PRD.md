@@ -319,6 +319,7 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
    Cek panjang memindai seluruh baris (bukan sampel awal saja); pelanggaran
    melaporkan nomor baris pertama ("pertama di baris N") supaya mudah
    ditemukan di attribute table QGIS.
+   Nilai kosong pada baris dilewati pemeriksaan panjang (tidak menggagalkan); kolom yang seluruh barisnya kosong tetap lolos skema.
 2. **ID duplikat**: pasangan `idsls`+`idsubsls` yang sama persis tidak boleh
    muncul lebih dari sekali. Satu `idsls` boleh ada di banyak baris selama
    tiap baris punya `idsubsls` berbeda (satu baris per SubSLS, seperti di
@@ -391,6 +392,12 @@ dikecualikan dari commit (data mentah).
    hitungan per jenis temuan, contoh kode per jenis (maks 3), dan ajakan
    mengunduh rincian Excel (tanpa rahasia).
 4. Riwayat menampilkan tab/run V dengan lencana status; tombol unduh Excel
+   daftar temuan per run (lembar Ringkasan + satu sheet per jenis, tab merah
+   bila ada temuan) untuk diperbaiki di QGIS lalu unggah ulang.
+5. Halaman progres validasi (`/proses/validasi/progres`, didukung endpoint
+   `GET /validasi-sls/ringkasan`) menampilkan run V terakhir tiap
+   kabupaten/kota beserta hitungan temuan per jenis; antrean menunggu
+   bernomor urut global di kolom riwayat.
    daftar temuan per run (lembar Ringkasan + satu sheet per jenis, tab merah
    bila ada temuan) untuk diperbaiki di QGIS lalu unggah ulang.
 5. Anggaran memori worker tetap 800MB; baca Excel/peta per potong bila perlu.

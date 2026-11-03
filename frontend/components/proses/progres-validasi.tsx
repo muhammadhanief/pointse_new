@@ -9,12 +9,13 @@ import {
   pesanKesalahan,
   unduhBerkas,
 } from "@/lib/api/klien";
-import type { ValidasiRingkasan, ValidasiRingkasanBaris } from "@/lib/api/types";
+import type { Run, ValidasiRingkasan, ValidasiRingkasanBaris } from "@/lib/api/types";
 import { kodeWilayah } from "@/lib/auth/peran";
 import { formatAngka, formatTanggal, formatWaktu } from "@/lib/format";
 import { namaKabupaten } from "@/lib/wilayah/kabupaten";
 
 import { BadgeStatus } from "./badge-status";
+import { DetailJob } from "./detail-job";
 
 const INTERVAL_MUAT_ULANG = 15000;
 
@@ -26,6 +27,8 @@ function labelJenis(jenis: string): string {
       return "Tidak ada di master";
     case "ganda":
       return "Ganda di peta";
+    case "nama_beda":
+      return "Nama berbeda";
     default:
       return jenis;
   }
@@ -37,6 +40,8 @@ export function ProgresValidasi() {
   const [galat, setGalat] = useState<string | null>(null);
   const [sibuk, setSibuk] = useState<number | null>(null);
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
+  const [filterStatus, setFilterStatus] = useState<string>("semua");
+  const [detail, setDetail] = useState<Run | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
 
   const muat = useCallback(async (senyap = false) => {
@@ -94,12 +99,12 @@ export function ProgresValidasi() {
     };
   }, [muat]);
 
-  async function unduh(runId: number, kode: string, nomor: number | null) {
+  async function unduh(runId: number, kode: string) {
     setSibuk(runId);
     try {
       await unduhBerkas(
         `/runs/${runId}/ekspor/unmatch-v.xlsx`,
-        `${kode}_validasi_sls_2026_s1_ke${nomor ?? "?"}.xlsx`,
+        `${kode}_validasi_sls_2026_s1.xlsx`,
       );
     } catch {
       // Biarkan tombol kembali normal; unduhan detail ada di riwayat.
@@ -108,19 +113,53 @@ export function ProgresValidasi() {
     }
   }
 
+  async function bukaDetail(runId: number) {
+    try {
+      const run = await ambilJson<Run>(`/runs/${runId}`);
+      setDetail(run);
+    } catch {
+      // Biarkan tetap tertutup; detail lengkap ada di riwayat.
+    }
+  }
+
+  const tampil =
+    filterStatus === "semua"
+      ? baris
+      : filterStatus === "berjalan"
+        ? baris.filter(
+            (satu) => satu.status === "menunggu" || satu.status === "jalan",
+          )
+        : baris.filter((satu) => satu.status === filterStatus);
+
   return (
     <Panel
       judul="Progres validasi per kabupaten/kota"
       deskripsi="Run validasi (tipe V) terakhir tiap kabupaten/kota beserta temuan yang belum diperbaiki. Diperbarui otomatis."
     >
-      <div className="mt-3 flex flex-col gap-field sm:flex-row sm:items-center sm:justify-between">
+      <div className="mt-3 flex flex-col gap-field sm:flex-row sm:items-end sm:justify-between">
         <p className="text-sm text-muted" aria-live="polite">
-          {baris.length} kabupaten/kota sudah mengunggah
+          {tampil.length} kabupaten/kota
+          {filterStatus !== "semua" ? " sesuai filter" : " sudah mengunggah"}
           {diperbarui ? `. Diperbarui ${diperbarui}` : ""}.
         </p>
-        <TombolAksi varian="sekunder" onClick={() => void muat()}>
-          {memuat ? "Memuat..." : "Muat ulang"}
-        </TombolAksi>
+        <div className="flex flex-wrap items-center gap-field">
+          <label className="text-sm text-muted">
+            Status{" "}
+            <select
+              value={filterStatus}
+              onChange={(event) => setFilterStatus(event.target.value)}
+              className="min-h-9 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink"
+            >
+              <option value="semua">Semua</option>
+              <option value="sukses">Lolos</option>
+              <option value="gagal">Gagal</option>
+              <option value="berjalan">Diproses</option>
+            </select>
+          </label>
+          <TombolAksi varian="sekunder" onClick={() => void muat()}>
+            {memuat ? "Memuat..." : "Muat ulang"}
+          </TombolAksi>
+        </div>
       </div>
 
       {galat ? (
@@ -152,7 +191,13 @@ export function ProgresValidasi() {
         </EmptyState>
       ) : null}
 
-      {baris.length > 0 ? (
+      {!memuat && !galat && baris.length > 0 && tampil.length === 0 ? (
+        <EmptyState judul="Tidak ada baris sesuai filter">
+          Ubah saringan status atau pilih "Semua".
+        </EmptyState>
+      ) : null}
+
+      {tampil.length > 0 ? (
         <div className="relative mt-3 max-h-[70vh] overflow-auto overscroll-contain">
           <table className="w-full min-w-[56rem] border-collapse text-[13px]">
             <caption className="sr-only">
@@ -199,7 +244,7 @@ export function ProgresValidasi() {
               </tr>
             </thead>
             <tbody>
-              {baris.map((satu) => {
+              {tampil.map((satu) => {
                 const kode = kodeWilayah(satu.kdprov, satu.kdkab);
                 const rincian = Object.entries(satu.per_jenis)
                   .map(([jenis, jumlah]) => `${labelJenis(jenis)} ${jumlah}`)
@@ -225,8 +270,13 @@ export function ProgresValidasi() {
                         · {satu.semester ?? "-"}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-ink">
-                      {formatAngka(satu.total)}
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold">
+                      <span className={satu.total > 0 ? "text-danger" : "text-success"}>
+                        {formatAngka(satu.total)}
+                      </span>{" "}
+                      <span className="block text-[11px] font-normal text-muted">
+                        {satu.total > 0 ? "Perlu tindakan" : "Beres"}
+                      </span>
                     </td>
                     <td className="max-w-[22rem] px-3 py-2 text-xs leading-5 text-muted">
                       {rincian || "Tidak ada temuan"}
@@ -235,7 +285,14 @@ export function ProgresValidasi() {
                       <TombolAksi
                         varian="sekunder"
                         className="min-h-8 px-3 text-xs"
-                        onClick={() => void unduh(satu.run_id, kode, null)}
+                        onClick={() => void bukaDetail(satu.run_id)}
+                      >
+                        Detail
+                      </TombolAksi>{" "}
+                      <TombolAksi
+                        varian="sekunder"
+                        className="min-h-8 px-3 text-xs"
+                        onClick={() => void unduh(satu.run_id, kode)}
                         disabled={sibuk !== null || satu.total === 0}
                         title={
                           satu.total === 0
@@ -255,6 +312,8 @@ export function ProgresValidasi() {
           </table>
         </div>
       ) : null}
+
+      <DetailJob run={detail} onTutup={() => setDetail(null)} />
     </Panel>
   );
 }
