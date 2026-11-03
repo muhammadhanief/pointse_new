@@ -60,6 +60,19 @@ export function FormProsesV({ onSelesai }: { onSelesai?: () => void }) {
   return (
     <Panel>
       <form onSubmit={kirim} className="space-y-field" aria-busy={sedang}>
+        <p className="text-sm leading-normal text-muted">
+          Dasar pengecekan adalah MFD, berikut filenya{" "}
+          <a
+            href="https://s.bps.go.id/MFD_Rilis_Daerah"
+            target="_blank"
+            rel="noreferrer"
+            className="font-semibold text-brand-strong underline underline-offset-4"
+          >
+            s.bps.go.id/MFD_Rilis_Daerah
+          </a>
+          .
+        </p>
+
         <BidangBerkas
           key={kunciBerkas}
           id="peta-proses-v"
@@ -150,9 +163,9 @@ export function FormProsesV({ onSelesai }: { onSelesai?: () => void }) {
       >
         <div className="space-y-field">
           <p className="text-sm leading-normal text-ink">
-            Berkas masuk antrean validasi. Hasil lolos/gagal tercatat di
-            riwayat; unduh daftar temuan (Excel) untuk diperbaiki di QGIS. Proses
-            ini tidak mengubah progres SE2026.
+            Berkas masuk antrean validasi. Hasil lolos/belum clean/gagal
+            tercatat di riwayat; unduh daftar temuan (Excel) untuk diperbaiki
+            di QGIS. Proses ini tidak mengubah progres SE2026.
           </p>
           <div className="flex flex-wrap justify-end gap-field border-t border-line pt-kartu">
             <TombolAksi varian="sekunder" onClick={() => setNotifikasi(false)}>
