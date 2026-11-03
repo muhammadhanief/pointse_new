@@ -22,7 +22,10 @@ ikut hitung nomor job A/B, dan tidak menjadi sumber peta Proses B.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -184,7 +187,8 @@ def periksa_skema(
                 continue
             maks = PANJANG_MAKS_V[kolom]
             buruk: list[str] = []
-            for nilai in contoh_nilai.get(kolom, [])[:2000]:
+            baris_pertama: int | None = None
+            for urut, nilai in enumerate(contoh_nilai.get(kolom, []), start=1):
                 if nilai is None:
                     continue
                 teks = str(nilai).strip()
@@ -196,18 +200,23 @@ def periksa_skema(
                         angka = int(float(teks)) if "." in teks else int(teks)
                     except ValueError:
                         buruk.append(teks[:40])
-                        continue
-                    if len(str(abs(angka))) > maks:
-                        buruk.append(teks[:40])
+                    else:
+                        if len(str(abs(angka))) > maks:
+                            buruk.append(teks[:40])
                 elif len(teks) > maks:
                     buruk.append(teks[:60])
+                if buruk and baris_pertama is None:
+                    baris_pertama = urut
                 if len(buruk) >= CONTOH_N:
                     break
             if buruk:
                 temuan.append(
                     TemuanSkema(
                         kolom=kolom,
-                        masalah=f"melebihi panjang {maks}",
+                        masalah=(
+                            f"melebihi panjang {maks} "
+                            f"(pertama di baris {baris_pertama})"
+                        ),
                         contoh=buruk[:CONTOH_N],
                     )
                 )
@@ -250,6 +259,7 @@ def bandingkan(
     hitung = dict(hitung_peta or {})
     temuan: list[BarisUnmatch] = []
     sisa_master = dict(master)
+    induk_master = {kode for kode, _sub in master}
     for pasang in sorted(peta):
         idsls, subsls = pasang
         nama = peta[pasang]
@@ -273,6 +283,12 @@ def bandingkan(
             catatan.append(f"ganda di peta ({hitung[pasang]} baris)")
         if idsls and (len(idsls) != 14 or not idsls.isdigit()):
             catatan.append("kolom idsls bukan kode SLS 14 digit")
+        elif (
+            idsls
+            and subsls
+            and idsls in induk_master
+        ):
+            catatan.append("induk terdaftar di master (kemungkinan subsls baru hasil pemekaran)")
         temuan.append(
             BarisUnmatch(
                 jenis=JENIS_TIDAK_DI_MASTER,
@@ -338,20 +354,35 @@ def rangkum_pesan(
         )
     else:
         hitung_jenis: dict[str, int] = {}
+        contoh_jenis: dict[str, list[BarisUnmatch]] = {}
         for satu in matching.temuan:
             hitung_jenis[satu.jenis] = hitung_jenis.get(satu.jenis, 0) + 1
-        contoh = ", ".join(
-            satu.idsls_peta or satu.idsls_master or "-"
-            for satu in matching.temuan[:CONTOH_N]
+            contoh_jenis.setdefault(satu.jenis, []).append(satu)
+        label_jenis = {
+            JENIS_TIDAK_DI_PETA: "tidak ada di peta",
+            JENIS_TIDAK_DI_MASTER: "tidak ada di master",
+            JENIS_GANDA: "ganda",
+        }
+        rincian = "; ".join(
+            f"{label_jenis.get(jenis, jenis)}={hitung_jenis.get(jenis, 0)}"
+            for jenis in (JENIS_TIDAK_DI_PETA, JENIS_TIDAK_DI_MASTER, JENIS_GANDA)
         )
+        bagian.append(f"Validasi Matching dengan Master MFD: Gagal \u2014 {rincian}.")
+        for jenis in (JENIS_TIDAK_DI_PETA, JENIS_TIDAK_DI_MASTER, JENIS_GANDA):
+            contoh = contoh_jenis.get(jenis, [])[:3]
+            if contoh:
+                kode = ", ".join(
+                    satu.idsubsls_peta
+                    or satu.idsubsls_master
+                    or satu.idsls_peta
+                    or satu.idsls_master
+                    or "-"
+                    for satu in contoh
+                )
+                bagian.append(f"Contoh {label_jenis[jenis]}: {kode}.")
         bagian.append(
-            "Validasi Matching dengan Master MFD: Gagal \u2014 "
-            f"tidak ada di peta={hitung_jenis.get(JENIS_TIDAK_DI_PETA, 0)}"
-            f"; tidak ada di master={hitung_jenis.get(JENIS_TIDAK_DI_MASTER, 0)}"
-            f"; ganda={hitung_jenis.get(JENIS_GANDA, 0)}."
+            "Unduh rincian Excel di halaman Riwayat, perbaiki di QGIS, lalu unggah ulang."
         )
-        if contoh:
-            bagian.append(f"Contoh: {contoh}.")
     lolos = skema.lolos and duplikat.lolos and matching.lolos
     judul = "Validasi SLS 2026 S1: LOLOS" if lolos else "Validasi SLS 2026 S1: GAGAL"
     return lolos, judul + "\n" + "\n".join(bagian)
@@ -424,13 +455,22 @@ def baca_master(
         indeks = kepala.index("idsubsls")
         indeks_nama = kepala.index("nmsls") if "nmsls" in kepala else None
         master: dict[tuple[str, str], str | None] = {}
+        dilewati = 0
+        contoh_lewat: list[str] = []
         for satu in baris:
             if satu is None or indeks >= len(satu):
                 continue
             subsls = normalisasi_idsls(satu[indeks])
             if not subsls:
+                dilewati += 1
                 continue
             if len(subsls) != 16 or not subsls.isdigit():
+                dilewati += 1
+                if len(contoh_lewat) < 3:
+                    mentah_lewat = satu[indeks]
+                    contoh_lewat.append(
+                        str(mentah_lewat).strip() if mentah_lewat is not None else ""
+                    )
                 continue
             idsls = subsls[:14]
             nama = None
@@ -440,6 +480,13 @@ def baca_master(
             master.setdefault((idsls, subsls), nama or None)
     finally:
         wb.close()
+    if dilewati:
+        logger.warning(
+            "master %s: %d baris idsubsls dilewati (contoh: %s)",
+            jalur_msubsls.name,
+            dilewati,
+            ", ".join(contoh_lewat),
+        )
     if not master:
         raise ValueError(f"master {jalur_msubsls.name} tidak memuat idsls apa pun")
     return master

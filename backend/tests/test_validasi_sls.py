@@ -140,7 +140,9 @@ def test_pesan_tiga_blok() -> None:
     assert "Validasi Kelengkapan Atribut: Sukses" in pesan
     assert "Validasi Duplikat: Gagal" in pesan and "2 pasangan ganda" in pesan
     assert "tidak ada di peta=1" in pesan and "tidak ada di master=1" in pesan
-    assert "Contoh: A, C." in pesan
+    assert "Contoh tidak ada di peta: C01." in pesan
+    assert "Contoh tidak ada di master: A01." in pesan
+    assert pesan.rstrip().endswith("lalu unggah ulang.")
 
 
 def test_normalisasi_idsls() -> None:
@@ -202,7 +204,8 @@ def test_pesan_memuat_hitungan_jenis() -> None:
     assert not lolos
     assert "Validasi Duplikat: Sukses" in pesan
     assert "ganda=1" in pesan and "tidak ada di master=1" in pesan
-    assert "Contoh: B, C02" in pesan
+    assert "Contoh ganda: B01." in pesan
+    assert "Contoh tidak ada di master: C02." in pesan
 
 
 def _tulis_master_xlsx(jalur, baris) -> None:
@@ -311,3 +314,49 @@ def test_berkas_idsls_16_digit_jadi_tidak_di_master(tmp_path) -> None:
     assert "tidak ada di peta=1" in hasil.pesan
     temuan = [s for s in hasil.matching.temuan if s.jenis == "tidak_di_master"]
     assert len(temuan) == 1 and temuan[0].catatan == "kolom idsls bukan kode SLS 14 digit"
+
+
+def test_skema_pindai_melewati_batas_2000_baris() -> None:
+    """Pelanggaran di baris >2000 tetap ketahuan + nomor baris dilaporkan."""
+    kolom = list(validasi_sls.KOLOM_PETA_V)
+    contoh = {nama: ["x"] * 5000 for nama in kolom}
+    contoh["nmdesa"][4650 - 1] = "y" * 51
+    hasil = validasi_sls.periksa_skema(kolom, contoh)
+    assert not hasil.lolos
+    temuan = [s for s in hasil.temuan if s.kolom == "nmdesa"]
+    assert len(temuan) == 1
+    assert "pertama di baris 4650" in temuan[0].masalah
+
+
+def test_banding_subsls_baru_di_sls_dikenal_diberi_hint_pemekaran() -> None:
+    """Subsls asing di bawah induk terdaftar = kemungkinan hasil pemekaran."""
+    peta = {
+        ("33020100010001", "3302010001000100"): "SLS A",
+        ("33020100010001", "3302010001000199"): "SLS A",
+    }
+    master = {
+        ("33020100010001", "3302010001000100"): "SLS A",
+        ("33020100010001", "3302010001000101"): "SLS A",
+    }
+    hitung = {k: 1 for k in peta}
+    hasil = validasi_sls.bandingkan(peta, master, hitung)
+    assert not hasil.lolos
+    asing = [s for s in hasil.temuan if s.jenis == validasi_sls.JENIS_TIDAK_DI_MASTER]
+    assert len(asing) == 1
+    assert asing[0].idsubsls_peta == "3302010001000199"
+    assert asing[0].catatan == "induk terdaftar di master (kemungkinan subsls baru hasil pemekaran)"
+    assert any(s.jenis == validasi_sls.JENIS_TIDAK_DI_PETA for s in hasil.temuan)
+
+
+def test_baca_master_melaporkan_baris_dilewati(caplog, tmp_path) -> None:
+    """Baris master malformed dicatat di log, bukan didiamkan."""
+    import logging
+
+    _siapkan_master(
+        tmp_path, "3312",
+        [("3312010001000100", "SLS A"), ("SALAH", "SLS X"), ("", "SLS KOSONG")],
+    )
+    with caplog.at_level(logging.WARNING, logger="app.validasi_sls"):
+        master = validasi_sls.baca_master(tmp_path / "m", "3312")
+    assert set(master) == {("33120100010001", "3312010001000100")}
+    assert "dilewati" in caplog.text and "SALAH" in caplog.text

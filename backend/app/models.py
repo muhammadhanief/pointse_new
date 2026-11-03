@@ -531,8 +531,7 @@ class ValidasiSlsUnmatch(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
-    #: Jenis temuan (nama sheet unduhan): tidak_di_peta/tidak_di_master/
-    #: ganda/kolom_salah.
+    #: Jenis temuan (nama sheet unduhan): tidak_di_peta/tidak_di_master/ganda.
     jenis: Mapped[str] = mapped_column(String(16))
     idsls_peta: Mapped[str | None] = mapped_column(String(20))
     idsubsls_peta: Mapped[str | None] = mapped_column(String(20))

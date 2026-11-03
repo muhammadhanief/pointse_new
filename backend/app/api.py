@@ -230,6 +230,12 @@ def unggah_run(
             # Pemeriksaan kolom peta ringan di sini (penuh di worker); satu kab.
             from app import validasi_sls
 
+            if Path(nama_peta_asli).suffix.lower() not in (".geojson", ".json", ".gpkg"):
+                raise KesalahanUnggahan(
+                    f"berkas '{nama_peta_asli}' bukan GeoJSON/GPKG; pastikan nama berkas "
+                    "berakhiran .geojson atau .gpkg (mis. hasil unduhan rangkap "
+                    "bernama '... (1)' tanpa akhiran perlu diganti namanya dulu)"
+                )
             try:
                 kolom_berkas = validasi_sls.kolom_berkas_peta(
                     berkas_peta, layer_peta

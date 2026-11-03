@@ -139,6 +139,23 @@ def test_ringkasan_validasi_run_terakhir_dan_hitungan(sesi) -> None:
     assert kosong == []
 
 
+def test_unggah_v_tolak_ekstensi_tidak_dikenal(sesi_pabrik, sesi, tmp_path) -> None:
+    """Berkas tanpa akhiran .geojson/.gpkg ditolak dengan saran ganti nama."""
+    from app.models import Run
+
+    peta = _peta_v(tmp_path / "peta.geojson")
+    for klien in _klien_v(sesi_pabrik, tmp_path):
+        with peta.open("rb") as berkas:
+            resp = klien.post(
+                "/runs",
+                data={"tipe": "V"},
+                files={"peta": ("3312_sls (1)", berkas, "application/octet-stream")},
+            )
+    assert resp.status_code == 422, resp.text
+    assert "ganti nama" in resp.json()["detail"]
+    assert sesi.query(Run).count() == 0
+
+
 def _peta_v(path) -> object:
     """Berkas peta 2026 S1 minimal (17 kolom, satu kabupaten 3313)."""
     import geopandas as gpd

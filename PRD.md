@@ -316,12 +316,15 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
    Nama bertipe string semua; `tingkat` tipe integer. Catatan: dokumen sumber
    menulis `idsubsls`(18), tetapi seluruh data aktual (peta, `msubsls`,
    hirarki dua semester) memakai 16 digit, jadi itu yang dipakai mesin.
+   Cek panjang memindai seluruh baris (bukan sampel awal saja); pelanggaran
+   melaporkan nomor baris pertama ("pertama di baris N") supaya mudah
+   ditemukan di attribute table QGIS.
 2. **ID duplikat**: pasangan `idsls`+`idsubsls` yang sama persis tidak boleh
    muncul lebih dari sekali. Satu `idsls` boleh ada di banyak baris selama
    tiap baris punya `idsubsls` berbeda (satu baris per SubSLS, seperti di
-   `msubsls`); cek QGIS sebelum matching. Bila `idsubsls` yang sama tertulis
-   di kolom `idsls`, itu temuan tersendiri (`kolom idsls salah`) dengan sisi
-   master yang benar.
+   `msubsls`); cek QGIS sebelum matching. Nilai 16 digit yang nyasar di kolom
+   `idsls` tetap dihitung `tidak ada di master` (memang tidak terdaftar
+   sebagai SLS) plus catatan bahwa kolomnya salah isi.
 3. **Matching pasangan lawan master** (pengganti langkah poligon
    `Cek_Master_PetaSLS`, berbasis Excel bukan geometri), per pasangan
    `(idsls, idsubsls)`:
@@ -329,6 +332,8 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
    - Pasangan peta yang tidak dikenal master = `tidak ada di master`
      (termasuk nilai 16 digit yang nyasar di kolom `idsls`: memang tidak
      terdaftar sebagai SLS, plus catatan bahwa kolomnya salah isi).
+     Bila induk 14 digit-nya terdaftar di master, catatan menambah
+     kemungkinan subsls baru hasil pemekaran.
    - Pasangan master yang tidak muncul di peta = `tidak ada di peta`.
    - Pasangan peta yang muncul >1x = `ganda di peta`.
 4. **Blokir bila gagal, tetap tercatat**: skema/duplikat/matching gagal =
@@ -363,7 +368,7 @@ dikecualikan dari commit (data mentah).
   `(idsls, idsubsls)` bermasalah, dengan sisi peta dan sisi master ditulis
   berdampingan; sisi yang kosong berarti kode tidak ada di sisi itu. Kolom
   `run_id` (FK `runs.id` cascade), `jenis` (`tidak_di_peta`/`tidak_di_master`/
-  `ganda`/`kolom_salah`, sekaligus nama sheet unduhan), `idsls_peta`,
+  `ganda`, sekaligus nama sheet unduhan), `idsls_peta`,
   `idsubsls_peta`, `idsls_master`, `idsubsls_master`, `nmsls` (nullable),
   `catatan`, dan `created_at`. Di luar cakupan? Tidak: dipakai untuk daftar
   unduhan Excel dan audit. Tidak ikut pemangkasan baseline.
