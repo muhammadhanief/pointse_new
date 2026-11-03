@@ -104,3 +104,43 @@ def test_normalisasi_idsls() -> None:
     assert validasi_sls.normalisasi_idsls(33020100010001.0) == "33020100010001"
     assert validasi_sls.normalisasi_idsls("") is None
     assert validasi_sls.normalisasi_idsls(None) is None
+
+
+def test_matching_subsls_dua_arah() -> None:
+    """Selisih komposisi SubSLS terdeteksi walau himpunan idsls-nya sama."""
+    peta = {"330201000100010001": "SLS A", "330201000100010002": "SLS A"}
+    master = {"330201000100010002": "SLS A", "330201000100010003": "SLS A"}
+    hasil = validasi_sls.cocokkan(peta, master)
+    assert not hasil.lolos
+    assert [satu.idsls for satu in hasil.unmatch_peta] == ["330201000100010001"]
+    assert [satu.idsls for satu in hasil.unmatch_master] == ["330201000100010003"]
+
+
+def test_matching_subsls_duplikat_tetap_unmatch() -> None:
+    """idsubsls ganda tetap unmatch walau ada di master."""
+    kode = "330201000100010001"
+    hasil = validasi_sls.cocokkan({kode: "SLS A"}, {kode: "SLS A"}, {kode})
+    assert not hasil.lolos
+    assert hasil.unmatch_peta and hasil.unmatch_peta[0].alasan == validasi_sls.ALASAN_DUPLIKAT
+
+
+def test_pesan_memuat_hitungan_subsls() -> None:
+    """Pesan menyebut hitungan SubSLS hanya bila ada temuan SubSLS."""
+    skema = validasi_sls.HasilSkema(lolos=True)
+    duplikat = validasi_sls.HasilDuplikat(
+        lolos=False, jumlah_ganda=1, contoh=["A"], jumlah_ganda_sub=2,
+        contoh_sub=["B", "C"],
+    )
+    matching = validasi_sls.HasilMatching(
+        lolos=False,
+        unmatch_peta=[validasi_sls.BarisUnmatch("peta", "A", "SLS A", "tidak_di_master")],
+        unmatch_master=[],
+        unmatch_sub_peta=[
+            validasi_sls.BarisUnmatch("peta", "B", "SLS B", "tidak_di_master")
+        ],
+        unmatch_sub_master=[],
+    )
+    lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, matching)
+    assert not lolos
+    assert "2 idsubsls ganda" in pesan
+    assert "unmatch_sub_peta=1" in pesan and "unmatch_sub_master=0" in pesan

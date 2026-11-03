@@ -799,11 +799,12 @@ def hasil_run(
 def daftar_unmatch(
     sesi: Session, run_id: int, *, arah: str | None = None, limit: int = 100, offset: int = 0
 ) -> tuple[int, list[dict[str, object]]]:
-    """Daftar unmatch satu run V (paging, urut ``idsls``).
+    """Daftar unmatch satu run V (paging, urut kode).
 
     ``arah`` = ``peta``/``master`` untuk menyaring satu sisi; kosong berarti
-    kedua sisi. Run V gagal tetap tercatat, jadi daftar ini yang diunduh
-    sebagai CSV untuk diperbaiki di QGIS.
+    kedua sisi. Baris mencakup ``idsls`` 14 digit dan ``idsubsls`` 18 digit
+    (bedakan dari panjang kodenya). Run V gagal tetap tercatat, jadi daftar
+    ini yang diunduh sebagai CSV untuk diperbaiki di QGIS.
     """
     saring: list[Any] = [ValidasiSlsUnmatch.run_id == run_id]
     if arah is not None:

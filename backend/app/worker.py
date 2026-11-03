@@ -981,6 +981,8 @@ def proses_validasi_v(
     unmatch = [
         *hasil.matching.unmatch_peta,
         *hasil.matching.unmatch_master,
+        *hasil.matching.unmatch_sub_peta,
+        *hasil.matching.unmatch_sub_master,
     ]
     sesi.execute(delete(ValidasiSlsUnmatch).where(ValidasiSlsUnmatch.run_id == run.id))
     sesi.execute(

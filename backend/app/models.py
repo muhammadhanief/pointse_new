@@ -521,11 +521,13 @@ class AnomaliTitik(Base):
 class ValidasiSlsUnmatch(Base):
     """SLS bermasalah pada satu job validasi peta 2026 Semester 1 (tipe V).
 
-    Satu baris per ``idsls`` bermasalah per run. ``arah='peta'`` = idsls ada di
-    peta tapi tidak ada di master (daftar ``unmatch_peta`` yang harus
-    diperbaiki/cek di peta); ``arah='master'`` = idsls ada di master tapi tidak
-    ada di peta (daftar ``unmatch_master`` yang hilang dari peta). ``alasan``
-    mis. ``duplikat_di_peta``, ``tidak_di_master``, ``tidak_di_peta``.
+    Satu baris per kode bermasalah per run: ``idsls`` (14 digit, beda himpunan
+    SLS) atau ``idsubsls`` (18 digit, beda komposisi SubSLS di dalam SLS yang
+    cocok). ``arah='peta'`` = kode ada di peta tapi tidak ada di master
+    (daftar yang harus diperbaiki/cek di peta); ``arah='master'`` = kode ada
+    di master tapi tidak ada di peta (daftar yang hilang dari peta).
+    ``alasan`` mis. ``duplikat_di_peta``, ``tidak_di_master``,
+    ``tidak_di_peta``.
     Baris ikut terhapus saat run-nya dihapus (CASCADE) dan tidak ikut
     pemangkasan baseline karena run V tidak punya ``titik_hasil``.
     """
@@ -538,7 +540,9 @@ class ValidasiSlsUnmatch(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
     arah: Mapped[str] = mapped_column(String(8))
-    idsls: Mapped[str] = mapped_column(String(16))
+    #: Kode bermasalah: ``idsls`` 14 digit atau ``idsubsls`` 18 digit (bedakan
+    #: dari panjangnya; CSV unduhan memakai kolom yang sama).
+    idsls: Mapped[str] = mapped_column(String(20))
     nmsls: Mapped[str | None] = mapped_column(String(128))
     alasan: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)

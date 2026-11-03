@@ -101,16 +101,19 @@ class HasilSkema:
 
 @dataclass
 class HasilDuplikat:
-    """Hasil blok duplikat ``idsls``."""
+    """Hasil blok duplikat ``idsls`` (14 digit) dan ``idsubsls`` (18 digit)."""
 
     lolos: bool
     jumlah_ganda: int = 0
     contoh: list[str] = field(default_factory=list)
+    #: Duplikat di level SubSLS (aturan yang sama, kunci 18 digit).
+    jumlah_ganda_sub: int = 0
+    contoh_sub: list[str] = field(default_factory=list)
 
 
 @dataclass
 class BarisUnmatch:
-    """Satu ``idsls`` bermasalah untuk tabel/CSV."""
+    """Satu kode bermasalah untuk tabel/CSV (``idsls`` 14 digit atau ``idsubsls`` 18 digit)."""
 
     arah: str
     idsls: str
@@ -120,11 +123,14 @@ class BarisUnmatch:
 
 @dataclass
 class HasilMatching:
-    """Hasil blok matching dua arah."""
+    """Hasil blok matching dua arah, di dua level (SLS dan SubSLS)."""
 
     lolos: bool
     unmatch_peta: list[BarisUnmatch] = field(default_factory=list)
     unmatch_master: list[BarisUnmatch] = field(default_factory=list)
+    #: Selisih komposisi SubSLS di dalam SLS yang level SLS-nya cocok.
+    unmatch_sub_peta: list[BarisUnmatch] = field(default_factory=list)
+    unmatch_sub_master: list[BarisUnmatch] = field(default_factory=list)
 
 
 @dataclass
@@ -220,7 +226,8 @@ def cocokkan(
 ) -> HasilMatching:
     """Matching dua arah peta vs master (murni, tanpa I/O).
 
-    ``peta``/``master`` = mapping ``idsls`` -> ``nmsls``.
+    ``peta``/``master`` = mapping kode -> ``nmsls``; generik untuk dua level:
+    ``idsls`` (14 digit) maupun ``idsubsls`` (18 digit).
     """
     ganda = duplikat_peta or set()
     himpunan_peta = set(peta)
@@ -282,11 +289,17 @@ def rangkum_pesan(
             )
             bagian.append(f"skema: GAGAL ({rincian})")
     if duplikat.lolos:
-        bagian.append("duplikat: OK (idsls unik)")
+        bagian.append("duplikat: OK (idsls/idsubsls unik)")
     else:
         contoh = ", ".join(duplikat.contoh)
         bagian.append(
             f"duplikat: GAGAL ({duplikat.jumlah_ganda} idsls ganda; contoh: {contoh})"
+            + (
+                f"; {duplikat.jumlah_ganda_sub} idsubsls ganda; "
+                f"contoh: {', '.join(duplikat.contoh_sub)}"
+                if duplikat.jumlah_ganda_sub
+                else ""
+            )
         )
     if matching.lolos:
         bagian.append("matching: OK (peta <-> master cocok)")
@@ -301,6 +314,12 @@ def rangkum_pesan(
             + (f" contoh: {contoh_peta}" if contoh_peta else "")
             + f"; unmatch_master={len(matching.unmatch_master)}"
             + (f" contoh: {contoh_master}" if contoh_master else "")
+            + (
+                f"; unmatch_sub_peta={len(matching.unmatch_sub_peta)}"
+                f"; unmatch_sub_master={len(matching.unmatch_sub_master)}"
+                if matching.unmatch_sub_peta or matching.unmatch_sub_master
+                else ""
+            )
             + ")"
         )
     lolos = skema.lolos and duplikat.lolos and matching.lolos
@@ -345,12 +364,13 @@ def jalur_master(
 
 def baca_master(
     akar_master_sls: str | Path, kode_kab: str
-) -> dict[str, str | None]:
-    """Baca master: mapping ``idsls`` -> ``nmsls`` (derivasi ``idsubsls[:14]``).
+) -> tuple[dict[str, str | None], dict[str, str | None]]:
+    """Baca master: mapping ``idsls`` -> ``nmsls`` + mapping ``idsubsls`` -> ``nmsls``.
 
-    Memakai ``msubsls`` (11-12 ribu baris) lewat ``openpyxl`` mode read-only
-    supaya memori tetap kecil. ``hirarki_sls`` hanya dipakai sebagai
-    pembanding bila berkasnya ada (himpunannya terbukti identik pada data 3302).
+    ``idsls`` diderivasi ``idsubsls[:14]``. Memakai ``msubsls`` (11-12 ribu
+    baris) lewat ``openpyxl`` mode read-only supaya memori tetap kecil.
+    ``hirarki_sls`` hanya dipakai sebagai pembanding bila berkasnya ada
+    (himpunannya terbukti identik pada data 3302).
     """
     from openpyxl import load_workbook
 
@@ -374,25 +394,28 @@ def baca_master(
         indeks = kepala.index("idsubsls")
         indeks_nama = kepala.index("nmsls") if "nmsls" in kepala else None
         master: dict[str, str | None] = {}
+        master_sub: dict[str, str | None] = {}
         for satu in baris:
             if satu is None or indeks >= len(satu):
                 continue
             subsls = normalisasi_idsls(satu[indeks])
             if not subsls:
                 continue
-            idsls = subsls[:14]
-            if len(idsls) != 14 or not idsls.isdigit():
-                continue
             nama = None
             if indeks_nama is not None and indeks_nama < len(satu):
                 mentah = satu[indeks_nama]
                 nama = str(mentah).strip() if mentah is not None else None
+            if len(subsls) == 18 and subsls.isdigit():
+                master_sub.setdefault(subsls, nama or None)
+            idsls = subsls[:14]
+            if len(idsls) != 14 or not idsls.isdigit():
+                continue
             master.setdefault(idsls, nama or None)
     finally:
         wb.close()
     if not master:
         raise ValueError(f"master {jalur_msubsls.name} tidak memuat idsls apa pun")
-    return master
+    return master, master_sub
 
 
 def kolom_berkas_peta(berkas: str | Path, layer: str | None) -> list[str]:
@@ -405,18 +428,28 @@ def kolom_berkas_peta(berkas: str | Path, layer: str | None) -> list[str]:
 
 def baca_peta(
     berkas: str | Path, layer: str | None
-) -> tuple[dict[str, str | None], list[str | None], dict[str, list[Any]], list[str], str, str]:
+) -> tuple[
+    dict[str, str | None],
+    list[str | None],
+    dict[str, list[Any]],
+    list[str],
+    str,
+    str,
+    dict[str, str | None],
+    list[str | None],
+]:
     """Baca atribut peta (tanpa geometri): mapping idsls->nmsls + daftar mentah.
 
-    Kembalikan ``(peta, daftar_idsls, contoh_nilai, kolom, kdprov, kdkab)``.
-    ``kolom`` = daftar nama kolom berkas; ``contoh_nilai`` = nilai per kolom
-    untuk cek panjang (maks 2000 baris pertama sudah cukup).
+    Kembalikan ``(peta, daftar_idsls, contoh_nilai, kolom, kdprov, kdkab,
+    peta_sub, daftar_subsls)``. Dua terakhir untuk matching level SubSLS
+    (18 digit). ``kolom`` = daftar nama kolom berkas; ``contoh_nilai`` =
+    nilai per kolom untuk cek panjang (maks 2000 baris pertama sudah cukup).
     """
     import pyogrio
 
     jalur = Path(berkas)
     kolom = kolom_berkas_peta(jalur, layer)
-    butuh = ["idsls", "nmsls", "kdprov", "kdkab", *KOLOM_PETA_V]
+    butuh = ["idsls", "idsubsls", "nmsls", "kdprov", "kdkab", *KOLOM_PETA_V]
     kolom_baca = [nama for nama in dict.fromkeys(butuh) if nama in kolom]
     data = pyogrio.read_dataframe(
         str(jalur), layer=layer, columns=kolom_baca, read_geometry=False
@@ -437,6 +470,17 @@ def baca_peta(
             continue
         teks_nama = str(nama).strip() if nama is not None else None
         peta.setdefault(kode, teks_nama or None)
+    mentah_sub = list(data["idsubsls"]) if "idsubsls" in data.columns else []
+    daftar_sub = [normalisasi_idsls(nilai) for nilai in mentah_sub]
+    peta_sub: dict[str, str | None] = {}
+    nama_sub = (
+        list(data["nmsls"]) if "nmsls" in data.columns else [None] * len(daftar_sub)
+    )
+    for kode, nama in zip(daftar_sub, nama_sub):
+        if not kode:
+            continue
+        teks_nama = str(nama).strip() if nama is not None else None
+        peta_sub.setdefault(kode, teks_nama or None)
 
     def _tunggal(nama: str) -> str:
         if nama not in data.columns:
@@ -448,7 +492,7 @@ def baca_peta(
 
     kdprov = _tunggal("kdprov")
     kdkab = _tunggal("kdkab")
-    return peta, daftar, contoh, kolom, kdprov, kdkab
+    return peta, daftar, contoh, kolom, kdprov, kdkab, peta_sub, daftar_sub
 
 
 def validasi_berkas(
@@ -458,7 +502,9 @@ def validasi_berkas(
     kode_kab: str | None = None,
 ) -> HasilValidasi:
     """Jalankan tiga blok validasi untuk satu berkas peta (dipakai worker)."""
-    peta, daftar, contoh, kolom, kdprov, kdkab = baca_peta(berkas, layer)
+    peta, daftar, contoh, kolom, kdprov, kdkab, peta_sub, daftar_sub = baca_peta(
+        berkas, layer
+    )
     skema = periksa_skema(kolom, contoh)
     skema.jumlah_baris = len(daftar)
     # Satu job hanya satu kabupaten/kota.
@@ -474,13 +520,38 @@ def validasi_berkas(
                 )
             )
     duplikat = periksa_duplikat(daftar)
+    duplikat_sub = periksa_duplikat(daftar_sub)
+    duplikat = HasilDuplikat(
+        lolos=duplikat.lolos and duplikat_sub.lolos,
+        jumlah_ganda=duplikat.jumlah_ganda,
+        contoh=duplikat.contoh,
+        jumlah_ganda_sub=duplikat_sub.jumlah_ganda,
+        contoh_sub=duplikat_sub.contoh,
+    )
     kode_master = str(kode_kab or "").strip()
     if not kode_master and kdkab:
         kode_master = f"{kdprov[:2]}{kdkab}" if kdprov and len(str(kdkab)) == 2 else str(kdkab)
-    master = baca_master(akar_master_sls, kode_master) if kode_master else {}
-    matching = cocokkan(peta, master, set(duplikat.contoh) | {
+    if kode_master:
+        master, master_sub = baca_master(akar_master_sls, kode_master)
+    else:
+        master, master_sub = {}, {}
+    ganda_sls = set(duplikat.contoh) | {
         kode
         for kode in peta
         if sum(1 for nilai in daftar if nilai == kode) > 1
-    })
+    }
+    ganda_sub = set(duplikat.contoh_sub) | {
+        kode
+        for kode in peta_sub
+        if sum(1 for nilai in daftar_sub if nilai == kode) > 1
+    }
+    cocok_sls = cocokkan(peta, master, ganda_sls)
+    cocok_sub = cocokkan(peta_sub, master_sub, ganda_sub)
+    matching = HasilMatching(
+        lolos=cocok_sls.lolos and cocok_sub.lolos,
+        unmatch_peta=cocok_sls.unmatch_peta,
+        unmatch_master=cocok_sls.unmatch_master,
+        unmatch_sub_peta=cocok_sub.unmatch_peta,
+        unmatch_sub_master=cocok_sub.unmatch_master,
+    )
     return gabungkan_hasil(skema, duplikat, matching)

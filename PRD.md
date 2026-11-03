@@ -314,16 +314,22 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
    `kdsubsls`(2), `idsls`(14), `idsubsls`(18), `nmprov`/`nmkab`/`nmkec`/`nmdesa`(50),
    `nmsls`(100), `rw_dki`(3), `tingkat`(1), `nm_gedung`(50), `posisi`(50).
    Nama bertipe string semua; `tingkat` tipe integer.
-2. **ID duplikat**: `idsls` tidak boleh ganda di dalam berkas (cek QGIS sebelum
-   matching).
+2. **ID duplikat**: `idsls` (14 digit) tidak boleh ganda di dalam berkas
+   (cek QGIS sebelum matching); aturan yang sama berlaku untuk `idsubsls`
+   (18 digit).
 3. **Matching dua arah lawan master** (pengganti langkah poligon
-   `Cek_Master_PetaSLS`, berbasis Excel bukan geometri):
+   `Cek_Master_PetaSLS`, berbasis Excel bukan geometri), di **dua level**:
    - `peta vs master`: `idsls` di peta tapi tidak ada di master =
      `unmatch_peta` (daftar SLS yang harus diperbaiki/cek di peta).
    - `master vs peta`: `idsls` di master tapi tidak ada di peta =
      `unmatch_master` (daftar SLS yang hilang dari peta).
+   - **Level SubSLS**: untuk SLS yang himpunannya cocok, komposisi
+     `idsubsls`-nya dibandingkan juga (`unmatch_sub_peta`/
+     `unmatch_sub_master`, 18 digit). Bedanya komposisi di dalam satu SLS
+     tidak terlihat di level SLS — SLS itu lolos SLS tapi anggotanya beda.
    - Aturan gambar "idsls_count tidak sama dengan 1 harus diperbaiki":
-     `idsls` yang muncul >1x di peta atau 0x lawan master wajib ada di daftar.
+     `idsls` yang muncul >1x di peta atau 0x lawan master wajib ada di daftar
+     (berlaku juga untuk `idsubsls`).
 4. **Blokir bila gagal, tetap tercatat**: skema/duplikat/matching gagal =
    tombol antre tidak aktif; run tercatat dengan status `gagal` dan perincian
    kegagalan bisa dilihat di riwayat + diunduh sebagai CSV.
@@ -351,13 +357,16 @@ dikecualikan dari commit (data mentah).
   dibaca rekap/progres, tidak ikut hitung nomor job A/B, dan tidak menjadi
   sumber peta Proses B. Kolom pesan `runs.pesan` menyimpan ringkasan 3 blok
   (skema/duplikat/matching).
-- **Tabel `validasi_sls_unmatch`**: satu baris per `idsls` bermasalah per run,
-  kolom `run_id` (FK `runs.id` cascade), `arah` (`peta`/`master`), `idsls`,
+- **Tabel `validasi_sls_unmatch`**: satu baris per kode bermasalah per run —
+  `idsls` 14 digit (beda himpunan SLS) atau `idsubsls` 18 digit (beda
+  komposisi SubSLS; bedakan dari panjang kodenya). Kolom `run_id` (FK
+  `runs.id` cascade), `arah` (`peta`/`master`), `idsls` (`VARCHAR(20)`),
   `nmsls` (nullable), `alasan` (mis. `duplikat_di_peta`, `tidak_di_master`,
   `tidak_di_peta`), dan `created_at`. Di luar cakupan? Tidak: dipakai untuk
   daftar unduhan CSV dan audit. Tidak ikut pemangkasan baseline.
 - **Kolom `runs.semester`** (`VARCHAR(7)`, mis. `2026_1`): menandai periode
-  peta yang divalidasi; NULL untuk run A/B lama. Migrasi `0019`.
+  peta yang divalidasi; NULL untuk run A/B lama. Migrasi `0019` (+ `0020`
+  untuk lebar kolom unmatch 16 -> 20).
 - **Master di `DIR_MASTER`-sampingan**: berkas Excel master 2026 S1 di
   `data/master-sls-2026-s1/<kdkab>/`, ikut dicadangkan `deploy/backup.sh`
   (seperti master geotag), tidak ikut pemangkasan berkas run mentah.
@@ -370,7 +379,8 @@ dikecualikan dari commit (data mentah).
    (baca atribut via pyogrio `read_geometry=False`, bandingkan dengan Excel
    master via openpyxl/pandas, tulis `validasi_sls_unmatch`).
 3. `sukses` = ketiga blok lolos; `gagal` = ada blok gagal + pesan berisi
-   hitungan per blok dan 5 contoh idsls pertama per arah (tanpa rahasia).
+   hitungan per blok (termasuk hitungan SubSLS bila ada temuan) dan 5 contoh
+   kode pertama per arah (tanpa rahasia).
 4. Riwayat menampilkan tab/run V dengan lencana status; tombol unduh CSV
    daftar `unmatch` per run untuk diperbaiki di QGIS lalu unggah ulang.
 5. Anggaran memori worker tetap 800MB; baca Excel/peta per potong bila perlu.
@@ -426,10 +436,12 @@ di rekap, pekerjaan terpisah).
   disiapkan. Frontend statis tetap di cPanel. Migrasi database, SSL/domain API,
   SSO production, tabel operasional, uji restore cadangan, dan pengujian penuh
   Status Sistem di server baru belum selesai/diuji.
-- **T9 — Validasi Peta SLS 2026 Semester 1 (tipe run V)**: rancangan di §11.
-  Backend: migrasi `0019` (`runs.semester`, tabel `validasi_sls_unmatch`),
-  modul `validasi_sls.py`, endpoint + worker. Frontend: halaman unggah +
-  panel hasil 3 blok + unduh CSV, tab/run V di riwayat. Belum dikerjakan.
+- **T9 — Validasi Peta SLS 2026 Semester 1 (tipe run V)**: rancangan di §11;
+  selesai Backend + frontend. Backend: migrasi `0019`–`0020`
+  (`runs.semester`, tabel `validasi_sls_unmatch`), modul `validasi_sls.py`
+  (skema/duplikat/matching dua level SLS+SubSLS), endpoint + worker (steril
+  dari SE2026, tolak unggah bila master kab belum ada). Frontend: halaman
+  unggah + pesan 3 blok + unduh CSV, tab/run V di riwayat.
 
 ## 13. Keputusan dan alasannya
 
