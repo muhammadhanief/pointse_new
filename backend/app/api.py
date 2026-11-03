@@ -34,7 +34,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from app import aktivitas, anomali, auth, ekspor, geser, konfirmasi, layanan, unggahan
+from app import aktivitas, anomali, auth, ekspor, geser, konfirmasi, layanan, unggahan, validasi_sls
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.layanan import (
@@ -45,8 +45,6 @@ from app.layanan import (
     Tingkat,
 )
 from app.models import (
-    ARAH_MASTER,
-    ARAH_PETA,
     DASAR_TUGAS,
     SEMESTER_SLS_2026_1,
     STATUS_SUKSES,
@@ -57,7 +55,6 @@ from app.models import (
     KonfirmasiAnomali,
     RekapTarget,
     Run,
-    ValidasiSlsUnmatch,
 )
 from app.peran import PERAN_ADMIN_PROVINSI
 from app.skema import (
@@ -816,28 +813,31 @@ def rekap_run(
 @router.get("/runs/{run_id}/validasi-sls/unmatch", response_model=ValidasiUnmatchOut)
 def daftar_unmatch_validasi(
     run_id: int,
-    arah: str | None = Query(None, description="'peta' atau 'master'; kosong = kedua sisi"),
+    jenis: str | None = Query(None, description="saring satu jenis temuan; kosong = semua"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     sesi: Session = Depends(get_session),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> ValidasiUnmatchOut:
-    """Daftar ``idsls`` bermasalah satu run V (paging, urut ``idsls``).
+    """Daftar temuan satu run V (paging, urut kode peta/master).
 
-    Run V gagal tetap tercatat, jadi daftar ini yang diunduh sebagai CSV
-    untuk diperbaiki di QGIS. Bukan run V dibalas 404.
+    Run V gagal tetap tercatat; unduhan Excel-nya untuk diperbaiki di QGIS.
+    Bukan run V dibalas 404.
     """
     run = _ambil_run(sesi, run_id)
     auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
     if run.tipe != TIPE_V:
         raise HTTPException(status_code=404, detail=f"job {run_id} bukan run validasi")
-    arah_bersih = arah.strip().lower() if arah else None
-    if arah_bersih is not None and arah_bersih not in (ARAH_PETA, ARAH_MASTER):
-        raise HTTPException(
-            status_code=422, detail=f"arah harus '{ARAH_PETA}' atau '{ARAH_MASTER}'"
-        )
+    jenis_bersih = jenis.strip() if jenis else None
+    if jenis_bersih is not None and jenis_bersih not in (
+        validasi_sls.JENIS_TIDAK_DI_PETA,
+        validasi_sls.JENIS_TIDAK_DI_MASTER,
+        validasi_sls.JENIS_GANDA,
+        validasi_sls.JENIS_KOLOM_SALAH,
+    ):
+        raise HTTPException(status_code=422, detail=f"jenis tidak dikenal: {jenis}")
     total, baris = layanan.daftar_unmatch(
-        sesi, run_id, arah=arah_bersih, limit=limit, offset=offset
+        sesi, run_id, jenis=jenis_bersih, limit=limit, offset=offset
     )
     return ValidasiUnmatchOut(
         run_id=run_id,
@@ -848,22 +848,31 @@ def daftar_unmatch_validasi(
     )
 
 
-@router.get("/runs/{run_id}/ekspor/unmatch-v.csv", response_class=StreamingResponse)
+@router.get("/runs/{run_id}/ekspor/unmatch-v.xlsx", response_class=StreamingResponse)
 def ekspor_unmatch_v(
     run_id: int,
     sesi: Session = Depends(get_session),
-    setelan: Settings = Depends(get_settings),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> StreamingResponse:
-    """Unduh daftar unmatch satu run V sebagai CSV (kedua arah)."""
+    """Unduh temuan satu run V sebagai Excel: ringkasan + satu sheet per jenis.
+
+    Tab sheet berwarna merah bila ada temuan. Run V gagal tetap tercatat,
+    jadi unduhan ini yang dibawa untuk diperbaiki di QGIS.
+    """
     run = _ambil_run(sesi, run_id)
     auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
     if run.tipe != TIPE_V:
         raise HTTPException(status_code=404, detail=f"job {run_id} bukan run validasi")
-    spool = ekspor.spool_unmatch_v_csv(sesi, run_id, setelan)
+    aliran = ekspor.berkas_unmatch_v_xlsx(sesi, run_id)
     kode = _kode_unduh(run.kdprov, run.kdkab)
     nomor = layanan.nomor_urut_run(sesi, [run]).get(run.id, run.id)
-    return _unduhan_csv(spool, f"{kode}_validasi_sls_2026_s1_ke{nomor}.csv")
+    return StreamingResponse(
+        aliran,
+        media_type=MEDIA_XLSX,
+        headers={
+            "Content-Disposition": f'attachment; filename="{kode}_validasi_sls_2026_s1_ke{nomor}.xlsx"'
+        },
+    )
 
 
 @router.get("/perubahan", response_model=PerubahanOut)

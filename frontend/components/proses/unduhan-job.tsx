@@ -27,7 +27,7 @@ export function UnduhanJob({ run }: { run: Run }) {
   }
 
   if (run.tipe === "V") {
-    const namaUnmatch = `${kode}_validasi_sls_2026_s1_ke${nomor}.csv`;
+    const namaUnmatch = `${kode}_validasi_sls_2026_s1_ke${nomor}.xlsx`;
     return (
       <div className="rounded-lg border border-line bg-paper p-kartu">
         <h3 className="text-sm font-semibold text-ink">Unduh hasil validasi</h3>
@@ -36,13 +36,13 @@ export function UnduhanJob({ run }: { run: Run }) {
             onClick={() =>
               void unduh(
                 "unmatch",
-                `/runs/${run.id}/ekspor/unmatch-v.csv`,
+                `/runs/${run.id}/ekspor/unmatch-v.xlsx`,
                 namaUnmatch,
               )
             }
             disabled={sibuk !== null}
           >
-            {sibuk === "unmatch" ? "Menyiapkan..." : "Daftar unmatch (CSV)"}
+            {sibuk === "unmatch" ? "Menyiapkan..." : "Daftar temuan (Excel)"}
           </TombolAksi>
         </div>
 

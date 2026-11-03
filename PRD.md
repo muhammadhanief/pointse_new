@@ -318,24 +318,23 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
    hirarki dua semester) memakai 16 digit, jadi itu yang dipakai mesin.
 2. **ID duplikat**: pasangan `idsls`+`idsubsls` yang sama persis tidak boleh
    muncul lebih dari sekali. Satu `idsls` boleh ada di banyak baris selama
-   tiap baris punya `idsubsls` berbeda yang komposisinya cocok dengan master
-   (satu baris per SubSLS, seperti di `msubsls`); cek QGIS sebelum matching.
-3. **Matching dua arah lawan master** (pengganti langkah poligon
-   `Cek_Master_PetaSLS`, berbasis Excel bukan geometri), di **dua level**:
-   - `peta vs master`: `idsls` di peta tapi tidak ada di master =
-     `unmatch_peta` (daftar SLS yang harus diperbaiki/cek di peta).
-   - `master vs peta`: `idsls` di master tapi tidak ada di peta =
-     `unmatch_master` (daftar SLS yang hilang dari peta).
-   - **Level SubSLS**: untuk SLS yang himpunannya cocok, komposisi
-     `idsubsls`-nya dibandingkan juga (`unmatch_sub_peta`/
-     `unmatch_sub_master`, 18 digit). Bedanya komposisi di dalam satu SLS
-     tidak terlihat di level SLS — SLS itu lolos SLS tapi anggotanya beda.
-   - Aturan gambar "idsls_count tidak sama dengan 1 harus diperbaiki":
-     `idsls` yang muncul >1x di peta atau 0x lawan master wajib ada di daftar
-     (berlaku juga untuk `idsubsls`).
+   tiap baris punya `idsubsls` berbeda (satu baris per SubSLS, seperti di
+   `msubsls`); cek QGIS sebelum matching. Bila `idsubsls` yang sama tertulis
+   di kolom `idsls`, itu temuan tersendiri (`kolom idsls salah`) dengan sisi
+   master yang benar.
+3. **Matching pasangan lawan master** (pengganti langkah poligon
+   `Cek_Master_PetaSLS`, berbasis Excel bukan geometri), per pasangan
+   `(idsls, idsubsls)`:
+   - Pasangan peta yang sama persis ada di master = cocok.
+   - Pasangan peta yang `idsubsls`-nya dikenal master di bawah `idsls`
+     berbeda = `kolom idsls salah` (sisi master memuat pasangan yang benar).
+   - Pasangan peta yang tidak dikenal = `tidak ada di master`.
+   - Pasangan master yang tidak muncul di peta = `tidak ada di peta`.
+   - Pasangan peta yang muncul >1x = `ganda di peta`.
 4. **Blokir bila gagal, tetap tercatat**: skema/duplikat/matching gagal =
    tombol antre tidak aktif; run tercatat dengan status `gagal` dan perincian
-   kegagalan bisa dilihat di riwayat + diunduh sebagai CSV.
+   kegagalan bisa dilihat di riwayat + diunduh sebagai Excel (satu sheet per
+   jenis temuan; tab merah bila ada temuan).
 
 ### 11.2 Master 2026 Semester 1
 
@@ -360,15 +359,14 @@ dikecualikan dari commit (data mentah).
   dibaca rekap/progres, tidak ikut hitung nomor job A/B, dan tidak menjadi
   sumber peta Proses B. Kolom pesan `runs.pesan` menyimpan ringkasan 3 blok
   (skema/duplikat/matching).
-- **Tabel `validasi_sls_unmatch`**: satu baris per kode bermasalah per run —
-  `idsls` 14 digit (beda himpunan SLS) atau `idsubsls` 16 digit (beda
-  komposisi SubSLS; bedakan dari panjang kodenya). Kolom `run_id` (FK
-  `runs.id` cascade), `arah` (`peta`/`master`), `level` (`sls`/`subsls`,
-  menandai granularitas temuan supaya dua baris berkode sama bisa dibedakan),
-  `idsls` (`VARCHAR(20)`), `nmsls` (nullable), `alasan` (mis.
-  `duplikat_di_peta`, `tidak_di_master`, `tidak_di_peta`), dan `created_at`.
-  Di luar cakupan? Tidak: dipakai untuk daftar unduhan CSV dan audit. Tidak
-  ikut pemangkasan baseline.
+- **Tabel `validasi_sls_unmatch`**: satu baris = satu pasangan
+  `(idsls, idsubsls)` bermasalah, dengan sisi peta dan sisi master ditulis
+  berdampingan; sisi yang kosong berarti kode tidak ada di sisi itu. Kolom
+  `run_id` (FK `runs.id` cascade), `jenis` (`tidak_di_peta`/`tidak_di_master`/
+  `ganda`/`kolom_salah`, sekaligus nama sheet unduhan), `idsls_peta`,
+  `idsubsls_peta`, `idsls_master`, `idsubsls_master`, `nmsls` (nullable),
+  `catatan`, dan `created_at`. Di luar cakupan? Tidak: dipakai untuk daftar
+  unduhan Excel dan audit. Tidak ikut pemangkasan baseline.
 - **Kolom `runs.semester`** (`VARCHAR(7)`, mis. `2026_1`): menandai periode
   peta yang divalidasi; NULL untuk run A/B lama. Migrasi `0019` (+ `0020`
   untuk lebar kolom unmatch 16 -> 20).
@@ -384,10 +382,10 @@ dikecualikan dari commit (data mentah).
    (baca atribut via pyogrio `read_geometry=False`, bandingkan dengan Excel
    master via openpyxl/pandas, tulis `validasi_sls_unmatch`).
 3. `sukses` = ketiga blok lolos; `gagal` = ada blok gagal + pesan berisi
-   hitungan per blok (termasuk hitungan SubSLS bila ada temuan) dan 5 contoh
-   kode pertama per arah (tanpa rahasia).
-4. Riwayat menampilkan tab/run V dengan lencana status; tombol unduh CSV
-   daftar `unmatch` per run untuk diperbaiki di QGIS lalu unggah ulang.
+   hitungan per jenis temuan dan contoh kode (tanpa rahasia).
+4. Riwayat menampilkan tab/run V dengan lencana status; tombol unduh Excel
+   daftar temuan per run (lembar Ringkasan + satu sheet per jenis, tab merah
+   bila ada temuan) untuk diperbaiki di QGIS lalu unggah ulang.
 5. Anggaran memori worker tetap 800MB; baca Excel/peta per potong bila perlu.
 
 ### 11.5 Di luar cakupan tahap ini
@@ -442,11 +440,12 @@ di rekap, pekerjaan terpisah).
   SSO production, tabel operasional, uji restore cadangan, dan pengujian penuh
   Status Sistem di server baru belum selesai/diuji.
 - **T9 — Validasi Peta SLS 2026 Semester 1 (tipe run V)**: rancangan di §11;
-  selesai Backend + frontend. Backend: migrasi `0019`–`0020`
-  (`runs.semester`, tabel `validasi_sls_unmatch`), modul `validasi_sls.py`
-  (skema/duplikat/matching dua level SLS+SubSLS), endpoint + worker (steril
-  dari SE2026, tolak unggah bila master kab belum ada). Frontend: halaman
-  unggah + pesan 3 blok + unduh CSV, tab/run V di riwayat.
+  selesai Backend + frontend. Backend: migrasi `0019`–`0022`
+  (`runs.semester`, tabel `validasi_sls_unmatch` sisi-berdampingan),
+  modul `validasi_sls.py` (skema/duplikat/matching per pasangan),
+  endpoint + worker (steril dari SE2026, tolak unggah bila master kab belum
+  ada). Frontend: halaman unggah + pesan 3 blok + unduh Excel per jenis
+  temuan (tab merah), tab/run V di riwayat.
 
 ## 13. Keputusan dan alasannya
 

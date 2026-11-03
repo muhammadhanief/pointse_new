@@ -102,10 +102,6 @@ WORKER_BERHENTI = "berhenti"
 KONFIRMASI_AKAN_DIPERBAIKI = "akan_diperbaiki"
 KONFIRMASI_SESUAI_KENYATAAN = "sesuai_kenyataan"
 
-# Nilai kolom ``validasi_sls_unmatch.arah``
-ARAH_PETA = "peta"
-ARAH_MASTER = "master"
-
 #: Kolom hitungan tabel rekap (selain kunci dan kode wilayah).
 KOLOM_HITUNGAN: tuple[str, ...] = (
     "jumlah",
@@ -519,34 +515,32 @@ class AnomaliTitik(Base):
 
 
 class ValidasiSlsUnmatch(Base):
-    """SLS bermasalah pada satu job validasi peta 2026 Semester 1 (tipe V).
+    """Temuan validasi peta 2026 Semester 1 untuk satu job (tipe V).
 
-    Satu baris per kode bermasalah per run: ``idsls`` (14 digit, beda himpunan
-    SLS) atau ``idsubsls`` (16 digit, beda komposisi SubSLS di dalam SLS yang
-    cocok). ``arah='peta'`` = kode ada di peta tapi tidak ada di master
-    (daftar yang harus diperbaiki/cek di peta); ``arah='master'`` = kode ada
-    di master tapi tidak ada di peta (daftar yang hilang dari peta).
-    ``alasan`` mis. ``duplikat_di_peta``, ``tidak_di_master``,
-    ``tidak_di_peta``.
+    Satu baris = satu pasangan (idsls, idsubsls) bermasalah, dengan sisi
+    peta dan sisi master ditulis berdampingan; sisi yang kosong berarti kode
+    tidak ada di sisi itu. Jenis menentukan sheet unduhan Excel.
     Baris ikut terhapus saat run-nya dihapus (CASCADE) dan tidak ikut
-    pemangkasan baseline karena run V tidak punya ``titik_hasil``.
+    pemangkasan baseline karena run V tidak punya titik_hasil.
     """
 
     __tablename__ = "validasi_sls_unmatch"
     __table_args__ = (
-        Index("ix_validasi_sls_unmatch_run_arah", "run_id", "arah"),
+        Index("ix_validasi_sls_unmatch_run_jenis", "run_id", "jenis"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
-    arah: Mapped[str] = mapped_column(String(8))
-    #: Granularitas temuan: ``sls`` (kode 14 digit) atau ``subsls`` (16 digit).
-    level: Mapped[str] = mapped_column(String(8))
-    #: Kode bermasalah: ``idsls`` 14 digit atau ``idsubsls`` 16 digit (bedakan
-    #: dari panjangnya; CSV unduhan memakai kolom yang sama).
-    idsls: Mapped[str] = mapped_column(String(20))
+    #: Jenis temuan (nama sheet unduhan): tidak_di_peta/tidak_di_master/
+    #: ganda/kolom_salah.
+    jenis: Mapped[str] = mapped_column(String(16))
+    idsls_peta: Mapped[str | None] = mapped_column(String(20))
+    idsubsls_peta: Mapped[str | None] = mapped_column(String(20))
+    idsls_master: Mapped[str | None] = mapped_column(String(20))
+    idsubsls_master: Mapped[str | None] = mapped_column(String(20))
     nmsls: Mapped[str | None] = mapped_column(String(128))
-    alasan: Mapped[str | None] = mapped_column(String(32))
+    #: Keterangan tambahan (mis. ganda di peta (3 baris)).
+    catatan: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
 
 

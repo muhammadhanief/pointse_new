@@ -797,18 +797,18 @@ def hasil_run(
 
 
 def daftar_unmatch(
-    sesi: Session, run_id: int, *, arah: str | None = None, limit: int = 100, offset: int = 0
+    sesi: Session, run_id: int, *, jenis: str | None = None, limit: int = 100, offset: int = 0
 ) -> tuple[int, list[dict[str, object]]]:
-    """Daftar unmatch satu run V (paging, urut kode).
+    """Daftar temuan satu run V (paging, urut kode).
 
-    ``arah`` = ``peta``/``master`` untuk menyaring satu sisi; kosong berarti
-    kedua sisi. Baris mencakup ``idsls`` 14 digit dan ``idsubsls`` 16 digit
-    (bedakan dari panjang kodenya). Run V gagal tetap tercatat, jadi daftar
-    ini yang diunduh sebagai CSV untuk diperbaiki di QGIS.
+    ``jenis`` menyaring satu sheet unduhan (``tidak_di_peta``/
+    ``tidak_di_master``/``ganda``/``kolom_salah``); kosong berarti semua.
+    Run V gagal tetap tercatat, jadi daftar ini yang diunduh sebagai Excel
+    untuk diperbaiki di QGIS.
     """
     saring: list[Any] = [ValidasiSlsUnmatch.run_id == run_id]
-    if arah is not None:
-        saring.append(ValidasiSlsUnmatch.arah == arah)
+    if jenis is not None:
+        saring.append(ValidasiSlsUnmatch.jenis == jenis)
     total = int(
         sesi.scalar(
             select(func.count()).select_from(ValidasiSlsUnmatch).where(*saring)
@@ -818,17 +818,22 @@ def daftar_unmatch(
     baris = sesi.execute(
         select(ValidasiSlsUnmatch)
         .where(*saring)
-        .order_by(ValidasiSlsUnmatch.idsls)
+        .order_by(
+            func.coalesce(ValidasiSlsUnmatch.idsls_peta, ValidasiSlsUnmatch.idsls_master),
+            func.coalesce(ValidasiSlsUnmatch.idsubsls_peta, ValidasiSlsUnmatch.idsubsls_master),
+        )
         .limit(limit)
         .offset(offset)
     ).scalars()
     return total, [
         {
-            "arah": str(satu.arah),
-            "level": str(satu.level),
-            "idsls": str(satu.idsls),
+            "jenis": str(satu.jenis),
+            "idsls_peta": satu.idsls_peta,
+            "idsubsls_peta": satu.idsubsls_peta,
+            "idsls_master": satu.idsls_master,
+            "idsubsls_master": satu.idsubsls_master,
             "nmsls": satu.nmsls,
-            "alasan": satu.alasan,
+            "catatan": satu.catatan,
         }
         for satu in baris
     ]

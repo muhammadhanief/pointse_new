@@ -22,14 +22,29 @@ def _run_v(sesi) -> Run:
     sesi.add(run)
     sesi.commit()
     sesi.refresh(run)
-    for arah, kode, level in [
-        ("peta", "33020100010001", "sls"),
-        ("master", "33020100010002", "sls"),
+    for jenis, a, b, c, d in [
+        ("tidak_di_peta", None, None, "33020100010002", "3302010001000200"),
+        ("tidak_di_master", "33020100010001", "3302010001000100", None, None),
+        (
+            "kolom_salah",
+            "3302010001000199",
+            "3302010001000199",
+            "33020100010001",
+            "3302010001000101",
+        ),
+        (
+            "ganda",
+            "33020100010003",
+            "3302010001000300",
+            "33020100010003",
+            "3302010001000300",
+        ),
     ]:
         sesi.add(
             ValidasiSlsUnmatch(
-                run_id=run.id, arah=arah, level=level, idsls=kode,
-                nmsls="SLS", alasan="x",
+                run_id=run.id, jenis=jenis, idsls_peta=a, idsubsls_peta=b,
+                idsls_master=c, idsubsls_master=d, nmsls="SLS",
+                catatan="2 baris" if jenis == "ganda" else None,
             )
         )
     sesi.commit()
@@ -38,24 +53,40 @@ def _run_v(sesi) -> Run:
 
 def test_daftar_unmatch_paging_dan_saring(sesi) -> None:
     run = _run_v(sesi)
-    total, baris = layanan.daftar_unmatch(sesi, run.id, limit=1, offset=0)
-    assert total == 2
-    assert len(baris) == 1
-    assert baris[0]["idsls"] == "33020100010001"
-    total_peta, baris_peta = layanan.daftar_unmatch(sesi, run.id, arah="peta")
-    assert total_peta == 1
-    assert baris_peta[0]["arah"] == "peta"
-    total_master, _ = layanan.daftar_unmatch(sesi, run.id, arah="master")
+    total, baris = layanan.daftar_unmatch(sesi, run.id, limit=2, offset=0)
+    assert total == 4
+    assert len(baris) == 2
+    assert baris[0]["idsls_peta"] == "33020100010001"
+    assert baris[0]["jenis"] == "tidak_di_master"
+    total_ganda, baris_ganda = layanan.daftar_unmatch(sesi, run.id, jenis="ganda")
+    assert total_ganda == 1
+    assert baris_ganda[0]["catatan"] == "2 baris"
+    total_master, _ = layanan.daftar_unmatch(sesi, run.id, jenis="tidak_di_peta")
     assert total_master == 1
 
 
-def test_spool_unmatch_v_csv(sesi, tmp_path) -> None:
+def test_berkas_unmatch_v_xlsx(sesi) -> None:
+    """Unduhan Excel: ringkasan + 4 sheet jenis, tab merah bila ada temuan."""
+    from openpyxl import load_workbook
+
     run = _run_v(sesi)
-    setelan = Settings(dir_unggahan=str(tmp_path / "u"))
-    spool = ekspor.spool_unmatch_v_csv(sesi, run.id, setelan)
-    isi = spool.read().decode("utf-8")
-    assert isi.splitlines()[0] == "arah,level,idsls,nmsls,alasan"
-    assert "33020100010001" in isi and "33020100010002" in isi
+    aliran = ekspor.berkas_unmatch_v_xlsx(sesi, run.id)
+    buku = load_workbook(aliran, data_only=True)
+    assert buku.sheetnames == [
+        "Ringkasan",
+        "Tidak ada di peta",
+        "Tidak ada di master",
+        "Kolom idsls salah",
+        "Ganda di peta",
+    ]
+    ringkas = {r[0].value: r[1].value for r in buku["Ringkasan"].iter_rows(min_row=2)}
+    assert ringkas["total_temuan"] == 4
+    assert ringkas["jumlah_ganda"] == 1
+    assert ringkas["jumlah_kolom_salah"] == 1
+    assert buku["Kolom idsls salah"].max_row == 2  # judul + 1 baris
+    assert buku["Kolom idsls salah"]["A2"].value == "3302010001000199"
+    assert buku["Kolom idsls salah"]["C2"].value == "33020100010001"
+    assert buku["Ganda di peta"].sheet_properties.tabColor.rgb == "FFFF0000"
 
 
 def test_saring_run_tanpa_tipe_kecualikan_v() -> None:

@@ -825,24 +825,93 @@ def spool_rekap_csv(sesi: Session, setelan: Settings, **saringan: Any) -> Binary
     return spool_csv(judul, baris, _folder_sementara(setelan))
 
 
-#: Kolom CSV unmatch run V (PRD §11.4): daftar kode untuk diperbaiki di QGIS.
-KOLOM_UNMATCH_V: tuple[str, ...] = ("arah", "level", "idsls", "nmsls", "alasan")
+#: Kolom tiap lembar temuan unduhan validasi run V (PRD §11.4).
+KOLOM_UNMATCH_V: tuple[str, ...] = (
+    "idsls_peta",
+    "idsubsls_peta",
+    "idsls_master",
+    "idsubsls_master",
+    "nmsls",
+    "catatan",
+)
+
+#: Judul lembar per jenis temuan (urutan tampil di workbook).
+LEMBAR_UNMATCH_V: tuple[tuple[str, str], ...] = (
+    ("tidak_di_peta", "Tidak ada di peta"),
+    ("tidak_di_master", "Tidak ada di master"),
+    ("kolom_salah", "Kolom idsls salah"),
+    ("ganda", "Ganda di peta"),
+)
+
+#: Merah penuh (ARGB) untuk tab lembar yang berisi temuan (menyala = perlu dibuka).
+WARNA_TAB_ADA_TEMUAN = "FFFF0000"
 
 
-def spool_unmatch_v_csv(sesi: Session, run_id: int, setelan: Settings) -> BinaryIO:
-    """CSV daftar unmatch satu run V (urut ``idsls``).
+def berkas_unmatch_v_xlsx(sesi: Session, run_id: int) -> io.BytesIO:
+    """Workbook Excel unduhan unmatch satu run V (PRD §11.4).
 
-    Mencakup kedua arah (``peta`` = ada di peta tapi tidak di master,
-    ``master`` = hilang dari peta) dan kedua level: ``idsls`` 14 digit (beda
-    himpunan SLS) serta ``idsubsls`` 16 digit (beda komposisi SubSLS).
-    Bedakan dari panjang kodenya. Satu unduhan cukup untuk perbaikan.
+    Satu sheet ``Ringkasan`` (info run + hitungan per jenis) + satu sheet per
+    jenis temuan dengan kolom sisi-berdampingan. Tab sheet berwarna merah bila
+    ada baris temuan. Run V gagal tetap tercatat, jadi unduhan ini yang dibawa
+    untuk diperbaiki di QGIS.
     """
-    baris_db = sesi.execute(
-        select(ValidasiSlsUnmatch)
-        .where(ValidasiSlsUnmatch.run_id == run_id)
-        .order_by(ValidasiSlsUnmatch.idsls)
-    ).scalars()
-    baris = (
-        [satu.arah, satu.level, satu.idsls, satu.nmsls, satu.alasan] for satu in baris_db
+    from openpyxl import Workbook
+
+    run = sesi.get(Run, run_id)
+    baris_db = list(
+        sesi.execute(
+            select(ValidasiSlsUnmatch)
+            .where(ValidasiSlsUnmatch.run_id == run_id)
+            .order_by(
+                func.coalesce(
+                    ValidasiSlsUnmatch.idsls_peta, ValidasiSlsUnmatch.idsls_master
+                ),
+                func.coalesce(
+                    ValidasiSlsUnmatch.idsubsls_peta, ValidasiSlsUnmatch.idsubsls_master
+                ),
+            )
+        ).scalars()
     )
-    return spool_csv(KOLOM_UNMATCH_V, baris, _folder_sementara(setelan))
+    per_jenis: dict[str, list[ValidasiSlsUnmatch]] = {}
+    for satu in baris_db:
+        per_jenis.setdefault(satu.jenis, []).append(satu)
+
+    buku = Workbook()
+    ringkas = buku.active
+    ringkas.title = "Ringkasan"
+    ringkas.append(["keterangan", "nilai"])
+    ringkas.append(["run_id", run_id])
+    if run is not None:
+        ringkas.append(["kabupaten", f"{run.kdprov}/{run.kdkab}"])
+        ringkas.append(["semester", run.semester])
+        ringkas.append(["status", run.status])
+        ringkas.append(["tanggal_data", str(run.tanggal_data)])
+    ringkas.append(["total_temuan", len(baris_db)])
+    for jenis, judul in LEMBAR_UNMATCH_V:
+        ringkas.append([f"jumlah_{jenis}", len(per_jenis.get(jenis, []))])
+    ringkas.freeze_panes = "A2"
+
+    for jenis, judul in LEMBAR_UNMATCH_V:
+        lembar = buku.create_sheet(judul[:31])
+        lembar.append(list(KOLOM_UNMATCH_V))
+        daftar = per_jenis.get(jenis, [])
+        for satu in daftar:
+            lembar.append(
+                [
+                    satu.idsls_peta,
+                    satu.idsubsls_peta,
+                    satu.idsls_master,
+                    satu.idsubsls_master,
+                    satu.nmsls,
+                    satu.catatan,
+                ]
+            )
+        lembar.freeze_panes = "A2"
+        lembar.auto_filter.ref = lembar.dimensions
+        if daftar:
+            lembar.sheet_properties.tabColor = WARNA_TAB_ADA_TEMUAN
+
+    aliran = io.BytesIO()
+    buku.save(aliran)
+    aliran.seek(0)
+    return aliran

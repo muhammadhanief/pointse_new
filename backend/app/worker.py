@@ -101,8 +101,6 @@ from app.config import Settings, get_settings
 from app.db import get_sessionmaker
 from app.kunci import KunciBerkas, jalur_kunci
 from app.models import (
-    ARAH_MASTER,
-    ARAH_PETA,
     SEMESTER_SLS_2026_1,
     STATUS_GAGAL,
     STATUS_JALAN,
@@ -978,27 +976,21 @@ def proses_validasi_v(
     hasil = validasi_sls.validasi_berkas(
         run.berkas_peta, run.layer_peta, setelan.dir_master_sls_2026_s1, kode
     )
-    unmatch = [
-        *hasil.matching.unmatch_peta,
-        *hasil.matching.unmatch_master,
-        *hasil.matching.unmatch_sub_peta,
-        *hasil.matching.unmatch_sub_master,
+    unmatch: list[dict[str, Any]] = [
+        {
+            "run_id": run.id,
+            "jenis": satu.jenis,
+            "idsls_peta": satu.idsls_peta,
+            "idsubsls_peta": satu.idsubsls_peta,
+            "idsls_master": satu.idsls_master,
+            "idsubsls_master": satu.idsubsls_master,
+            "nmsls": satu.nmsls,
+            "catatan": satu.catatan,
+        }
+        for satu in hasil.matching.temuan
     ]
     sesi.execute(delete(ValidasiSlsUnmatch).where(ValidasiSlsUnmatch.run_id == run.id))
-    sesi.execute(
-        insert(ValidasiSlsUnmatch),
-        [
-            {
-                "run_id": run.id,
-                "arah": satu.arah,
-                "level": satu.level,
-                "idsls": satu.idsls,
-                "nmsls": satu.nmsls,
-                "alasan": satu.alasan,
-            }
-            for satu in unmatch
-        ],
-    )
+    sesi.execute(insert(ValidasiSlsUnmatch), unmatch)
     return len(unmatch), hasil.pesan, hasil.lolos
 
 

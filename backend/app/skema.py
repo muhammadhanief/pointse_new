@@ -137,13 +137,15 @@ class DaftarRunOut(BaseModel):
 
 
 class ValidasiUnmatchBarisOut(BaseModel):
-    """Satu ``idsls`` bermasalah pada run V (PRD §11.4)."""
+    """Satu temuan unmatch run V: pasangan sisi peta vs sisi master."""
 
-    arah: str
-    level: str
-    idsls: str
+    jenis: str
+    idsls_peta: str | None = None
+    idsubsls_peta: str | None = None
+    idsls_master: str | None = None
+    idsubsls_master: str | None = None
     nmsls: str | None = None
-    alasan: str | None = None
+    catatan: str | None = None
 
 
 class ValidasiUnmatchOut(BaseModel):

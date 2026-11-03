@@ -104,7 +104,7 @@ export function FormProsesV({ onSelesai }: { onSelesai?: () => void }) {
         <div className="space-y-field">
           <p className="text-sm leading-normal text-ink">
             Berkas masuk antrean validasi. Hasil lolos/gagal tercatat di
-            riwayat; unduh daftar unmatch (CSV) untuk diperbaiki di QGIS. Proses
+            riwayat; unduh daftar temuan (Excel) untuk diperbaiki di QGIS. Proses
             ini tidak mengubah progres SE2026.
           </p>
           <div className="flex flex-wrap justify-end gap-field border-t border-line pt-kartu">

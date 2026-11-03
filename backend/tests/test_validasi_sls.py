@@ -51,51 +51,96 @@ def test_duplikat_bersih() -> None:
     assert hasil.lolos
 
 
-def test_matching_dua_arah() -> None:
-    """idsls hanya di satu sisi masuk daftar unmatch yang benar."""
-    peta = {"A": "SLS A", "B": "SLS B"}
-    master = {"B": "SLS B", "C": "SLS C"}
-    hasil = validasi_sls.cocokkan(peta, master)
-    assert not hasil.lolos
-    assert [(satu.idsls, satu.alasan) for satu in hasil.unmatch_peta] == [
-        ("A", validasi_sls.ALASAN_TIDAK_DI_MASTER)
-    ]
-    assert [(satu.idsls, satu.alasan) for satu in hasil.unmatch_master] == [
-        ("C", validasi_sls.ALASAN_TIDAK_DI_PETA)
-    ]
-
-
-def test_matching_duplikat_wajib_unmatch() -> None:
-    """idsls ganda di peta tetap unmatch walau ada di master (aturan count!=1)."""
-    peta = {"A": "SLS A"}
-    master = {"A": "SLS A"}
-    hasil = validasi_sls.cocokkan(peta, master, {"A"})
-    assert not hasil.lolos
-    assert hasil.unmatch_peta and hasil.unmatch_peta[0].alasan == validasi_sls.ALASAN_DUPLIKAT
-
-
-def test_matching_cocok_semua() -> None:
-    """Himpunan sama = lolos."""
-    peta = {"A": "SLS A"}
-    hasil = validasi_sls.cocokkan(peta, {"A": "SLS A"})
+def test_banding_pasangan_cocok_semua_lolos() -> None:
+    """Himpunan pasangan sama persis = lolos."""
+    peta = {("A", "A01"): "SLS A"}
+    hasil = validasi_sls.bandingkan(peta, {("A", "A01"): "SLS A"})
     assert hasil.lolos
+    assert hasil.temuan == []
+
+
+def test_banding_dua_arah_sisi_terisi() -> None:
+    """Sisi yang hilang dibiarkan kosong sesuai arah temuan."""
+    peta = {("A", "A01"): "SLS A", ("B", "B01"): "SLS B"}
+    master = {("B", "B01"): "SLS B", ("C", "C01"): "SLS C"}
+    hasil = validasi_sls.bandingkan(peta, master)
+    assert not hasil.lolos
+    assert len(hasil.temuan) == 2
+    assert hasil.temuan[0].jenis == validasi_sls.JENIS_TIDAK_DI_MASTER
+    assert (hasil.temuan[0].idsls_peta, hasil.temuan[0].idsubsls_peta) == ("A", "A01")
+    assert hasil.temuan[0].idsls_master is None
+    assert hasil.temuan[1].jenis == validasi_sls.JENIS_TIDAK_DI_PETA
+    assert (hasil.temuan[1].idsls_master, hasil.temuan[1].idsubsls_master) == ("C", "C01")
+    assert hasil.temuan[1].idsls_peta is None
+
+
+def test_banding_kolom_salah_menjodohkan_sub() -> None:
+    """Kode subsls di kolom idsls dijodohkan ke pasangan master yang benar."""
+    peta = {("3302010001000101", "3302010001000101"): "SLS A"}
+    master = {("33020100010001", "3302010001000101"): "SLS A"}
+    hasil = validasi_sls.bandingkan(peta, master, {("3302010001000101", "3302010001000101"): 1})
+    assert not hasil.lolos
+    assert len(hasil.temuan) == 1
+    satu = hasil.temuan[0]
+    assert satu.jenis == validasi_sls.JENIS_KOLOM_SALAH
+    assert satu.idsls_peta == "3302010001000101"
+    assert satu.idsls_master == "33020100010001"
+    assert satu.idsubsls_master == "3302010001000101"
+
+
+def test_banding_ganda_satu_baris() -> None:
+    """Pasangan ganda yang cocok + yang asing masing-masing satu baris."""
+    pasang = ("A", "A01")
+    asing = ("B", "B02")
+    peta = {pasang: "SLS A", asing: "SLS B"}
+    master = {pasang: "SLS A"}
+    hitung = {pasang: 2, asing: 1}
+    hasil = validasi_sls.bandingkan(peta, master, hitung)
+    assert not hasil.lolos
+    assert [(s.jenis, s.idsls_peta) for s in hasil.temuan] == [
+        (validasi_sls.JENIS_GANDA, "A"),
+        (validasi_sls.JENIS_TIDAK_DI_MASTER, "B"),
+    ]
+    assert hasil.temuan[0].catatan == "2 baris"
+
+
+def test_banding_ganda_tak_dikenal_tetap_satu_baris() -> None:
+    """Pasangan ganda yang asing tidak dobel baris (satu temuan + catatan)."""
+    pasang = ("B", "B02")
+    hasil = validasi_sls.bandingkan(
+        {pasang: "SLS B"}, {}, {pasang: 3},
+    )
+    assert not hasil.lolos
+    assert len(hasil.temuan) == 1
+    assert hasil.temuan[0].jenis == validasi_sls.JENIS_TIDAK_DI_MASTER
+    assert hasil.temuan[0].catatan == "ganda di peta (3 baris)"
 
 
 def test_pesan_tiga_blok() -> None:
     """Pesan memuat ringkasan skema/duplikat/matching + contoh."""
     skema = validasi_sls.HasilSkema(lolos=True)
-    duplikat = validasi_sls.HasilDuplikat(lolos=False, jumlah_ganda=2, contoh=["A", "B"])
+    duplikat = validasi_sls.HasilDuplikat(lolos=False, jumlah_ganda=2, contoh=["A|X", "B|Y"])
     matching = validasi_sls.HasilMatching(
         lolos=False,
-        unmatch_peta=[validasi_sls.BarisUnmatch("peta", "A", "SLS A", "tidak_di_master")],
-        unmatch_master=[validasi_sls.BarisUnmatch("master", "C", "SLS C", "tidak_di_peta")],
+        temuan=[
+            validasi_sls.BarisUnmatch(
+                jenis=validasi_sls.JENIS_TIDAK_DI_MASTER,
+                idsls_peta="A", idsubsls_peta="A01",
+                idsls_master=None, idsubsls_master=None, nmsls="SLS A",
+            ),
+            validasi_sls.BarisUnmatch(
+                jenis=validasi_sls.JENIS_TIDAK_DI_PETA,
+                idsls_peta=None, idsubsls_peta=None,
+                idsls_master="C", idsubsls_master="C01", nmsls="SLS C",
+            ),
+        ],
     )
     lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, matching)
     assert not lolos
     assert "skema: OK" in pesan
-    assert "duplikat: GAGAL (2 idsubsls ganda; contoh: A, B)" in pesan
-    assert "unmatch_peta=1" in pesan and "unmatch_master=1" in pesan
-    assert "contoh: A" in pesan and "contoh: C" in pesan
+    assert "duplikat: GAGAL (2 pasangan ganda; contoh: A|X, B|Y)" in pesan
+    assert "tidak ada di peta=1" in pesan and "tidak ada di master=1" in pesan
+    assert "contoh: A, C" in pesan
 
 
 def test_normalisasi_idsls() -> None:
@@ -106,52 +151,53 @@ def test_normalisasi_idsls() -> None:
     assert validasi_sls.normalisasi_idsls(None) is None
 
 
-def test_matching_subsls_dua_arah() -> None:
-    """Selisih komposisi SubSLS terdeteksi walau himpunan idsls-nya sama."""
-    peta = {"3302010001000100": "SLS A", "3302010001000101": "SLS A"}
-    master = {"3302010001000101": "SLS A", "3302010001000102": "SLS A"}
-    hasil = validasi_sls.cocokkan(peta, master)
+def test_banding_tidak_dobel_baris_kolom_salah() -> None:
+    """Sub sama, induk beda: satu temuan kolom-salah, bukan dua baris."""
+    peta = {("3312090005003801", "3312090005003801"): "BATU LOR"}
+    master = {("33120900050038", "3312090005003801"): "BATU LOR"}
+    hasil = validasi_sls.bandingkan(peta, master, {("3312090005003801", "3312090005003801"): 1})
     assert not hasil.lolos
-    assert [satu.idsls for satu in hasil.unmatch_peta] == ["3302010001000100"]
-    assert [satu.idsls for satu in hasil.unmatch_master] == ["3302010001000102"]
+    assert len(hasil.temuan) == 1
+    assert hasil.temuan[0].jenis == validasi_sls.JENIS_KOLOM_SALAH
 
 
-def test_matching_subsls_duplikat_tetap_unmatch() -> None:
-    """idsubsls ganda tetap unmatch walau ada di master."""
-    kode = "3302010001000100"
-    hasil = validasi_sls.cocokkan({kode: "SLS A"}, {kode: "SLS A"}, {kode})
+def test_banding_sub_tak_dikenal_satu_baris() -> None:
+    """Kode asing di dua kolom: satu temuan tidak_di_master, bukan dua."""
+    peta = {("3312090005003800", "3312090005003800"): "BATU LOR"}
+    master = {("33120900050038", "3312090005003801"): "BATU LOR"}
+    hasil = validasi_sls.bandingkan(peta, master, {("3312090005003800", "3312090005003800"): 1})
     assert not hasil.lolos
-    assert hasil.unmatch_peta and hasil.unmatch_peta[0].alasan == validasi_sls.ALASAN_DUPLIKAT
+    assert len(hasil.temuan) == 2  # 1 tidak_di_master + 1 tidak_di_peta
+    assert hasil.temuan[0].jenis == validasi_sls.JENIS_TIDAK_DI_MASTER
+    assert hasil.temuan[0].idsls_peta == "3312090005003800"
+    assert hasil.temuan[1].jenis == validasi_sls.JENIS_TIDAK_DI_PETA
 
 
-def test_baris_unmatch_membawa_level() -> None:
-    """Baris SubSLS bertanda level subsls, baris SLS bertanda sls."""
-    hasil = validasi_sls.cocokkan({"A": "x"}, {"B": "x"}, level="subsls")
-    assert [satu.level for satu in hasil.unmatch_peta] == ["subsls"]
-    assert [satu.level for satu in hasil.unmatch_master] == ["subsls"]
-    hasil_sls = validasi_sls.cocokkan({"A": "x"}, {"B": "x"})
-    assert [satu.level for satu in hasil_sls.unmatch_peta] == ["sls"]
-
-
-def test_pesan_memuat_hitungan_subsls() -> None:
-    """Pesan menyebut hitungan SubSLS hanya bila ada temuan SubSLS."""
+def test_pesan_memuat_hitungan_jenis() -> None:
+    """Pesan menyebut hitungan per jenis temuan + contoh kode."""
     skema = validasi_sls.HasilSkema(lolos=True)
-    duplikat = validasi_sls.HasilDuplikat(
-        lolos=False, jumlah_ganda=2, contoh=["B", "C"],
-    )
+    duplikat = validasi_sls.HasilDuplikat(lolos=True)
     matching = validasi_sls.HasilMatching(
         lolos=False,
-        unmatch_peta=[validasi_sls.BarisUnmatch("peta", "A", "SLS A", "tidak_di_master")],
-        unmatch_master=[],
-        unmatch_sub_peta=[
-            validasi_sls.BarisUnmatch("peta", "B", "SLS B", "tidak_di_master")
+        temuan=[
+            validasi_sls.BarisUnmatch(
+                jenis=validasi_sls.JENIS_GANDA,
+                idsls_peta="B", idsubsls_peta="B01",
+                idsls_master="B", idsubsls_master="B01", nmsls="SLS B",
+                catatan="2 baris",
+            ),
+            validasi_sls.BarisUnmatch(
+                jenis=validasi_sls.JENIS_KOLOM_SALAH,
+                idsls_peta="C", idsubsls_peta="C02",
+                idsls_master="C0", idsubsls_master="C02", nmsls="SLS C",
+            ),
         ],
-        unmatch_sub_master=[],
     )
     lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, matching)
     assert not lolos
-    assert "2 idsubsls ganda" in pesan
-    assert "unmatch_sub_peta=1" in pesan and "unmatch_sub_master=0" in pesan
+    assert "duplikat: OK" in pesan
+    assert "ganda=1" in pesan and "kolom idsls salah=1" in pesan
+    assert "contoh: B, C" in pesan
 
 
 def _tulis_master_xlsx(jalur, baris) -> None:
@@ -167,7 +213,11 @@ def _tulis_master_xlsx(jalur, baris) -> None:
 
 
 def _tulis_peta_geojson(jalur, baris) -> None:
-    """Tulis peta mini (17 kolom V + geometri titik)."""
+    """Tulis peta mini (17 kolom V + geometri titik).
+
+    ``baris`` = daftar ``(idsls, idsubsls, nmsls)``; ``idsls`` boleh beda dari
+    induk ``idsubsls`` untuk mensimulasikan kolom salah isi.
+    """
     import geopandas as gpd
     from shapely.geometry import Point
 
@@ -175,12 +225,12 @@ def _tulis_peta_geojson(jalur, baris) -> None:
         [
             {
                 "kdprov": "33", "kdkab": "12", "kdkec": "010", "kddesa": "001",
-                "kdsls": "0001", "kdsubsls": "01", "idsls": subsls[:14],
+                "kdsls": "0001", "kdsubsls": "01", "idsls": idsls,
                 "idsubsls": subsls, "nmprov": "x", "nmkab": "x", "nmkec": "x",
                 "nmdesa": "x", "nmsls": nmsls, "rw_dki": "x", "tingkat": 1,
                 "nm_gedung": "x", "posisi": "x",
             }
-            for subsls, nmsls in baris
+            for idsls, subsls, nmsls in baris
         ],
         geometry=[Point(110.0, -7.0)] * len(baris),
         crs="EPSG:4326",
@@ -202,7 +252,11 @@ def test_berkas_split_subsls_sesuai_master_lolos(tmp_path) -> None:
     )
     peta = tmp_path / "peta.geojson"
     _tulis_peta_geojson(
-        peta, [("3312010001000100", "SLS A"), ("3312010001000101", "SLS A")]
+        peta,
+        [
+            ("33120100010001", "3312010001000100", "SLS A"),
+            ("33120100010001", "3312010001000101", "SLS A"),
+        ],
     )
     hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
     assert hasil.lolos, hasil.pesan
@@ -210,7 +264,7 @@ def test_berkas_split_subsls_sesuai_master_lolos(tmp_path) -> None:
 
 
 def test_berkas_subsls_ganda_dan_beda_komposisi_gagal(tmp_path) -> None:
-    """Pasangan idsls+idsubsls sama = duplikat; selisih komposisi = unmatch SubSLS."""
+    """Pasangan sama = ganda; subsls asing = tidak di master; hilang = tidak di peta."""
     _siapkan_master(
         tmp_path, "3312",
         [("3312010001000100", "SLS A"), ("3312010001000101", "SLS A")],
@@ -219,13 +273,33 @@ def test_berkas_subsls_ganda_dan_beda_komposisi_gagal(tmp_path) -> None:
     _tulis_peta_geojson(
         peta,
         [
-            ("3312010001000100", "SLS A"),
-            ("3312010001000100", "SLS A"),  # ganda persis
-            ("3312010001000102", "SLS A"),  # tidak di master
+            ("33120100010001", "3312010001000100", "SLS A"),
+            ("33120100010001", "3312010001000100", "SLS A"),  # ganda persis
+            ("33120100010001", "3312010001000102", "SLS A"),  # tidak di master
         ],
     )
     hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
     assert not hasil.lolos
-    assert "1 idsubsls ganda" in hasil.pesan
-    assert "unmatch_sub_peta=2" in hasil.pesan  # ganda + tidak di master
-    assert "unmatch_sub_master=1" in hasil.pesan
+    assert "1 pasangan ganda" in hasil.pesan
+    assert "tidak ada di master=1" in hasil.pesan
+    assert "tidak ada di peta=1" in hasil.pesan
+    assert "ganda=1" in hasil.pesan
+
+
+def test_berkas_kolom_idsls_salah_satu_baris(tmp_path) -> None:
+    """Kode subsls di kolom idsls menghasilkan satu temuan kolom-salah."""
+    _siapkan_master(
+        tmp_path, "3312",
+        [("3312010001000100", "SLS A"), ("3312010001000101", "SLS A")],
+    )
+    peta = tmp_path / "peta.geojson"
+    _tulis_peta_geojson(
+        peta,
+        [
+            ("33120100010001", "3312010001000100", "SLS A"),
+            ("3312010001000101", "3312010001000101", "SLS A"),  # idsls salah
+        ],
+    )
+    hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
+    assert not hasil.lolos
+    assert "kolom idsls salah=1" in hasil.pesan
