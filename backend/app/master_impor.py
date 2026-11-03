@@ -9,11 +9,18 @@ Tiap kabupaten: baca ``Master/msubsls_26_1_<kdkab>.xlsx`` (atau langsung di
 ``<kdkab>/``), buang baris tanpa ``idsubsls`` 16 digit, hapus baris lama
 kabupaten itu, lalu sisipkan yang baru dalam satu transaksi. Keluar bukan-nol
 bila ada kabupaten yang berkasnya hilang/rusak.
+Di server, jalankan sebagai ``pointse`` dan beri ``--env-file`` (jangan
+``source`` berkas env di bash: bash membuang tanda kutip di dalam nilai JSON
+seperti ``CORS_ORIGINS``):
+
+    sudo -u pointse .venv/bin/python -m app.master_impor \\
+        --env-file /etc/pointse/pointse.env --kdkab 3312
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -64,12 +71,31 @@ def impor_kabupaten(sesi, akar: Path, kode: str) -> dict[str, object]:
     }
 
 
+def muat_env(jalur: str) -> None:
+    """Muat berkas environment tanpa merusak nilai JSON di dalamnya.
+
+    Sama seperti ``scripts/backfill_rekap_subsls.py``: ``source`` di bash
+    membuang tanda kutip di dalam nilai, sehingga ``CORS_ORIGINS=[...]``
+    ditolak pydantic-settings. Variabel yang sudah ada tidak ditimpa.
+    """
+    from dotenv import dotenv_values
+
+    for kunci, nilai in dotenv_values(jalur).items():
+        if nilai is not None and kunci not in os.environ:
+            os.environ[kunci] = nilai
+
+
 def utama(argv: list[str] | None = None) -> int:
     """Titik masuk CLI; kembalikan kode keluar proses."""
     from app.config import get_settings
     from app.db import get_sessionmaker
 
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help="Berkas environment server, mis. /etc/pointse/pointse.env",
+    )
     parser.add_argument(
         "--sumber",
         default=None,
@@ -78,6 +104,8 @@ def utama(argv: list[str] | None = None) -> int:
     parser.add_argument("--kdkab", default=None, help="Hanya satu kab, mis. 3312")
     args = parser.parse_args(argv)
 
+    if args.env_file:
+        muat_env(args.env_file)
     setelan = get_settings()
     akar = Path(args.sumber) if args.sumber else Path(setelan.dir_master_sls_2026_s1)
     sesi_pabrik = get_sessionmaker()
