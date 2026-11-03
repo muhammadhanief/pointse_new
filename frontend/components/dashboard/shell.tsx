@@ -94,6 +94,7 @@ const MENU: GrupMenu[] = [
       { href: "/rekap", label: "Progres Perbaikan Titik SE2026", ikon: IkonRekap },
       { href: "/anomali", label: "Pencermatan Titik", ikon: IkonAnomali },
       { href: "/geser", label: "Pergeseran Titik", ikon: IkonGeser },
+      { href: "/hasil-validasi-sls", label: "Hasil Validasi SLS 2026 S1", ikon: IkonPengecekan },
     ],
   },
   {

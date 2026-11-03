@@ -16,10 +16,10 @@ export default function ValidasiPage() {
       <p className="px-1 text-sm text-muted">
         Lihat ringkasan per kabupaten/kota di{" "}
         <Link
-          href="/proses/validasi/progres"
+          href="/hasil-validasi-sls"
           className="font-medium text-brand underline-offset-4 hover:underline"
         >
-          Progres validasi
+          Hasil Validasi SLS
         </Link>
         .
       </p>
