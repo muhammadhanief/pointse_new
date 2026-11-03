@@ -613,6 +613,7 @@ def daftar_run(
         offset=offset,
     )
     layanan.lengkapi_nomor_urut(sesi, daftar)
+    layanan.lengkapi_antrean(sesi, daftar)
     return DaftarRunOut(
         total=total, baris=[RunOut.model_validate(satu) for satu in daftar]
     )

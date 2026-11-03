@@ -50,6 +50,9 @@ class RunOut(BaseModel):
     sumber_run_a_nomor: int | None = None
     #: Semester peta SLS yang divalidasi run V (mis. ``2026_1``); NULL untuk A/B.
     semester: str | None = None
+    #: Nomor antrean global khusus job ``menunggu`` (1 = paling depan, urutan
+    #: klaim worker); ``None`` untuk status lain.
+    antrean_ke: int | None = None
 
 
 class UnggahanOut(BaseModel):

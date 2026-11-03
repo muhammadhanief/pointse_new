@@ -538,9 +538,18 @@ def saring_pencarian_run(teks: str) -> Any:
 
     Nama wilayah diambil dari tabel ``wilayah`` karena ``runs`` hanya menyimpan
     kode. Kode kabupaten bisa tersimpan 2 digit atau 4 digit, jadi keduanya
-    dicocokkan.
+    dicocokkan: ilike menangani kode pendek ke semua bentuk, sedangkan
+    kode panjang/numerik (mis. 3312 atau 33/12) dicocokkan juga ke
+    bentuk pendeknya.
     """
     pola = f"%{teks}%"
+    angka = "".join(ch for ch in teks if ch.isdigit())
+    alternatif_kode: list[str] = []
+    if angka:
+        alternatif_kode.append(angka)
+        if len(angka) > 2:
+            # "3312" harus ketemu baris berkode pendek "12".
+            alternatif_kode.append(angka[-2:])
     dalam = aliased(Run)
     nomor = (
         select(func.count())
@@ -582,6 +591,7 @@ def saring_pencarian_run(teks: str) -> Any:
         Run.tipe.ilike(pola),
         Run.kdprov.ilike(pola),
         Run.kdkab.ilike(pola),
+        *([Run.kdkab == kode for kode in alternatif_kode] if angka else []),
         Run.user.ilike(pola),
         Run.status.ilike(pola),
         Run.nama_file_input.ilike(pola),
@@ -694,6 +704,7 @@ def lengkapi_nomor_urut(sesi: Session, baris: Sequence[Run]) -> None:
     nomor = nomor_urut_run(sesi, baris)
     for satu in baris:
         satu.nomor_urut = nomor.get(satu.id)
+        satu.antrean_ke = None
 
     sumber_ids = {
         satu.sumber_run_a_id for satu in baris if satu.sumber_run_a_id is not None
@@ -732,6 +743,27 @@ def lengkapi_nomor_urut(sesi: Session, baris: Sequence[Run]) -> None:
             if satu.geotag_master_id
             else None
         )
+
+
+def lengkapi_antrean(sesi: Session, baris: Sequence[Run]) -> None:
+    """Isi nomor antrean global job ``menunggu`` (1 = paling depan).
+
+    Urut id menaik, sama seperti urutan klaim worker; non-menunggu dibiarkan
+    ``None``. Satu query untuk seluruh daftar.
+    """
+    tunggu = [satu for satu in baris if satu.status == STATUS_MENUNGGU]
+    for satu in baris:
+        satu.antrean_ke = None
+    if not tunggu:
+        return
+    semua = list(
+        sesi.scalars(
+            select(Run.id).where(Run.status == STATUS_MENUNGGU).order_by(Run.id)
+        )
+    )
+    peringkat = {run_id: nomor for nomor, run_id in enumerate(semua, start=1)}
+    for satu in tunggu:
+        satu.antrean_ke = peringkat.get(satu.id)
 
 
 def _wilayah_dict(baris: Mapping[str, Any], awalan: str) -> dict[str, Any] | None:

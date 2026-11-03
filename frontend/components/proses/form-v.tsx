@@ -13,11 +13,13 @@ import { useUnggah } from "@/components/unggah/use-unggah";
 import { ambilJson, buatFormUrlEncoded } from "@/lib/api/klien";
 import type { Run } from "@/lib/api/types";
 import { labelNomorJob } from "@/lib/istilah";
+import { KOLOM_PETA_VALIDASI } from "@/lib/validasi/kolom";
 
 export function FormProsesV({ onSelesai }: { onSelesai?: () => void }) {
   const [peta, setPeta] = useState<File | null>(null);
   const [kunciBerkas, setKunciBerkas] = useState(0);
   const [notifikasi, setNotifikasi] = useState(false);
+  const [bukaKolom, setBukaKolom] = useState(false);
   const { status, progres, pesan, data, unggah, batal, reset } =
     useUnggah<Run>();
   const sedang = status === "mengunggah";
@@ -71,6 +73,17 @@ export function FormProsesV({ onSelesai }: { onSelesai?: () => void }) {
 
         <CatatanUnggah />
 
+        <div>
+          <button
+            type="button"
+            onClick={() => setBukaKolom(true)}
+            aria-haspopup="dialog"
+            className="text-sm font-medium text-brand underline-offset-4 hover:underline"
+          >
+            Lihat 17 kolom wajib + tipe datanya
+          </button>
+        </div>
+
         <TombolAksi type="submit" disabled={!peta || sedang}>
           Unggah dan validasi
         </TombolAksi>
@@ -95,6 +108,43 @@ export function FormProsesV({ onSelesai }: { onSelesai?: () => void }) {
           )}
         </PesanUnggah>
       </form>
+
+      <Modal
+        terbuka={bukaKolom}
+        judul="17 kolom wajib peta SLS 2026 Semester 1"
+        onTutup={() => setBukaKolom(false)}
+      >
+        <p className="text-sm leading-normal text-muted">
+          Nama kolom harus persis seperti di bawah (huruf kecil semua).
+          Panjang = jumlah karakter maksimum; baris yang melebihi batas
+          ditolak saat validasi.
+        </p>
+        <table className="mt-3 w-full border-collapse text-sm">
+          <caption className="sr-only">
+            Daftar kolom wajib beserta tipe data dan panjang maksimum
+          </caption>
+          <thead>
+            <tr className="text-left text-xs uppercase tracking-wide text-muted">
+              <th scope="col" className="border-b border-line px-2 py-1.5">Kolom</th>
+              <th scope="col" className="border-b border-line px-2 py-1.5">Tipe data</th>
+              <th scope="col" className="border-b border-line px-2 py-1.5 text-right">Panjang maks</th>
+            </tr>
+          </thead>
+          <tbody>
+            {KOLOM_PETA_VALIDASI.map((satu) => (
+              <tr key={satu.nama} className="border-b border-line/70 last:border-0">
+                <td className="px-2 py-1.5 font-mono text-xs text-ink">{satu.nama}</td>
+                <td className="px-2 py-1.5 text-muted">{satu.tipe}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-ink">{satu.panjang}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="mt-3 text-xs leading-5 text-muted">
+          Dokumen sumber menulis 18 untuk <span className="font-mono">idsubsls</span>,
+          tetapi seluruh data aktual memakai 16 digit — mesin memakai 16.
+        </p>
+      </Modal>
 
       <Modal
         terbuka={notifikasi}

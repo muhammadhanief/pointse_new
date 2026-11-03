@@ -500,6 +500,12 @@ export function RiwayatWorkspace() {
                       sort={sort}
                       onSort={gantiSort}
                     />
+                    <th
+                      scope="col"
+                      className="sticky top-0 z-20 border-b border-line bg-paper px-3 py-2 text-left font-semibold"
+                    >
+                      Antrean
+                    </th>
                     <SelSort
                       label="Baris"
                       kolom="baris"
@@ -549,6 +555,13 @@ export function RiwayatWorkspace() {
                             terhenti={terhenti}
                             rata="start"
                           />
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted">
+                          {run.status === "menunggu"
+                            ? run.antrean_ke != null
+                              ? `Antre ke-${run.antrean_ke}`
+                              : "Menunggu"
+                            : "–"}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums text-muted">
                           {formatAngka(run.jumlah_baris)}

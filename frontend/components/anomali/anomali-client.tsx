@@ -1092,7 +1092,10 @@ export function AnomaliClient({
 
         {data && data.baris.length > 0 ? (
           <>
-            <div className="mt-3 max-h-[70vh] overflow-auto rounded-lg border border-line">
+            <div
+              className={`relative mt-3 max-h-[70vh] overflow-auto rounded-lg border border-line transition-opacity ${memuat ? "opacity-60" : ""}`}
+              aria-busy={memuat}
+            >
               <table className="w-full min-w-[76rem] border-collapse text-[13px]">
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-wide text-muted">
@@ -1331,6 +1334,28 @@ export function AnomaliClient({
               )}
             </div>
           </>
+        ) : null}
+
+        {/* Penanda tengah layar saat filter dimuat ulang: tabel memakai data
+            lama (direduksi) sehingga tanpa ini pengguna tidak tahu ada
+            pemuatan baru. */}
+        {memuat ? (
+          <div
+            role="status"
+            aria-live="polite"
+            aria-label="Memuat filter pencermatan"
+            className="pointer-events-none fixed inset-0 z-40 grid place-items-center"
+          >
+            <div className="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 shadow-2xl">
+              <span
+                aria-hidden="true"
+                className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-brand"
+              />
+              <span className="text-sm font-medium text-ink">
+                Memuat filter...
+              </span>
+            </div>
+          </div>
         ) : null}
       </Panel>
 

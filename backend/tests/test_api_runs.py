@@ -13,7 +13,16 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 import data_kecil
-from app.models import STATUS_MENUNGGU, Aktivitas, RekapKabupaten, RekapSubsls, Run
+from app import layanan
+from app.models import (
+    STATUS_JALAN,
+    STATUS_MENUNGGU,
+    STATUS_SUKSES,
+    Aktivitas,
+    RekapKabupaten,
+    RekapSubsls,
+    Run,
+)
 from app.worker import proses_satu_job
 
 # Berkas titik: dua titik di SubSLS A1, satu di A2 (level_6 tetap A1) supaya ada
@@ -254,6 +263,65 @@ def test_daftar_job_paging_dan_pencarian(
     kosong = klien.get("/runs", params={"tipe": "A", "q": "tidak-ada"})
     assert kosong.json()["total"] == 0
     assert kosong.json()["baris"] == []
+
+
+def test_cari_kode_panjang_ketemu_kdkab_pendek(
+    klien: TestClient, sesi: Session
+) -> None:
+    """Kode 4 digit ("3312", "33/12") harus ketemu baris berkode pendek ("12").
+
+    Berkas peta menyimpan kdkab pendek, sedangkan pengguna mengetik kode
+    lengkap; tanpa pemetaan ini pencarian "kadang tidak berfungsi" tergantung
+    bentuk kode yang tersimpan.
+    """
+    sesi.add(
+        Run(
+            tipe="A",
+            kdprov="33",
+            kdkab="12",
+            nama_file_input="peta.geojson",
+            nama_file_peta="peta.geojson",
+            berkas_input="/tmp/peta.geojson",
+            berkas_peta="/tmp/peta.geojson",
+            user="petugas",
+        )
+    )
+    sesi.commit()
+
+    for kunci in ("3312", "33/12", "12"):
+        hasil = klien.get("/runs", params={"tipe": "A", "q": kunci})
+        assert hasil.status_code == 200, kunci
+        assert hasil.json()["total"] == 1, kunci
+
+
+def test_antrean_ke_hanya_untuk_menunggu(sesi: Session) -> None:
+    """Nomor antrean global urut id menaik; non-menunggu None."""
+
+    def buat(status: str) -> Run:
+        run = Run(
+            tipe="A",
+            kdprov="33",
+            kdkab="07",
+            status=status,
+            nama_file_input="p.geojson",
+            nama_file_peta="p.geojson",
+            berkas_input="/tmp/p.geojson",
+            berkas_peta="/tmp/p.geojson",
+        )
+        sesi.add(run)
+        return run
+
+    jalan = buat(STATUS_JALAN)
+    pertama = buat(STATUS_MENUNGGU)
+    kedua = buat(STATUS_MENUNGGU)
+    sukses = buat(STATUS_SUKSES)
+    sesi.commit()
+
+    layanan.lengkapi_antrean(sesi, [jalan, pertama, kedua, sukses])
+    assert pertama.antrean_ke == 1
+    assert kedua.antrean_ke == 2
+    assert jalan.antrean_ke is None
+    assert sukses.antrean_ke is None
 
 
 def test_hasil_job_dengan_paging(

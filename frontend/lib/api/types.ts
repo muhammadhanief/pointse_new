@@ -27,6 +27,7 @@ export type Run = {
   sumber_run_a_id: number | null;
   sumber_run_a_nomor: number | null;
   semester: string | null;
+  antrean_ke: number | null;
 };
 
 export type DaftarRun = {

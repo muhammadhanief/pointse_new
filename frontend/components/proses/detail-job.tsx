@@ -132,8 +132,8 @@ export function DetailJob({
       className="m-auto w-[min(64rem,calc(100vw-2rem))] max-h-[85vh] overflow-hidden rounded-xl border border-line bg-surface p-0 text-ink shadow-2xl backdrop:bg-ink/40"
     >
       {run ? (
-        <div className="max-h-[85vh] overflow-y-auto p-kartu">
-          <div className="flex items-start justify-between gap-field">
+        <div className="flex max-h-[85vh] flex-col">
+          <div className="sticky top-0 z-10 flex items-start justify-between gap-field border-b border-line bg-surface p-kartu">
             <div className="min-w-0">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted">
                 Detail job
@@ -163,13 +163,29 @@ export function DetailJob({
             </div>
           </div>
 
-          <div className="mt-3 grid gap-field lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-            <div className="lg:col-start-2 lg:row-start-1">
+          <div className="overflow-y-auto p-kartu">
+            {run.pesan ? (
+              <section aria-label="Hasil job">
+                <h3 className="text-sm font-semibold text-ink">Hasil</h3>
+                <p
+                  className={`mt-1 rounded-lg px-3 py-2 text-sm leading-normal ${
+                    run.status === "gagal"
+                      ? "bg-danger-soft text-danger"
+                      : "bg-paper text-ink"
+                  }`}
+                >
+                  {istilahProses(run.pesan)}
+                </p>
+              </section>
+            ) : null}
+
+            <div className="mt-3">
               <UnduhanJob run={run} />
             </div>
 
-            <div className="min-w-0 lg:col-start-1 lg:row-start-1">
-              <dl className="grid gap-x-3 gap-y-2 text-sm sm:grid-cols-2">
+            <section aria-label="Rincian job" className="mt-3">
+              <h3 className="text-sm font-semibold text-ink">Rincian</h3>
+              <dl className="mt-1 grid gap-x-3 gap-y-2 text-sm sm:grid-cols-2">
                 <Info label="Wilayah" nilai={`${run.kdprov}/${run.kdkab}`} />
                 <Info label="Pengguna" nilai={run.user ?? "-"} />
                 <Info
@@ -200,8 +216,11 @@ export function DetailJob({
                 />
                 <Info label="Detail titik" nilai={detailTitik} />
               </dl>
+            </section>
 
-              <div className="mt-3 rounded-lg bg-paper px-3 py-2 text-sm">
+            <section aria-label="Berkas job" className="mt-3">
+              <h3 className="text-sm font-semibold text-ink">Berkas</h3>
+              <div className="mt-1 rounded-lg bg-paper px-3 py-2 text-sm">
                 <p className="text-xs text-muted">Berkas input</p>
                 <div className="mt-1 flex items-start justify-between gap-3">
                   <p className="min-w-0 break-all font-medium text-ink">
@@ -231,19 +250,7 @@ export function DetailJob({
                   </p>
                 ) : null}
               </div>
-
-              {run.pesan ? (
-                <p
-                  className={`mt-3 rounded-lg px-3 py-2 text-sm leading-normal ${
-                    run.status === "gagal"
-                      ? "bg-danger-soft text-danger"
-                      : "bg-paper text-ink"
-                  }`}
-                >
-                  {istilahProses(run.pesan)}
-                </p>
-              ) : null}
-            </div>
+            </section>
           </div>
         </div>
       ) : null}
