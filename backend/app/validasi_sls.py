@@ -101,14 +101,17 @@ class HasilSkema:
 
 @dataclass
 class HasilDuplikat:
-    """Hasil blok duplikat ``idsls`` (14 digit) dan ``idsubsls`` (16 digit)."""
+    """Hasil blok duplikat ``idsubsls`` (16 digit).
+
+    Satu SLS boleh muncul di banyak baris selama tiap baris punya ``idsubsls``
+    berbeda yang komposisinya cocok dengan master (satu baris per SubSLS);
+    yang dilarang adalah pasangan ``idsls``+``idsubsls`` yang sama persis
+    muncul lebih dari sekali.
+    """
 
     lolos: bool
     jumlah_ganda: int = 0
     contoh: list[str] = field(default_factory=list)
-    #: Duplikat di level SubSLS (aturan yang sama, kunci 16 digit).
-    jumlah_ganda_sub: int = 0
-    contoh_sub: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -289,16 +292,11 @@ def rangkum_pesan(
             )
             bagian.append(f"skema: GAGAL ({rincian})")
     if duplikat.lolos:
-        bagian.append("duplikat: OK (idsls/idsubsls unik)")
+        bagian.append("duplikat: OK (idsubsls unik)")
     else:
         contoh = ", ".join(duplikat.contoh)
-        contoh_sub = ", ".join(duplikat.contoh_sub)
         bagian.append(
-            f"duplikat: GAGAL ({duplikat.jumlah_ganda} idsls ganda"
-            + (f"; contoh: {contoh}" if contoh else "")
-            + f"; {duplikat.jumlah_ganda_sub} idsubsls ganda"
-            + (f"; contoh: {contoh_sub}" if contoh_sub else "")
-            + ")"
+            f"duplikat: GAGAL ({duplikat.jumlah_ganda} idsubsls ganda; contoh: {contoh})"
         )
     if matching.lolos:
         bagian.append("matching: OK (peta <-> master cocok)")
@@ -518,15 +516,7 @@ def validasi_berkas(
                     contoh=[kode_aktual],
                 )
             )
-    duplikat = periksa_duplikat(daftar)
-    duplikat_sub = periksa_duplikat(daftar_sub)
-    duplikat = HasilDuplikat(
-        lolos=duplikat.lolos and duplikat_sub.lolos,
-        jumlah_ganda=duplikat.jumlah_ganda,
-        contoh=duplikat.contoh,
-        jumlah_ganda_sub=duplikat_sub.jumlah_ganda,
-        contoh_sub=duplikat_sub.contoh,
-    )
+    duplikat = periksa_duplikat(daftar_sub)
     kode_master = str(kode_kab or "").strip()
     if not kode_master and kdkab:
         kode_master = f"{kdprov[:2]}{kdkab}" if kdprov and len(str(kdkab)) == 2 else str(kdkab)
@@ -534,17 +524,15 @@ def validasi_berkas(
         master, master_sub = baca_master(akar_master_sls, kode_master)
     else:
         master, master_sub = {}, {}
-    ganda_sls = set(duplikat.contoh) | {
-        kode
-        for kode in peta
-        if sum(1 for nilai in daftar if nilai == kode) > 1
-    }
-    ganda_sub = set(duplikat.contoh_sub) | {
+    # idsls yang sama di banyak baris bukan duplikat selama tiap baris punya
+    # idsubsls berbeda (satu baris per SubSLS); hanya pasangan idsls+idsubsls
+    # yang sama persis yang diuji ganda.
+    ganda_sub = set(duplikat.contoh) | {
         kode
         for kode in peta_sub
         if sum(1 for nilai in daftar_sub if nilai == kode) > 1
     }
-    cocok_sls = cocokkan(peta, master, ganda_sls)
+    cocok_sls = cocokkan(peta, master, set())
     cocok_sub = cocokkan(peta_sub, master_sub, ganda_sub)
     matching = HasilMatching(
         lolos=cocok_sls.lolos and cocok_sub.lolos,

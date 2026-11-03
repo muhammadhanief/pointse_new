@@ -93,7 +93,7 @@ def test_pesan_tiga_blok() -> None:
     lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, matching)
     assert not lolos
     assert "skema: OK" in pesan
-    assert "duplikat: GAGAL (2 idsls ganda; contoh: A, B; 0 idsubsls ganda)" in pesan
+    assert "duplikat: GAGAL (2 idsubsls ganda; contoh: A, B)" in pesan
     assert "unmatch_peta=1" in pesan and "unmatch_master=1" in pesan
     assert "contoh: A" in pesan and "contoh: C" in pesan
 
@@ -128,8 +128,7 @@ def test_pesan_memuat_hitungan_subsls() -> None:
     """Pesan menyebut hitungan SubSLS hanya bila ada temuan SubSLS."""
     skema = validasi_sls.HasilSkema(lolos=True)
     duplikat = validasi_sls.HasilDuplikat(
-        lolos=False, jumlah_ganda=1, contoh=["A"], jumlah_ganda_sub=2,
-        contoh_sub=["B", "C"],
+        lolos=False, jumlah_ganda=2, contoh=["B", "C"],
     )
     matching = validasi_sls.HasilMatching(
         lolos=False,
@@ -144,3 +143,80 @@ def test_pesan_memuat_hitungan_subsls() -> None:
     assert not lolos
     assert "2 idsubsls ganda" in pesan
     assert "unmatch_sub_peta=1" in pesan and "unmatch_sub_master=0" in pesan
+
+
+def _tulis_master_xlsx(jalur, baris) -> None:
+    """Tulis master msubsls mini (kolom idsubsls + nmsls)."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["idsubsls", "nmsls"])
+    for subsls, nmsls in baris:
+        ws.append([subsls, nmsls])
+    wb.save(str(jalur))
+
+
+def _tulis_peta_geojson(jalur, baris) -> None:
+    """Tulis peta mini (17 kolom V + geometri titik)."""
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    gdf = gpd.GeoDataFrame(
+        [
+            {
+                "kdprov": "33", "kdkab": "12", "kdkec": "010", "kddesa": "001",
+                "kdsls": "0001", "kdsubsls": "01", "idsls": subsls[:14],
+                "idsubsls": subsls, "nmprov": "x", "nmkab": "x", "nmkec": "x",
+                "nmdesa": "x", "nmsls": nmsls, "rw_dki": "x", "tingkat": 1,
+                "nm_gedung": "x", "posisi": "x",
+            }
+            for subsls, nmsls in baris
+        ],
+        geometry=[Point(110.0, -7.0)] * len(baris),
+        crs="EPSG:4326",
+    )
+    gdf.to_file(str(jalur), driver="GeoJSON")
+
+
+def _siapkan_master(tmp_path, kode, baris) -> None:
+    akar = tmp_path / "m" / kode
+    akar.mkdir(parents=True, exist_ok=True)
+    _tulis_master_xlsx(akar / f"msubsls_26_1_{kode}.xlsx", baris)
+
+
+def test_berkas_split_subsls_sesuai_master_lolos(tmp_path) -> None:
+    """SLS yang sama di banyak baris bukan duplikat bila subsls-nya beda dan cocok."""
+    _siapkan_master(
+        tmp_path, "3312",
+        [("3312010001000100", "SLS A"), ("3312010001000101", "SLS A")],
+    )
+    peta = tmp_path / "peta.geojson"
+    _tulis_peta_geojson(
+        peta, [("3312010001000100", "SLS A"), ("3312010001000101", "SLS A")]
+    )
+    hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
+    assert hasil.lolos, hasil.pesan
+    assert "duplikat: OK" in hasil.pesan
+
+
+def test_berkas_subsls_ganda_dan_beda_komposisi_gagal(tmp_path) -> None:
+    """Pasangan idsls+idsubsls sama = duplikat; selisih komposisi = unmatch SubSLS."""
+    _siapkan_master(
+        tmp_path, "3312",
+        [("3312010001000100", "SLS A"), ("3312010001000101", "SLS A")],
+    )
+    peta = tmp_path / "peta.geojson"
+    _tulis_peta_geojson(
+        peta,
+        [
+            ("3312010001000100", "SLS A"),
+            ("3312010001000100", "SLS A"),  # ganda persis
+            ("3312010001000102", "SLS A"),  # tidak di master
+        ],
+    )
+    hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
+    assert not hasil.lolos
+    assert "1 idsubsls ganda" in hasil.pesan
+    assert "unmatch_sub_peta=2" in hasil.pesan  # ganda + tidak di master
+    assert "unmatch_sub_master=1" in hasil.pesan

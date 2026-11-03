@@ -316,9 +316,10 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
    Nama bertipe string semua; `tingkat` tipe integer. Catatan: dokumen sumber
    menulis `idsubsls`(18), tetapi seluruh data aktual (peta, `msubsls`,
    hirarki dua semester) memakai 16 digit, jadi itu yang dipakai mesin.
-2. **ID duplikat**: `idsls` (14 digit) tidak boleh ganda di dalam berkas
-   (cek QGIS sebelum matching); aturan yang sama berlaku untuk `idsubsls`
-   (18 digit).
+2. **ID duplikat**: pasangan `idsls`+`idsubsls` yang sama persis tidak boleh
+   muncul lebih dari sekali. Satu `idsls` boleh ada di banyak baris selama
+   tiap baris punya `idsubsls` berbeda yang komposisinya cocok dengan master
+   (satu baris per SubSLS, seperti di `msubsls`); cek QGIS sebelum matching.
 3. **Matching dua arah lawan master** (pengganti langkah poligon
    `Cek_Master_PetaSLS`, berbasis Excel bukan geometri), di **dua level**:
    - `peta vs master`: `idsls` di peta tapi tidak ada di master =
