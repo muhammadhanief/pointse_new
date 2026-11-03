@@ -26,6 +26,7 @@ from app.config import Settings, get_settings
 from app.db import get_session
 from app.kunci import KunciBerkas, baca_pid_kunci, jalur_kunci
 from app.models import (
+    STATUS_BELUM_CLEAN,
     STATUS_GAGAL,
     STATUS_JALAN,
     STATUS_MENUNGGU,
@@ -357,7 +358,7 @@ def _ambil_antrean(
     ]
     terakhir = sesi.scalars(
         select(Run)
-        .where(Run.status.in_([STATUS_SUKSES, STATUS_GAGAL]))
+        .where(Run.status.in_([STATUS_SUKSES, STATUS_BELUM_CLEAN, STATUS_GAGAL]))
         .order_by(Run.finished_at.desc(), Run.id.desc())
         .limit(1)
     ).first()
@@ -369,6 +370,7 @@ def _ambil_antrean(
         menunggu=hitungan.get(STATUS_MENUNGGU, 0),
         jalan=hitungan.get(STATUS_JALAN, 0),
         sukses=hitungan.get(STATUS_SUKSES, 0),
+        belum_clean=hitungan.get(STATUS_BELUM_CLEAN, 0),
         gagal=hitungan.get(STATUS_GAGAL, 0),
         total=total,
         tertua_menunggu=tertua,

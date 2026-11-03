@@ -80,10 +80,14 @@ TIPE_V = "V"
 SEMESTER_SLS_2026_1 = "2026_1"
 
 # Nilai kolom ``runs.status``: ``menunggu`` -> ``jalan`` -> ``sukses``/``gagal``.
+# Run validasi (tipe V) punya nilai final tambahan ``belum_clean``: ada temuan
+# tetapi minimal satu pasangan master fully-clean (cocok persis tanpa temuan
+# apa pun). Lihat :func:`app.worker.status_akhir_v`.
 STATUS_MENUNGGU = "menunggu"
 STATUS_JALAN = "jalan"
 STATUS_SUKSES = "sukses"
 STATUS_GAGAL = "gagal"
+STATUS_BELUM_CLEAN = "belum_clean"
 
 # Nilai kolom ``rekap_desa.dasar``/``rekap_kabupaten.dasar``:
 # - tugas : wilayah penugasan titik, dari ``titik_hasil.level_6_full_code``
@@ -559,7 +563,8 @@ class ValidasiSlsUnmatch(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
-    #: Jenis temuan (nama sheet unduhan): tidak_di_peta/tidak_di_master/ganda.
+    #: Jenis temuan (nama sheet unduhan):
+    #: tidak_di_peta/tidak_di_master/ganda/nama_beda/tidak_konsisten.
     jenis: Mapped[str] = mapped_column(String(16))
     idsls_peta: Mapped[str | None] = mapped_column(String(20))
     idsubsls_peta: Mapped[str | None] = mapped_column(String(20))

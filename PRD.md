@@ -328,7 +328,14 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
    `msubsls`); cek QGIS sebelum matching. Nilai 16 digit yang nyasar di kolom
    `idsls` tetap dihitung `tidak ada di master` (memang tidak terdaftar
    sebagai SLS) plus catatan bahwa kolomnya salah isi.
-3. **Matching pasangan lawan master** (pengganti langkah poligon
+3. **Konsistensi susunan kode antar kolom**: `idsls` harus sama dengan
+   gabungan `kdprov+kdkab+kdkec+kddesa+kdsls` (`kdkab` boleh 2/4 digit,
+   dipakai 2 digit terakhir), dan `idsubsls` harus sama dengan
+   `idsls+kdsubsls`. Hanya dinilai bila semua potongan terisi dengan panjang
+   yang tepat (baris salah panjang sudah gagal di skema). Baris yang tidak
+   cocok = temuan `tidak_konsisten` (menggagalkan) dan tidak ikut matching
+   — kodenya sendiri kontradiktif, percuma dicocokkan ke master.
+4. **Matching pasangan lawan master** (pengganti langkah poligon
    `Cek_Master_PetaSLS`, berbasis Excel bukan geometri), per pasangan
    `(idsls, idsubsls)`:
    - Pasangan peta yang sama persis ada di master = cocok.
@@ -344,8 +351,8 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
      beda` (tetap menggagalkan; samakan dengan ejaan di master).
    - Baris yang `idsls` dan `idsubsls`-nya dua-duanya kosong dilewati
      (tidak ikut validasi) dan dihitung sebagai catatan, bukan temuan.
-4. **Blokir bila gagal, tetap tercatat**: skema/duplikat/matching gagal =
-   tombol antre tidak aktif; run tercatat dengan status `gagal` dan perincian
+5. **Blokir bila gagal, tetap tercatat**: skema/duplikat/konsistensi/matching
+   gagal = tombol antre tidak aktif; run tercatat dengan status `gagal` dan perincian
    kegagalan bisa dilihat di riwayat + diunduh sebagai Excel (satu sheet per
    jenis temuan; tab merah bila ada temuan).
 
@@ -374,13 +381,13 @@ pemindaian puluhan Excel tiap halaman progres (pindai penuh 36 kab terbukti
 
 - **Tipe run baru `V`** ("validasi"): `runs.tipe` boleh `A`/`B`/`V`; V tidak
   dibaca rekap/progres, tidak ikut hitung nomor job A/B, dan tidak menjadi
-  sumber peta Proses B. Kolom pesan `runs.pesan` menyimpan ringkasan 3 blok
-  (skema/duplikat/matching).
+  sumber peta Proses B. Kolom pesan `runs.pesan` menyimpan ringkasan 4 blok
+  (skema/duplikat/konsistensi/matching).
 - **Tabel `validasi_sls_unmatch`**: satu baris = satu pasangan
   `(idsls, idsubsls)` bermasalah, dengan sisi peta dan sisi master ditulis
   berdampingan; sisi yang kosong berarti kode tidak ada di sisi itu. Kolom
   `run_id` (FK `runs.id` cascade), `jenis` (`tidak_di_peta`/`tidak_di_master`/
-  `ganda`, `nama_beda`, sekaligus nama sheet unduhan), `idsls_peta`,
+  `ganda`, `nama_beda`, `tidak_konsisten`, sekaligus nama sheet unduhan), `idsls_peta`,
   `idsubsls_peta`, `idsls_master`, `idsubsls_master`, `nmsls` (nullable),
   `catatan`, dan `created_at`. Di luar cakupan? Tidak: dipakai untuk daftar
   unduhan Excel dan audit. Tidak ikut pemangkasan baseline.
@@ -401,15 +408,22 @@ pemindaian puluhan Excel tiap halaman progres (pindai penuh 36 kab terbukti
    akhiran .geojson/.json/.gpkg langsung ditolak dengan saran ganti nama.
 2. Backend membuat run `V` status `menunggu` (ditolak 422 bila master
    kabupaten belum diimpor ke database); worker menjalankan validasi
-   (baca atribut via pyogrio `read_geometry=False`, bandingkan dengan master
-   di database via `layanan.muat_master`, tulis `validasi_sls_unmatch`).
-3. `sukses` = ketiga blok lolos; `gagal` = ada blok gagal + pesan berisi
+   (baca atribut via pyogrio `read_geometry=False`, cek susunan kode,
+   bandingkan yang konsisten dengan master di database via
+   `layanan.muat_master`, tulis `validasi_sls_unmatch`).
+3. `sukses` = keempat blok lolos; `belum_clean` = ada blok gagal tetapi
+   minimal satu pasangan master fully-clean (cocok persis tanpa temuan apa
+   pun, definisi sama dengan hitungan `selesai`); `gagal` = tidak ada
+   pasangan yang cocok sama sekali (atau target tak diketahui). Pesan berisi
    hitungan per jenis temuan, contoh kode per jenis (maks 3), dan ajakan
-   mengunduh rincian Excel (tanpa rahasia).
+   mengunduh rincian Excel (tanpa rahasia). `belum_clean` dihitung final
+   (selesai/sisa terisi) dan tampil dengan lencana kuning di riwayat,
+   progres, dan Status Sistem; run yatim (temuan terhapus) tetap `gagal`.
 4. Riwayat menampilkan tab/run V dengan lencana status; tombol unduh Excel
    daftar temuan per run (lembar Ringkasan + satu sheet per jenis:
-   tidak ada di peta / tidak ada di master / ganda / nama beda; tab merah
-   bila ada temuan) untuk diperbaiki di QGIS lalu unggah ulang.
+   tidak ada di peta / tidak ada di master / ganda / nama beda /
+   tidak konsisten; tab merah bila ada temuan) untuk diperbaiki di QGIS
+   lalu unggah ulang.
 5. Halaman Hasil Validasi (`/hasil-validasi-sls`, didukung endpoint
    `GET /validasi-sls/ringkasan`) menampilkan run V terakhir tiap
    kabupaten/kota beserta target (jumlah pasangan di master), selesai, sisa,
@@ -469,11 +483,12 @@ di rekap, pekerjaan terpisah).
   SSO production, tabel operasional, uji restore cadangan, dan pengujian penuh
   Status Sistem di server baru belum selesai/diuji.
 - **T9 — Validasi Peta SLS 2026 Semester 1 (tipe run V)**: rancangan di §11;
-  selesai Backend + frontend. Backend: migrasi `0019`–`0022`
-  (`runs.semester`, tabel `validasi_sls_unmatch` sisi-berdampingan),
-  modul `validasi_sls.py` (skema/duplikat/matching per pasangan),
+  selesai Backend + frontend. Backend: migrasi `0019`–`0023`
+  (`runs.semester`, tabel `validasi_sls_unmatch` sisi-berdampingan, tabel
+  `master_sls_2026_s1` + perintah impor),
+  modul `validasi_sls.py` (skema/duplikat/konsistensi/matching per pasangan),
   endpoint + worker (steril dari SE2026, tolak unggah bila master kab belum
-  ada). Frontend: halaman unggah + pesan 3 blok + unduh Excel per jenis
+  ada). Frontend: halaman unggah + pesan 4 blok + unduh Excel per jenis
   temuan (tab merah), tab/run V di riwayat.
 
 ## 13. Keputusan dan alasannya

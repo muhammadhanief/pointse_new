@@ -56,8 +56,8 @@ export function UnduhanJob({ run }: { run: Run }) {
         ) : null}
 
         <p className="mt-2 text-xs leading-5 text-muted">
-          Tersedia untuk job sukses maupun gagal; perbaiki di QGIS lalu unggah
-          ulang.
+          Tersedia untuk job sukses, belum clean, maupun gagal; perbaiki di
+          QGIS lalu unggah ulang.
         </p>
       </div>
     );

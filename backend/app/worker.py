@@ -102,6 +102,7 @@ from app.db import get_sessionmaker
 from app.kunci import KunciBerkas, jalur_kunci
 from app.models import (
     SEMESTER_SLS_2026_1,
+    STATUS_BELUM_CLEAN,
     STATUS_GAGAL,
     STATUS_JALAN,
     STATUS_MENUNGGU,
@@ -113,6 +114,7 @@ from app.models import (
     WORKER_JALAN,
     WORKER_MENANGGUR,
     AnomaliTitik,
+    MasterSls2026S1,
     RekapDesa,
     RekapKabupaten,
     RekapSubsls,
@@ -986,7 +988,7 @@ def proses_validasi_v(sesi: Session, run: Run) -> tuple[int, str, bool]:
             "nmsls": satu.nmsls,
             "catatan": satu.catatan,
         }
-        for satu in hasil.matching.temuan
+        for satu in (*hasil.konsistensi.temuan, *hasil.matching.temuan)
     ]
     sesi.execute(delete(ValidasiSlsUnmatch).where(ValidasiSlsUnmatch.run_id == run.id))
     sesi.execute(insert(ValidasiSlsUnmatch), unmatch)
@@ -1000,14 +1002,72 @@ def layanan_kode_kab(run: Run) -> str:
     return layanan.kode_kabupaten(run.kdprov, run.kdkab)
 
 
+#: Jenis temuan yang mengotori pasangan master (temuan berjenis ini selalu
+#: membawa sisi master, jadi pasangan itu tidak lagi fully-clean). Cerminan
+#: himpunan yang sama di :func:`app.layanan.ringkasan_validasi`; kalau diubah,
+#: ubah juga di sana.
+JENIS_MENGOTORI_V = ("tidak_di_peta", "nama_beda", "ganda")
+
+
+def status_akhir_v(sesi: Session, run: Run, lolos: bool) -> str:
+    """Status akhir run V: ``sukses`` bila lolos, ``belum_clean``/``gagal`` bila tidak.
+
+    ``belum_clean`` = run ber-temuan tetapi minimal satu pasangan master
+    fully-clean (cocok persis tanpa temuan apa pun, termasuk temuan
+    ``tidak_konsisten`` yang tidak punya sisi master). ``gagal`` = NOL
+    pasangan clean (tidak ada yang cocok sama sekali) atau target tidak
+    diketahui (master kabupaten belum diimpor). Definisi clean sama dengan
+    hitungan ``selesai`` di :func:`app.layanan.ringkasan_validasi`:
+    ``clean = target - |kotor|``.
+    """
+    if lolos:
+        return STATUS_SUKSES
+    from app import layanan
+
+    kode = layanan.kode_kabupaten(run.kdprov, run.kdkab)
+    target = sesi.scalar(
+        select(func.count())
+        .select_from(MasterSls2026S1)
+        .where(MasterSls2026S1.kdkab == kode)
+    )
+    if not target:
+        return STATUS_GAGAL
+    kotor = {
+        (str(a or ""), str(b or ""))
+        for a, b in sesi.execute(
+            select(
+                ValidasiSlsUnmatch.idsls_master,
+                ValidasiSlsUnmatch.idsubsls_master,
+            ).where(
+                ValidasiSlsUnmatch.run_id == run.id,
+                ValidasiSlsUnmatch.jenis.in_(JENIS_MENGOTORI_V),
+                or_(
+                    ValidasiSlsUnmatch.idsls_master.is_not(None),
+                    ValidasiSlsUnmatch.idsubsls_master.is_not(None),
+                ),
+            )
+        )
+    }
+    # Pasangan ganda-tapi-cocok tetap kotor: ia muncul di temuan berjenis
+    # "ganda", jadi bukan fully-clean menurut definisi di atas.
+    if int(target) - len(kotor) >= 1:
+        return STATUS_BELUM_CLEAN
+    return STATUS_GAGAL
+
+
 def simpan_fase_akhir_v(sesi: Session, run: Run, hasil: tuple[int, str, bool]) -> None:
-    """Tutup run V: jumlah unmatch + status sukses/gagal + pesan 3 blok."""
+    """Tutup run V: jumlah unmatch + status akhir + pesan 4 blok.
+
+    Status akhir dihitung :func:`status_akhir_v`: ``sukses`` bila semua blok
+    lolos, ``belum_clean`` bila ber-temuan tetapi minimal satu pasangan
+    master fully-clean, ``gagal`` bila tidak ada yang cocok sama sekali.
+    """
     jumlah, pesan, lolos = hasil
     run.jumlah_baris = jumlah
     run.jumlah_tanpa_wilayah = 0
     run.pesan = pesan
     run.semester = run.semester or SEMESTER_SLS_2026_1
-    run.status = STATUS_SUKSES if lolos else STATUS_GAGAL
+    run.status = status_akhir_v(sesi, run, lolos)
     run.heartbeat_at = sekarang()
     run.finished_at = sekarang()
     run.detail_tersedia = 0

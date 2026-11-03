@@ -4,6 +4,7 @@ const LABEL: Record<StatusRun, string> = {
   menunggu: "Menunggu",
   jalan: "Diproses",
   sukses: "Sukses",
+  belum_clean: "Belum clean",
   gagal: "Gagal",
 };
 
@@ -11,6 +12,7 @@ const GAYA: Record<StatusRun, string> = {
   menunggu: "border-accent/30 bg-accent-soft text-accent-strong",
   jalan: "border-brand/30 bg-brand-soft text-brand-strong",
   sukses: "border-success/30 bg-success-soft text-success",
+  belum_clean: "border-warning/40 bg-warning/10 text-warning",
   gagal: "border-danger/25 bg-danger-soft text-danger",
 };
 

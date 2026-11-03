@@ -591,7 +591,7 @@ def daftar_master_geotag(
 @router.get("/runs", response_model=DaftarRunOut)
 def daftar_run(
     tipe: str | None = Query(None, description=f"'{TIPE_A}', '{TIPE_B}', atau '{TIPE_V}'"),
-    status: str | None = Query(None, description="menunggu/jalan/sukses/gagal"),
+    status: str | None = Query(None, description="menunggu/jalan/sukses/belum_clean/gagal"),
     kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
     kdkab: str | None = Query(None, description="Kode kabupaten/kota, mis. 07"),
     q: str | None = Query(None, max_length=100, description="Cari semua kolom riwayat"),

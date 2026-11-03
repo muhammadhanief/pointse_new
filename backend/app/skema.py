@@ -498,6 +498,8 @@ class AntreanOut(BaseModel):
     menunggu: int
     jalan: int
     sukses: int
+    #: Run validasi ber-temuan tetapi masih punya pasangan fully-clean.
+    belum_clean: int = 0
     gagal: int
     total: int
     tertua_menunggu: datetime | None = None

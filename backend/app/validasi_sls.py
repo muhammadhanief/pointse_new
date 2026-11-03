@@ -1,6 +1,6 @@
 """Validasi peta SLS/SubSLS 2026 Semester 1 (tipe run V, PRD §11).
 
-Tiga blok, tanpa geometri (pengganti langkah poligon ``Cek_Master_PetaSLS``):
+Empat blok, tanpa geometri (pengganti langkah poligon ``Cek_Master_PetaSLS``):
 
 1. **Skema atribut**: peta wajib punya 17 field sesuai dokumen "Validasi
    Atribut" (``kdprov``..``posisi``) dengan panjang data sesuai tabel.
@@ -8,8 +8,13 @@ Tiga blok, tanpa geometri (pengganti langkah poligon ``Cek_Master_PetaSLS``):
 2. **Pasangan ganda**: pasangan ``(idsls, idsubsls)`` yang sama persis tidak
    boleh muncul lebih dari sekali (satu ``idsls`` boleh di banyak baris
    selama ``idsubsls``-nya beda).
-3. **Matching pasangan lawan master Excel**: pasangan ``(idsls, idsubsls)``
-   peta vs master ``msubsls``. Pasangan yang sama persis = cocok; yang
+3. **Konsistensi susunan kode**: ``idsls`` harus sama dengan gabungan
+   ``kdprov+kdkab+kdkec+kddesa+kdsls``, dan ``idsubsls`` harus sama dengan
+   ``idsls+kdsubsls``. Baris yang tidak cocok dicatat ``tidak_konsisten``
+   dan tidak ikut matching (kodenya sendiri kontradiktif, percuma
+   dicocokkan ke master).
+4. **Matching pasangan lawan master**: pasangan ``(idsls, idsubsls)``
+   peta vs master. Pasangan yang sama persis = cocok; yang
    ``idsubsls``-nya dikenal di bawah ``idsls`` berbeda = kolom ``idsls``
    salah; selebihnya = tidak ada di master / tidak ada di peta.
 
@@ -117,6 +122,7 @@ JENIS_TIDAK_DI_PETA = "tidak_di_peta"
 JENIS_TIDAK_DI_MASTER = "tidak_di_master"
 JENIS_GANDA = "ganda"
 JENIS_NAMA_BEDA = "nama_beda"
+JENIS_TIDAK_KONSISTEN = "tidak_konsisten"
 
 
 @dataclass
@@ -125,8 +131,8 @@ class BarisUnmatch:
 
     Sisi yang kosong berarti tidak ada di sisi itu. ``jenis`` menentukan sheet:
     ``tidak_di_peta`` (tambah di QGIS), ``tidak_di_master`` (kode asing),
-    ``ganda`` (baris rangkap), ``kolom_salah`` (kode subsls tertulis di kolom
-    ``idsls``; sisi master memuat pasangan yang benar).
+    ``ganda`` (baris rangkap), ``nama_beda`` (ejaan nama), ``tidak_konsisten``
+    (``idsls``/``idsubsls`` tidak cocok susunan ``kdprov``..``kdsubsls``).
     """
 
     jenis: str
@@ -148,11 +154,12 @@ class HasilMatching:
 
 @dataclass
 class HasilValidasi:
-    """Gabungan tiga blok + pesan ringkas untuk ``runs.pesan``."""
+    """Gabungan empat blok + pesan ringkas untuk ``runs.pesan``."""
 
     lolos: bool
     skema: HasilSkema
     duplikat: HasilDuplikat
+    konsistensi: HasilKonsistensi
     matching: HasilMatching
     pesan: str
 
@@ -258,6 +265,104 @@ def kunci_pasangan(idsls: str | None, idsubsls: str | None) -> str:
     return f"{idsls or ''}|{idsubsls or ''}"
 
 
+@dataclass
+class HasilKonsistensi:
+    """Hasil blok konsistensi susunan kode + pasangan yang dikecualikan.
+
+    ``pasangan_buruk`` = pasangan ``(idsls, idsubsls)`` yang kodenya
+    kontradiktif; tidak ikut matching supaya tidak mengotori hitungan
+    ``tidak_di_master``/``tidak_di_peta`` dengan kode yang memang salah ketik.
+    """
+
+    lolos: bool
+    temuan: list[BarisUnmatch] = field(default_factory=list)
+    pasangan_buruk: set[tuple[str, str]] = field(default_factory=set)
+
+
+#: Panjang digit tiap potongan kode penyusun ``idsls``/``idsubsls``.
+PANJANG_SUSUNAN_V: dict[str, int] = {
+    "kdprov": 2,
+    "kdkab": 2,
+    "kdkec": 3,
+    "kddesa": 3,
+    "kdsls": 4,
+    "kdsubsls": 2,
+}
+
+
+def periksa_konsistensi(atribut: list[dict[str, str]]) -> HasilKonsistensi:
+    """Cek susunan kode per baris peta (murni, tanpa I/O).
+
+    ``atribut`` = daftar baris ``{"kode", "sub", "kdprov", ..., "nama"}``
+    (lihat :func:`baca_peta`). Syarat dinilai: semua potongan terisi dengan
+    panjang digit yang tepat (``kdkab`` boleh 2/4 digit, dipakai 2 digit
+    terakhir) serta ``idsls`` 14 digit dan ``idsubsls`` 16 digit. Baris yang
+    tidak memenuhi syarat dilewati di sini karena sudah gagal di blok skema;
+    baris kosong tidak masuk daftar ini.
+    """
+    temuan: list[BarisUnmatch] = []
+    buruk: set[tuple[str, str]] = set()
+    for baris in atribut:
+        kode = baris.get("kode", "")
+        sub = baris.get("sub", "")
+        if not kode and not sub:
+            continue
+        potong = {nama: baris.get(nama, "") for nama in PANJANG_SUSUNAN_V}
+        kdkab = potong["kdkab"]
+        ekor_kab = kdkab[-2:] if len(kdkab) in (2, 4) else ""
+        if not (
+            len(potong["kdprov"]) == 2
+            and potong["kdprov"].isdigit()
+            and ekor_kab
+            and ekor_kab.isdigit()
+            and len(potong["kdkec"]) == 3
+            and potong["kdkec"].isdigit()
+            and len(potong["kddesa"]) == 3
+            and potong["kddesa"].isdigit()
+            and len(potong["kdsls"]) == 4
+            and potong["kdsls"].isdigit()
+            and len(potong["kdsubsls"]) == 2
+            and potong["kdsubsls"].isdigit()
+            and len(kode) == 14
+            and kode.isdigit()
+            and len(sub) == 16
+            and sub.isdigit()
+        ):
+            continue
+        harapan_sls = (
+            potong["kdprov"] + ekor_kab + potong["kdkec"] + potong["kddesa"] + potong["kdsls"]
+        )
+        harapan_sub = harapan_sls + potong["kdsubsls"]
+        nama = baris.get("nama") or None
+        if kode != harapan_sls:
+            temuan.append(
+                BarisUnmatch(
+                    jenis=JENIS_TIDAK_KONSISTEN,
+                    idsls_peta=kode,
+                    idsubsls_peta=sub,
+                    idsls_master=None,
+                    idsubsls_master=None,
+                    nmsls=nama,
+                    catatan=f"idsls tidak cocok susunan kode (harusnya {harapan_sls})",
+                )
+            )
+            buruk.add((kode, sub))
+        if sub != harapan_sub:
+            temuan.append(
+                BarisUnmatch(
+                    jenis=JENIS_TIDAK_KONSISTEN,
+                    idsls_peta=kode,
+                    idsubsls_peta=sub,
+                    idsls_master=None,
+                    idsubsls_master=None,
+                    nmsls=nama,
+                    catatan=f"idsubsls tidak cocok susunan kode (harusnya {harapan_sub})",
+                )
+            )
+            buruk.add((kode, sub))
+    return HasilKonsistensi(lolos=not temuan, temuan=temuan, pasangan_buruk=buruk)
+
+
 def rapikan_nama(nilai: str | None) -> str:
     """Normalisasi ringan nama untuk perbandingan: tanpa spasi berlebih.
 
@@ -355,6 +460,7 @@ def bandingkan(
 def rangkum_pesan(
     skema: HasilSkema,
     duplikat: HasilDuplikat,
+    konsistensi: HasilKonsistensi,
     matching: HasilMatching,
     baris_kosong: int = 0,
 ) -> tuple[bool, str]:
@@ -390,6 +496,21 @@ def rangkum_pesan(
     if baris_kosong:
         bagian.append(
             f"Catatan: {baris_kosong} baris kosong dilewati (tidak ikut validasi)."
+        )
+    if konsistensi.lolos:
+        bagian.append(
+            "Validasi Konsistensi Kode: Sukses \u2014 "
+            "idsls/idsubsls cocok susunan kdprov..kdsubsls."
+        )
+    else:
+        contoh = ", ".join(
+            satu.idsubsls_peta or satu.idsls_peta or "-"
+            for satu in konsistensi.temuan[: CONTOH_N]
+        )
+        bagian.append(
+            "Validasi Konsistensi Kode: Gagal \u2014 "
+            f"{len(konsistensi.temuan)} baris tidak cocok susunan kode; "
+            f"contoh: {contoh}. Perbaiki kolom kode di QGIS lalu unggah ulang."
         )
     if matching.lolos:
         bagian.append(
@@ -433,7 +554,7 @@ def rangkum_pesan(
         bagian.append(
             "Unduh rincian Excel di halaman Riwayat, perbaiki di QGIS, lalu unggah ulang."
         )
-    lolos = skema.lolos and duplikat.lolos and matching.lolos
+    lolos = skema.lolos and duplikat.lolos and konsistensi.lolos and matching.lolos
     judul = "Validasi SLS 2026 S1: LOLOS" if lolos else "Validasi SLS 2026 S1: GAGAL"
     return lolos, judul + "\n" + "\n".join(bagian)
 
@@ -441,13 +562,21 @@ def rangkum_pesan(
 def gabungkan_hasil(
     skema: HasilSkema,
     duplikat: HasilDuplikat,
+    konsistensi: HasilKonsistensi,
     matching: HasilMatching,
     baris_kosong: int = 0,
 ) -> HasilValidasi:
-    """Gabungkan tiga blok + pesan."""
-    lolos, pesan = rangkum_pesan(skema, duplikat, matching, baris_kosong=baris_kosong)
+    """Gabungkan empat blok + pesan."""
+    lolos, pesan = rangkum_pesan(
+        skema, duplikat, konsistensi, matching, baris_kosong=baris_kosong
+    )
     return HasilValidasi(
-        lolos=lolos, skema=skema, duplikat=duplikat, matching=matching, pesan=pesan
+        lolos=lolos,
+        skema=skema,
+        duplikat=duplikat,
+        konsistensi=konsistensi,
+        matching=matching,
+        pesan=pesan,
     )
 
 
@@ -549,14 +678,19 @@ def baca_peta(
     list[str],
     str,
     str,
+    int,
+    list[dict[str, str]],
 ]:
     """Baca atribut peta (tanpa geometri): pasangan ``(idsls, idsubsls)``.
 
-    Kembalikan ``(peta, pasangan, contoh_nilai, kolom, kdprov, kdkab, baris_kosong)``.
-    ``peta`` = mapping pasangan -> ``nmsls`` (kunci kosong ``""`` bila kolomnya
-    kosong); ``pasangan`` = daftar semua pasangan termasuk rangkap (untuk
-    hitung duplikat); ``kolom`` = daftar nama kolom berkas; ``contoh_nilai``
-    = nilai per kolom untuk cek panjang (seluruh baris dipindai).
+    Kembalikan ``(peta, pasangan, contoh_nilai, kolom, kdprov, kdkab,
+    baris_kosong, atribut)``. ``peta`` = mapping pasangan -> ``nmsls``
+    (kunci kosong ``""`` bila kolomnya kosong); ``pasangan`` = daftar semua
+    pasangan termasuk rangkap (untuk hitung duplikat); ``kolom`` = daftar
+    nama kolom berkas; ``contoh_nilai`` = nilai per kolom untuk cek panjang
+    (seluruh baris dipindai); ``atribut`` = satu dict per baris tak-kosong
+    (``kode``, ``sub``, potongan ``kdprov``..``kdsubsls`` yang dinormalisasi,
+    ``nama``) untuk blok konsistensi.
     """
     import pyogrio
 
@@ -579,8 +713,13 @@ def baca_peta(
     else:
         mentah_nama = [None] * max(len(mentah_idsls), len(mentah_sub))
     jumlah = max(len(mentah_idsls), len(mentah_sub), len(mentah_nama))
+    seri_potong = {
+        nama: list(data[nama]) if nama in data.columns else []
+        for nama in PANJANG_SUSUNAN_V
+    }
     peta: dict[tuple[str, str], str | None] = {}
     pasangan: list[tuple[str, str]] = []
+    atribut: list[dict[str, str]] = []
     baris_kosong = 0
     for urut in range(jumlah):
         mentah_a = mentah_idsls[urut] if urut < len(mentah_idsls) else None
@@ -592,8 +731,13 @@ def baca_peta(
             baris_kosong += 1
             continue
         pasangan.append((kode, sub))
+        teks_nama = str(mentah_n).strip() if mentah_n is not None else ""
+        baris_atribut = {"kode": kode, "sub": sub, "nama": teks_nama}
+        for nama, seri in seri_potong.items():
+            mentah = seri[urut] if urut < len(seri) else None
+            baris_atribut[nama] = normalisasi_idsls(mentah) or ""
+        atribut.append(baris_atribut)
         if (kode, sub) not in peta:
-            teks_nama = str(mentah_n).strip() if mentah_n is not None else None
             peta[(kode, sub)] = teks_nama or None
 
     def _tunggal(nama: str) -> str:
@@ -606,7 +750,7 @@ def baca_peta(
 
     kdprov = _tunggal("kdprov")
     kdkab = _tunggal("kdkab")
-    return peta, pasangan, contoh, kolom, kdprov, kdkab, baris_kosong
+    return peta, pasangan, contoh, kolom, kdprov, kdkab, baris_kosong, atribut
 
 
 def validasi_berkas(
@@ -615,14 +759,14 @@ def validasi_berkas(
     master: Mapping[tuple[str, str], str | None],
     kode_kab: str | None = None,
 ) -> HasilValidasi:
-    """Jalankan tiga blok validasi untuk satu berkas peta (dipakai worker).
+    """Jalankan empat blok validasi untuk satu berkas peta (dipakai worker).
 
     ``master`` = mapping pasangan ``(idsls, idsubsls)`` -> ``nmsls`` dari
     database (lihat ``app.layanan.muat_master``); berkas Excel hanya dibaca
     saat impor, bukan saat validasi.
     """
-    peta, pasangan, contoh, kolom, kdprov, kdkab, baris_kosong = baca_peta(
-        berkas, layer
+    peta, pasangan, contoh, kolom, kdprov, kdkab, baris_kosong, atribut = (
+        baca_peta(berkas, layer)
     )
     skema = periksa_skema(kolom, contoh)
     skema.jumlah_baris = len(pasangan)
@@ -641,6 +785,13 @@ def validasi_berkas(
     from collections import Counter
 
     duplikat = periksa_duplikat([kunci_pasangan(a, b) for a, b in pasangan])
+    konsistensi = periksa_konsistensi(atribut)
+    buruk = konsistensi.pasangan_buruk
+    if buruk:
+        peta = {kunci: nama for kunci, nama in peta.items() if kunci not in buruk}
+        pasangan = [kunci for kunci in pasangan if kunci not in buruk]
     hitung = Counter(pasangan)
     matching = bandingkan(peta, master, hitung)
-    return gabungkan_hasil(skema, duplikat, matching, baris_kosong=baris_kosong)
+    return gabungkan_hasil(
+        skema, duplikat, konsistensi, matching, baris_kosong=baris_kosong
+    )

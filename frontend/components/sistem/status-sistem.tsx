@@ -335,12 +335,13 @@ export function StatusSistem() {
         judul="Antrean job"
         deskripsi="Job diproses satu per satu oleh worker; status diperbarui setiap 5 detik."
       >
-        <div className="mt-3 grid grid-cols-2 gap-field sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-2 gap-field sm:grid-cols-5">
           {(
             [
               ["Menunggu", antrean.menunggu],
               ["Diproses", antrean.jalan],
               ["Sukses", antrean.sukses],
+              ["Belum clean", antrean.belum_clean],
               ["Gagal", antrean.gagal],
             ] as const
           ).map(([label, jumlah]) => (
@@ -508,7 +509,7 @@ export function StatusSistem() {
 
       <Panel
         judul="Riwayat kejadian worker"
-        deskripsi="Kejadian terbaru (maksimal 50): mulai/berhenti, klaim job, sukses, gagal, job terhenti, dan anggaran memori."
+        deskripsi="Kejadian terbaru (maksimal 50): mulai/berhenti, klaim job, sukses, belum clean, gagal, job terhenti, dan anggaran memori."
       >
         {status.kejadian.length === 0 ? (
           <EmptyState judul="Belum ada kejadian">

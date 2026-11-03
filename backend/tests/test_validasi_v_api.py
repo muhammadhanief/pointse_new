@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from app import ekspor, layanan
 from app.config import Settings
-from app.models import TIPE_V, Run, ValidasiSlsUnmatch
+from app.models import (
+    STATUS_BELUM_CLEAN,
+    STATUS_GAGAL,
+    STATUS_SUKSES,
+    TIPE_V,
+    MasterSls2026S1,
+    Run,
+    ValidasiSlsUnmatch,
+)
 
 
 def _run_v(sesi) -> Run:
@@ -59,7 +67,7 @@ def test_daftar_unmatch_paging_dan_saring(sesi) -> None:
 
 
 def test_berkas_unmatch_v_xlsx(sesi) -> None:
-    """Unduhan Excel: ringkasan + 4 sheet jenis, tab merah bila ada temuan."""
+    """Unduhan Excel: ringkasan + 5 sheet jenis, tab merah bila ada temuan."""
     from openpyxl import load_workbook
 
     run = _run_v(sesi)
@@ -71,6 +79,7 @@ def test_berkas_unmatch_v_xlsx(sesi) -> None:
         "Tidak ada di master",
         "Ganda di peta",
         "Nama berbeda",
+        "Tidak konsisten",
     ]
     ringkas = {r[0].value: r[1].value for r in buku["Ringkasan"].iter_rows(min_row=2)}
     assert ringkas["total_temuan"] == 3
@@ -322,3 +331,152 @@ def test_unggah_v_dengan_master_masuk_antre(sesi_pabrik, sesi, tmp_path) -> None
             )
     assert resp.status_code == 201, resp.text
     assert resp.json()["semester"] == "2026_1"
+
+
+def _run_v_baru(sesi, kdkab: str = "12") -> Run:
+    """Run V menunggu untuk tes penentuan status akhir."""
+    run = Run(
+        tipe=TIPE_V,
+        kdprov="33",
+        kdkab=kdkab,
+        status="jalan",
+        nama_file_input="peta.gpkg",
+        nama_file_peta="peta.gpkg",
+        berkas_input="/tmp/peta.gpkg",
+        berkas_peta="/tmp/peta.gpkg",
+    )
+    sesi.add(run)
+    sesi.commit()
+    sesi.refresh(run)
+    return run
+
+
+def _isi_master(sesi, kode: str, subs: list[str]) -> None:
+    for sub in subs:
+        sesi.add(
+            MasterSls2026S1(
+                kdprov=kode[:2], kdkab=kode, idsls=sub[:14], idsubsls=sub,
+                nmsls="SLS",
+            )
+        )
+    sesi.commit()
+
+
+def _temuan(
+    sesi,
+    run_id: int,
+    jenis: str,
+    master: tuple[str | None, str | None] = (None, None),
+    peta: tuple[str | None, str | None] = (None, None),
+) -> None:
+    sesi.add(
+        ValidasiSlsUnmatch(
+            run_id=run_id, jenis=jenis, idsls_peta=peta[0],
+            idsubsls_peta=peta[1], idsls_master=master[0],
+            idsubsls_master=master[1], nmsls="SLS",
+        )
+    )
+    sesi.commit()
+
+
+def test_status_akhir_v_lolos_tetap_sukses(sesi) -> None:
+    """Lolos semua blok = sukses, walau target/master tidak ada."""
+    from app.worker import simpan_fase_akhir_v
+
+    run = _run_v_baru(sesi)
+    simpan_fase_akhir_v(sesi, run, (0, "lolos", True))
+    assert run.status == STATUS_SUKSES
+
+
+def test_status_akhir_v_bertemuan_dengan_clean_jadi_belum_clean(sesi) -> None:
+    """Ada temuan tetapi 2 dari 3 pasangan clean = belum_clean."""
+    from app.worker import simpan_fase_akhir_v
+
+    _isi_master(
+        sesi, "3312",
+        ["3312010001000100", "3312010001000101", "3312010001000102"],
+    )
+    run = _run_v_baru(sesi)
+    _temuan(
+        sesi, run.id, "tidak_di_peta",
+        master=("33120100010001", "3312010001000102"),
+    )
+    simpan_fase_akhir_v(sesi, run, (1, "ada temuan", False))
+    assert run.status == STATUS_BELUM_CLEAN
+
+
+def test_status_akhir_v_nol_clean_tetap_gagal(sesi) -> None:
+    """Semua pasangan master kotor (tidak ada yang cocok) = gagal."""
+    from app.worker import simpan_fase_akhir_v
+
+    _isi_master(sesi, "3312", ["3312010001000100", "3312010001000101"])
+    run = _run_v_baru(sesi)
+    _temuan(
+        sesi, run.id, "tidak_di_peta",
+        master=("33120100010001", "3312010001000100"),
+    )
+    _temuan(
+        sesi, run.id, "nama_beda",
+        master=("33120100010001", "3312010001000101"),
+        peta=("33120100010001", "3312010001000101"),
+    )
+    simpan_fase_akhir_v(sesi, run, (2, "ada temuan", False))
+    assert run.status == STATUS_GAGAL
+
+
+def test_status_akhir_v_tanpa_master_jadi_gagal(sesi) -> None:
+    """Target tak diketahui (master kab belum diimpor) = gagal."""
+    from app.worker import simpan_fase_akhir_v
+
+    run = _run_v_baru(sesi)
+    _temuan(sesi, run.id, "tidak_di_master", peta=("X", "Y"))
+    simpan_fase_akhir_v(sesi, run, (1, "ada temuan", False))
+    assert run.status == STATUS_GAGAL
+
+
+def test_status_akhir_v_ganda_tapi_cocok_tetap_mengotori(sesi) -> None:
+    """Pasangan ganda-tapi-cocok bukan fully-clean: ia muncul di temuan."""
+    from app.worker import simpan_fase_akhir_v
+
+    _isi_master(sesi, "3312", ["3312010001000100"])
+    run = _run_v_baru(sesi)
+    _temuan(
+        sesi, run.id, "ganda",
+        master=("33120100010001", "3312010001000100"),
+        peta=("33120100010001", "3312010001000100"),
+    )
+    simpan_fase_akhir_v(sesi, run, (1, "ada temuan", False))
+    assert run.status == STATUS_GAGAL
+
+
+def test_ringkasan_validasi_belum_clean_adalah_final(sesi) -> None:
+    """Run belum_clean mengisi selesai/sisa seperti sukses/gagal."""
+    _isi_master(
+        sesi, "3312",
+        ["3312010001000100", "3312010001000101", "3312010001000102"],
+    )
+    run = _run_v_baru(sesi)
+    run.status = STATUS_BELUM_CLEAN
+    sesi.commit()
+    _temuan(
+        sesi, run.id, "tidak_di_peta",
+        master=("33120100010001", "3312010001000199"),
+    )
+    baris = layanan.ringkasan_validasi(sesi, kdprov="33")
+    assert len(baris) == 1
+    assert baris[0]["status"] == STATUS_BELUM_CLEAN
+    assert baris[0]["target"] == 3
+    assert baris[0]["selesai"] == 2
+    assert baris[0]["sisa"] == 1
+
+
+def test_ringkasan_validasi_menunggu_tetap_bukan_final(sesi) -> None:
+    """Run menunggu/jalan: selesai/sisa tetap None."""
+    _isi_master(sesi, "3312", ["3312010001000100"])
+    run = _run_v_baru(sesi)
+    run.status = "menunggu"
+    sesi.commit()
+    baris = layanan.ringkasan_validasi(sesi, kdprov="33")
+    assert len(baris) == 1
+    assert baris[0]["selesai"] is None
+    assert baris[0]["sisa"] is None

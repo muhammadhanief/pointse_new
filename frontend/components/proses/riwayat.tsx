@@ -66,7 +66,8 @@ const URUT_STATUS: Record<Run["status"], number> = {
   menunggu: 0,
   jalan: 1,
   sukses: 2,
-  gagal: 3,
+  belum_clean: 3,
+  gagal: 4,
 };
 
 function nilaiSort(run: Run, kolom: KolomSort): string | number {

@@ -1,5 +1,5 @@
 export type TipeRun = "A" | "B" | "V";
-export type StatusRun = "menunggu" | "jalan" | "sukses" | "gagal";
+export type StatusRun = "menunggu" | "jalan" | "sukses" | "belum_clean" | "gagal";
 
 export type Run = {
   id: number;
@@ -301,6 +301,7 @@ export type StatusSistem = {
     menunggu: number;
     jalan: number;
     sukses: number;
+    belum_clean: number;
     gagal: number;
     total: number;
     tertua_menunggu: string | null;

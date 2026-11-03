@@ -25,6 +25,7 @@ from app import rekap as modul_rekap
 from app.models import (
     DASAR_TUGAS,
     KOLOM_HITUNGAN,
+    STATUS_BELUM_CLEAN,
     STATUS_GAGAL,
     STATUS_MENUNGGU,
     STATUS_SUKSES,
@@ -918,8 +919,8 @@ def ringkasan_validasi(
 
     ``target`` = jumlah pasangan ``(idsls, idsubsls)`` master kab tersebut
     di database. ``selesai`` = pasangan master yang cocok persis tanpa temuan
-    apa pun; hanya dihitung untuk run final (``sukses``/``gagal``), selebihnya
-    ``None``. ``sisa`` = ``target`` - ``selesai``. Kabupaten/kota tanpa run V
+    apa pun; hanya dihitung untuk run final (``sukses``/``belum_clean``/
+    ``gagal``), selebihnya ``None``. ``sisa`` = ``target`` - ``selesai``. Kabupaten/kota tanpa run V
     tidak muncul; panggil dengan ``kdprov``/``kdkab`` sesuai kewenangan
     pemanggil (lihat :func:`app.auth.saring_akses`). Steril dari rekap SE2026.
     """
@@ -977,7 +978,7 @@ def ringkasan_validasi(
         tgt = target.get(kode)
         selesai: int | None = None
         sisa: int | None = None
-        if satu.status in (STATUS_SUKSES, STATUS_GAGAL) and tgt is not None:
+        if satu.status in (STATUS_SUKSES, STATUS_BELUM_CLEAN, STATUS_GAGAL) and tgt is not None:
             selesai = max(0, tgt - len(kotor.get(satu.id, set())))
             sisa = tgt - selesai
         baris = {

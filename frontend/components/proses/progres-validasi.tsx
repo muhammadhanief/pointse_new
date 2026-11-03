@@ -29,6 +29,8 @@ function labelJenis(jenis: string): string {
       return "Ganda di peta";
     case "nama_beda":
       return "Nama berbeda";
+    case "tidak_konsisten":
+      return "Tidak konsisten";
     default:
       return jenis;
   }
@@ -152,6 +154,7 @@ export function ProgresValidasi() {
             >
               <option value="semua">Semua</option>
               <option value="sukses">Lolos</option>
+              <option value="belum_clean">Belum clean</option>
               <option value="gagal">Gagal</option>
               <option value="berjalan">Diproses</option>
             </select>

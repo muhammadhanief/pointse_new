@@ -106,6 +106,7 @@ def test_pesan_tiga_blok() -> None:
     """Pesan memuat ringkasan skema/duplikat/matching + contoh."""
     skema = validasi_sls.HasilSkema(lolos=True)
     duplikat = validasi_sls.HasilDuplikat(lolos=False, jumlah_ganda=2, contoh=["A|X", "B|Y"])
+    konsistensi = validasi_sls.HasilKonsistensi(lolos=True)
     matching = validasi_sls.HasilMatching(
         lolos=False,
         temuan=[
@@ -121,7 +122,7 @@ def test_pesan_tiga_blok() -> None:
             ),
         ],
     )
-    lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, matching)
+    lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, konsistensi, matching)
     assert not lolos
     assert "Validasi Kelengkapan Atribut: Sukses" in pesan
     assert "Validasi Duplikat: Gagal" in pesan and "2 pasangan ganda" in pesan
@@ -190,6 +191,7 @@ def test_pesan_memuat_hitungan_jenis() -> None:
     """Pesan menyebut hitungan per jenis temuan + contoh kode."""
     skema = validasi_sls.HasilSkema(lolos=True)
     duplikat = validasi_sls.HasilDuplikat(lolos=True)
+    konsistensi = validasi_sls.HasilKonsistensi(lolos=True)
     matching = validasi_sls.HasilMatching(
         lolos=False,
         temuan=[
@@ -207,9 +209,10 @@ def test_pesan_memuat_hitungan_jenis() -> None:
             ),
         ],
     )
-    lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, matching)
+    lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, konsistensi, matching)
     assert not lolos
     assert "Validasi Duplikat: Sukses" in pesan
+    assert "Validasi Konsistensi Kode: Sukses" in pesan
     assert "ganda=1" in pesan and "tidak ada di master=1" in pesan
     assert "Contoh ganda: B01." in pesan
     assert "Contoh tidak ada di master: C02." in pesan
@@ -232,16 +235,22 @@ def _tulis_peta_geojson(jalur, baris) -> None:
     """Tulis peta mini (17 kolom V + geometri titik).
 
     ``baris`` = daftar ``(idsls, idsubsls, nmsls)``; ``idsls`` boleh beda dari
-    induk ``idsubsls`` untuk mensimulasikan kolom salah isi.
+    induk ``idsubsls`` untuk mensimulasikan kolom salah isi. ``kdsubsls``
+    diturunkan dari 2 digit terakhir tiap ``idsubsls`` supaya susunan kode
+    baris uji yang valid memang konsisten (kecuali bila sengaja salah).
     """
     import geopandas as gpd
     from shapely.geometry import Point
+
+    def _kdsubsls(subsls: str) -> str:
+        teks = str(subsls).strip()
+        return teks[-2:] if len(teks) == 16 and teks.isdigit() else "01"
 
     gdf = gpd.GeoDataFrame(
         [
             {
                 "kdprov": "33", "kdkab": "12", "kdkec": "010", "kddesa": "001",
-                "kdsls": "0001", "kdsubsls": "01", "idsls": idsls,
+                "kdsls": "0001", "kdsubsls": _kdsubsls(subsls), "idsls": idsls,
                 "idsubsls": subsls, "nmprov": "x", "nmkab": "x", "nmkec": "x",
                 "nmdesa": "x", "nmsls": nmsls, "rw_dki": "x", "tingkat": 1,
                 "nm_gedung": "x", "posisi": "x",
@@ -383,3 +392,90 @@ def test_baca_master_impor_lapor_baris_dilewati(tmp_path) -> None:
     assert set(master) == {("33120100010001", "3312010001000100")}
     assert total == 3 and dilewati == 2
     assert contoh == ["SALAH"]
+
+
+def _atribut(
+    kode: str, sub: str, kdsubsls: str = "00", kdkab: str = "12",
+    nama: str = "SLS A",
+) -> dict[str, str]:
+    """Satu baris atribut uji: susunan valid untuk 33120100010001/00."""
+    return {
+        "kode": kode, "sub": sub, "nama": nama,
+        "kdprov": "33", "kdkab": kdkab, "kdkec": "010", "kddesa": "001",
+        "kdsls": "0001", "kdsubsls": kdsubsls,
+    }
+
+
+def test_konsistensi_susunan_cocok_lolos() -> None:
+    """Susunan kdprov..kdsubsls cocok = tidak ada temuan konsistensi."""
+    hasil = validasi_sls.periksa_konsistensi(
+        [_atribut("33120100010001", "3312010001000100")]
+    )
+    assert hasil.lolos and hasil.temuan == [] and hasil.pasangan_buruk == set()
+
+
+def test_konsistensi_kdkab_4_digit_diterima() -> None:
+    """Kolom kdkab boleh 2 digit (``12``) atau 4 digit (``3312``)."""
+    hasil = validasi_sls.periksa_konsistensi(
+        [_atribut("33120100010001", "3312010001000100", kdkab="3312")]
+    )
+    assert hasil.lolos
+
+
+def test_konsistensi_idsls_salah_jadi_temuan() -> None:
+    """``idsls`` tidak cocok gabungan potongan = temuan + dikecualikan."""
+    hasil = validasi_sls.periksa_konsistensi(
+        [_atribut("33120100019999", "3312010001000100")]
+    )
+    assert not hasil.lolos
+    assert len(hasil.temuan) == 1
+    assert hasil.temuan[0].jenis == validasi_sls.JENIS_TIDAK_KONSISTEN
+    assert hasil.temuan[0].idsls_master is None
+    assert "33120100010001" in (hasil.temuan[0].catatan or "")
+    assert hasil.pasangan_buruk == {("33120100019999", "3312010001000100")}
+
+
+def test_konsistensi_idsubsls_salah_jadi_temuan() -> None:
+    """``idsubsls`` tidak cocok ``idsls+kdsubsls`` = temuan tersendiri."""
+    hasil = validasi_sls.periksa_konsistensi(
+        [_atribut("33120100010001", "3312010001000199", kdsubsls="00")]
+    )
+    assert not hasil.lolos
+    assert len(hasil.temuan) == 1
+    assert "3312010001000100" in (hasil.temuan[0].catatan or "")
+
+
+def test_konsistensi_dilewati_bila_potongan_tak_lengkap() -> None:
+    """Potongan kosong/salah panjang bukan urusan konsistensi (urusan skema)."""
+    hasil = validasi_sls.periksa_konsistensi(
+        [_atribut("", "3312010001000100", kdsubsls="")]
+    )
+    assert hasil.lolos
+
+
+def test_berkas_tidak_konsisten_gagal_tanpa_noise_matching(tmp_path) -> None:
+    """Baris tidak konsisten = gagal + tidak ikut matching + masuk Excel."""
+    master = _master_dict([("3312010001000100", "SLS A")])
+    peta = tmp_path / "peta.geojson"
+    # Helper menurunkan kdsubsls dari subsls ("01"); potongan kdprov..kdsls
+    # menyusun 33120100010001 sehingga idsls DAN idsubsls palsu sama-sama salah.
+    _tulis_peta_geojson(
+        peta,
+        [("33120100019999", "3312010001999901", "SLS A")],
+    )
+    hasil = validasi_sls.validasi_berkas(peta, None, master, "3312")
+    assert not hasil.lolos
+    assert "Validasi Konsistensi Kode: Gagal" in hasil.pesan
+    tak_konsisten = [
+        s for s in (*hasil.konsistensi.temuan, *hasil.matching.temuan)
+        if s.jenis == "tidak_konsisten"
+    ]
+    assert len(tak_konsisten) == 2
+    # Pasangan dikeluarkan dari matching: tidak ada tidak_di_master untuknya.
+    assert not [
+        s for s in hasil.matching.temuan if s.jenis == "tidak_di_master"
+    ]
+    # ...tetapi pasangan master yang hilang tetap dilaporkan tidak_di_peta.
+    assert any(
+        s.jenis == "tidak_di_peta" for s in hasil.matching.temuan
+    )

@@ -841,6 +841,7 @@ LEMBAR_UNMATCH_V: tuple[tuple[str, str], ...] = (
     ("tidak_di_master", "Tidak ada di master"),
     ("ganda", "Ganda di peta"),
     ("nama_beda", "Nama berbeda"),
+    ("tidak_konsisten", "Tidak konsisten"),
 )
 
 #: Merah penuh (ARGB) untuk tab lembar yang berisi temuan (menyala = perlu dibuka).

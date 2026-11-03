@@ -83,7 +83,7 @@ export function DetailJob({
       ? run.detail_tersedia
         ? "Tersimpan"
         : "Sudah dipangkas"
-      : run?.status === "gagal"
+      : run?.status === "gagal" || run?.status === "belum_clean"
         ? "Tidak tersedia"
         : "Belum ada";
 
@@ -171,7 +171,9 @@ export function DetailJob({
                   className={`mt-1 rounded-lg px-3 py-2 text-sm leading-normal whitespace-pre-line ${
                     run.status === "gagal"
                       ? "bg-danger-soft text-danger"
-                      : "bg-paper text-ink"
+                      : run.status === "belum_clean"
+                        ? "border border-warning/40 bg-warning/10 text-ink"
+                        : "bg-paper text-ink"
                   }`}
                 >
                   {istilahProses(run.pesan)}
