@@ -74,20 +74,6 @@ def test_banding_dua_arah_sisi_terisi() -> None:
     assert hasil.temuan[1].idsls_peta is None
 
 
-def test_banding_kode_16_digit_di_idsls_tetap_tidak_di_master() -> None:
-    """Kode subsls di kolom idsls = salah pengisi: tetap tidak_di_master + catatan."""
-    peta = {("3312090005003801", "3312090005003801"): "BATU LOR"}
-    master = {("33120900050038", "3312090005003801"): "BATU LOR"}
-    hasil = validasi_sls.bandingkan(peta, master, {("3312090005003801", "3312090005003801"): 1})
-    assert not hasil.lolos
-    assert len(hasil.temuan) == 2
-    salah = hasil.temuan[0]
-    assert salah.jenis == validasi_sls.JENIS_TIDAK_DI_MASTER
-    assert salah.idsls_master is None
-    assert salah.catatan == "kolom idsls bukan kode SLS 14 digit"
-    assert hasil.temuan[1].jenis == validasi_sls.JENIS_TIDAK_DI_PETA
-
-
 def test_banding_ganda_satu_baris() -> None:
     """Pasangan ganda yang cocok + yang asing masing-masing satu baris."""
     pasang = ("A", "A01")
@@ -167,6 +153,27 @@ def test_banding_kode_16_digit_di_idsls_tetap_tidak_di_master() -> None:
     assert hasil.temuan[1].jenis == validasi_sls.JENIS_TIDAK_DI_PETA
 
 
+def test_banding_nama_beda_jadi_temuan() -> None:
+    """Pasangan cocok tapi ejaan nmsls beda = temuan nama_beda + saran master."""
+    peta = {("A", "A01"): "Lahan Kodim"}
+    master = {("A", "A01"): "LAHAN KODIM"}
+    hasil = validasi_sls.bandingkan(peta, master, {("A", "A01"): 1})
+    assert not hasil.lolos
+    assert len(hasil.temuan) == 1
+    satu = hasil.temuan[0]
+    assert satu.jenis == validasi_sls.JENIS_NAMA_BEDA
+    assert satu.idsls_master == "A" and satu.idsubsls_master == "A01"
+    assert satu.catatan == 'master: "LAHAN KODIM"'
+
+
+def test_banding_nama_sama_lolos() -> None:
+    """Nama sama persis (abaikan spasi berlebih) = cocok, tanpa temuan."""
+    peta = {("A", "A01"): "  SLS  A "}
+    master = {("A", "A01"): "SLS A"}
+    hasil = validasi_sls.bandingkan(peta, master, {("A", "A01"): 1})
+    assert hasil.lolos
+
+
 def test_banding_sub_tak_dikenal_satu_baris() -> None:
     """Kode asing di dua kolom: satu temuan tidak_di_master, bukan dua."""
     peta = {("3312090005003800", "3312090005003800"): "BATU LOR"}
@@ -206,6 +213,7 @@ def test_pesan_memuat_hitungan_jenis() -> None:
     assert "ganda=1" in pesan and "tidak ada di master=1" in pesan
     assert "Contoh ganda: B01." in pesan
     assert "Contoh tidak ada di master: C02." in pesan
+    assert "Unduh rincian Excel di halaman Riwayat" in pesan
 
 
 def _tulis_master_xlsx(jalur, baris) -> None:
@@ -314,6 +322,26 @@ def test_berkas_idsls_16_digit_jadi_tidak_di_master(tmp_path) -> None:
     assert "tidak ada di peta=1" in hasil.pesan
     temuan = [s for s in hasil.matching.temuan if s.jenis == "tidak_di_master"]
     assert len(temuan) == 1 and temuan[0].catatan == "kolom idsls bukan kode SLS 14 digit"
+
+
+def test_berkas_nama_beda_jadi_temuan(tmp_path) -> None:
+    """Ejaan nmsls beda dari master = gagal (walau pasangan cocok)."""
+    _siapkan_master(
+        tmp_path, "3312",
+        [("3312010001000100", "LAHAN KODIM")],
+    )
+    peta = tmp_path / "peta.geojson"
+    _tulis_peta_geojson(
+        peta,
+        [("33120100010001", "3312010001000100", "Lahan Kodim")],
+    )
+    hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
+    assert not hasil.lolos
+    assert "nama beda=1" in hasil.pesan
+    temuan = [s for s in hasil.matching.temuan if s.jenis == "nama_beda"]
+    assert len(temuan) == 1
+    assert temuan[0].catatan == 'master: "LAHAN KODIM"'
+    assert "Contoh nama beda: 3312010001000100." in hasil.pesan
 
 
 def test_skema_pindai_melewati_batas_2000_baris() -> None:

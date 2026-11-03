@@ -116,6 +116,7 @@ class HasilDuplikat:
 JENIS_TIDAK_DI_PETA = "tidak_di_peta"
 JENIS_TIDAK_DI_MASTER = "tidak_di_master"
 JENIS_GANDA = "ganda"
+JENIS_NAMA_BEDA = "nama_beda"
 
 
 @dataclass
@@ -242,6 +243,15 @@ def kunci_pasangan(idsls: str | None, idsubsls: str | None) -> str:
     return f"{idsls or ''}|{idsubsls or ''}"
 
 
+def rapikan_nama(nilai: str | None) -> str:
+    """Normalisasi ringan nama untuk perbandingan: tanpa spasi berlebih.
+
+    Perbandingan huruf besar/kecil tetap sensitif: nama peta harus persis
+    sama ejaannya dengan nama di master.
+    """
+    return " ".join(str(nilai or "").split())
+
+
 def bandingkan(
     peta: Mapping[tuple[str, str], str | None],
     master: Mapping[tuple[str, str], str | None],
@@ -275,6 +285,18 @@ def bandingkan(
                         idsubsls_master=subsls or None,
                         nmsls=nama,
                         catatan=f"{hitung[pasang]} baris",
+                    )
+                )
+            if rapikan_nama(nama) != rapikan_nama(master[pasang]):
+                temuan.append(
+                    BarisUnmatch(
+                        jenis=JENIS_NAMA_BEDA,
+                        idsls_peta=idsls or None,
+                        idsubsls_peta=subsls or None,
+                        idsls_master=idsls or None,
+                        idsubsls_master=subsls or None,
+                        nmsls=nama,
+                        catatan=f'master: "{(master[pasang] or "").strip()}"',
                     )
                 )
             continue
@@ -362,13 +384,14 @@ def rangkum_pesan(
             JENIS_TIDAK_DI_PETA: "tidak ada di peta",
             JENIS_TIDAK_DI_MASTER: "tidak ada di master",
             JENIS_GANDA: "ganda",
+            JENIS_NAMA_BEDA: "nama beda",
         }
         rincian = "; ".join(
             f"{label_jenis.get(jenis, jenis)}={hitung_jenis.get(jenis, 0)}"
-            for jenis in (JENIS_TIDAK_DI_PETA, JENIS_TIDAK_DI_MASTER, JENIS_GANDA)
+            for jenis in (JENIS_TIDAK_DI_PETA, JENIS_TIDAK_DI_MASTER, JENIS_GANDA, JENIS_NAMA_BEDA)
         )
         bagian.append(f"Validasi Matching dengan Master MFD: Gagal \u2014 {rincian}.")
-        for jenis in (JENIS_TIDAK_DI_PETA, JENIS_TIDAK_DI_MASTER, JENIS_GANDA):
+        for jenis in (JENIS_TIDAK_DI_PETA, JENIS_TIDAK_DI_MASTER, JENIS_GANDA, JENIS_NAMA_BEDA):
             contoh = contoh_jenis.get(jenis, [])[:3]
             if contoh:
                 kode = ", ".join(

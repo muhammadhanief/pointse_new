@@ -368,7 +368,7 @@ dikecualikan dari commit (data mentah).
   `(idsls, idsubsls)` bermasalah, dengan sisi peta dan sisi master ditulis
   berdampingan; sisi yang kosong berarti kode tidak ada di sisi itu. Kolom
   `run_id` (FK `runs.id` cascade), `jenis` (`tidak_di_peta`/`tidak_di_master`/
-  `ganda`, sekaligus nama sheet unduhan), `idsls_peta`,
+  `ganda`, `nama_beda`, sekaligus nama sheet unduhan), `idsls_peta`,
   `idsubsls_peta`, `idsls_master`, `idsubsls_master`, `nmsls` (nullable),
   `catatan`, dan `created_at`. Di luar cakupan? Tidak: dipakai untuk daftar
   unduhan Excel dan audit. Tidak ikut pemangkasan baseline.
@@ -382,12 +382,14 @@ dikecualikan dari commit (data mentah).
 ### 11.4 Alur kerja
 
 1. Petugas memilih kabupaten/kota + mengunggah peta (GeoJSON/GPKG full 1 kab,
-   berpotongan 16 MiB seperti biasa) dari halaman validasi.
+   berpotongan 16 MiB seperti biasa) dari halaman validasi. Berkas tanpa
+   akhiran .geojson/.json/.gpkg langsung ditolak dengan saran ganti nama.
 2. Backend membuat run `V` status `menunggu`; worker menjalankan validasi
    (baca atribut via pyogrio `read_geometry=False`, bandingkan dengan Excel
    master via openpyxl/pandas, tulis `validasi_sls_unmatch`).
 3. `sukses` = ketiga blok lolos; `gagal` = ada blok gagal + pesan berisi
-   hitungan per jenis temuan dan contoh kode (tanpa rahasia).
+   hitungan per jenis temuan, contoh kode per jenis (maks 3), dan ajakan
+   mengunduh rincian Excel (tanpa rahasia).
 4. Riwayat menampilkan tab/run V dengan lencana status; tombol unduh Excel
    daftar temuan per run (lembar Ringkasan + satu sheet per jenis, tab merah
    bila ada temuan) untuk diperbaiki di QGIS lalu unggah ulang.

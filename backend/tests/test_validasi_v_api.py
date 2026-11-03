@@ -70,6 +70,7 @@ def test_berkas_unmatch_v_xlsx(sesi) -> None:
         "Tidak ada di peta",
         "Tidak ada di master",
         "Ganda di peta",
+        "Nama berbeda",
     ]
     ringkas = {r[0].value: r[1].value for r in buku["Ringkasan"].iter_rows(min_row=2)}
     assert ringkas["total_temuan"] == 3
