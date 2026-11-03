@@ -26,13 +26,6 @@ def _run_v(sesi) -> Run:
         ("tidak_di_peta", None, None, "33020100010002", "3302010001000200"),
         ("tidak_di_master", "33020100010001", "3302010001000100", None, None),
         (
-            "kolom_salah",
-            "3302010001000199",
-            "3302010001000199",
-            "33020100010001",
-            "3302010001000101",
-        ),
-        (
             "ganda",
             "33020100010003",
             "3302010001000300",
@@ -54,7 +47,7 @@ def _run_v(sesi) -> Run:
 def test_daftar_unmatch_paging_dan_saring(sesi) -> None:
     run = _run_v(sesi)
     total, baris = layanan.daftar_unmatch(sesi, run.id, limit=2, offset=0)
-    assert total == 4
+    assert total == 3
     assert len(baris) == 2
     assert baris[0]["idsls_peta"] == "33020100010001"
     assert baris[0]["jenis"] == "tidak_di_master"
@@ -76,16 +69,14 @@ def test_berkas_unmatch_v_xlsx(sesi) -> None:
         "Ringkasan",
         "Tidak ada di peta",
         "Tidak ada di master",
-        "Kolom idsls salah",
         "Ganda di peta",
     ]
     ringkas = {r[0].value: r[1].value for r in buku["Ringkasan"].iter_rows(min_row=2)}
-    assert ringkas["total_temuan"] == 4
+    assert ringkas["total_temuan"] == 3
     assert ringkas["jumlah_ganda"] == 1
-    assert ringkas["jumlah_kolom_salah"] == 1
-    assert buku["Kolom idsls salah"].max_row == 2  # judul + 1 baris
-    assert buku["Kolom idsls salah"]["A2"].value == "3302010001000199"
-    assert buku["Kolom idsls salah"]["C2"].value == "33020100010001"
+    assert ringkas["jumlah_tidak_di_master"] == 1
+    assert buku["Tidak ada di master"].max_row == 2  # judul + 1 baris
+    assert buku["Tidak ada di master"]["A2"].value == "33020100010001"
     assert buku["Ganda di peta"].sheet_properties.tabColor.rgb == "FFFF0000"
 
 

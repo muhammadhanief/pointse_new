@@ -74,18 +74,18 @@ def test_banding_dua_arah_sisi_terisi() -> None:
     assert hasil.temuan[1].idsls_peta is None
 
 
-def test_banding_kolom_salah_menjodohkan_sub() -> None:
-    """Kode subsls di kolom idsls dijodohkan ke pasangan master yang benar."""
-    peta = {("3302010001000101", "3302010001000101"): "SLS A"}
-    master = {("33020100010001", "3302010001000101"): "SLS A"}
-    hasil = validasi_sls.bandingkan(peta, master, {("3302010001000101", "3302010001000101"): 1})
+def test_banding_kode_16_digit_di_idsls_tetap_tidak_di_master() -> None:
+    """Kode subsls di kolom idsls = salah pengisi: tetap tidak_di_master + catatan."""
+    peta = {("3312090005003801", "3312090005003801"): "BATU LOR"}
+    master = {("33120900050038", "3312090005003801"): "BATU LOR"}
+    hasil = validasi_sls.bandingkan(peta, master, {("3312090005003801", "3312090005003801"): 1})
     assert not hasil.lolos
-    assert len(hasil.temuan) == 1
-    satu = hasil.temuan[0]
-    assert satu.jenis == validasi_sls.JENIS_KOLOM_SALAH
-    assert satu.idsls_peta == "3302010001000101"
-    assert satu.idsls_master == "33020100010001"
-    assert satu.idsubsls_master == "3302010001000101"
+    assert len(hasil.temuan) == 2
+    salah = hasil.temuan[0]
+    assert salah.jenis == validasi_sls.JENIS_TIDAK_DI_MASTER
+    assert salah.idsls_master is None
+    assert salah.catatan == "kolom idsls bukan kode SLS 14 digit"
+    assert hasil.temuan[1].jenis == validasi_sls.JENIS_TIDAK_DI_PETA
 
 
 def test_banding_ganda_satu_baris() -> None:
@@ -106,7 +106,7 @@ def test_banding_ganda_satu_baris() -> None:
 
 def test_banding_ganda_tak_dikenal_tetap_satu_baris() -> None:
     """Pasangan ganda yang asing tidak dobel baris (satu temuan + catatan)."""
-    pasang = ("B", "B02")
+    pasang = ("33020100010001", "3302010001000199")
     hasil = validasi_sls.bandingkan(
         {pasang: "SLS B"}, {}, {pasang: 3},
     )
@@ -151,14 +151,18 @@ def test_normalisasi_idsls() -> None:
     assert validasi_sls.normalisasi_idsls(None) is None
 
 
-def test_banding_tidak_dobel_baris_kolom_salah() -> None:
-    """Sub sama, induk beda: satu temuan kolom-salah, bukan dua baris."""
+def test_banding_kode_16_digit_di_idsls_tetap_tidak_di_master() -> None:
+    """Kode subsls di kolom idsls = salah pengisi: tetap tidak_di_master + catatan."""
     peta = {("3312090005003801", "3312090005003801"): "BATU LOR"}
     master = {("33120900050038", "3312090005003801"): "BATU LOR"}
     hasil = validasi_sls.bandingkan(peta, master, {("3312090005003801", "3312090005003801"): 1})
     assert not hasil.lolos
-    assert len(hasil.temuan) == 1
-    assert hasil.temuan[0].jenis == validasi_sls.JENIS_KOLOM_SALAH
+    assert len(hasil.temuan) == 2
+    salah = hasil.temuan[0]
+    assert salah.jenis == validasi_sls.JENIS_TIDAK_DI_MASTER
+    assert salah.idsls_master is None
+    assert salah.catatan == "kolom idsls bukan kode SLS 14 digit"
+    assert hasil.temuan[1].jenis == validasi_sls.JENIS_TIDAK_DI_PETA
 
 
 def test_banding_sub_tak_dikenal_satu_baris() -> None:
@@ -187,17 +191,18 @@ def test_pesan_memuat_hitungan_jenis() -> None:
                 catatan="2 baris",
             ),
             validasi_sls.BarisUnmatch(
-                jenis=validasi_sls.JENIS_KOLOM_SALAH,
-                idsls_peta="C", idsubsls_peta="C02",
-                idsls_master="C0", idsubsls_master="C02", nmsls="SLS C",
+                jenis=validasi_sls.JENIS_TIDAK_DI_MASTER,
+                idsls_peta="C02", idsubsls_peta="C02",
+                idsls_master=None, idsubsls_master=None, nmsls="SLS C",
+                catatan="kolom idsls bukan kode SLS 14 digit",
             ),
         ],
     )
     lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, matching)
     assert not lolos
     assert "duplikat: OK" in pesan
-    assert "ganda=1" in pesan and "kolom idsls salah=1" in pesan
-    assert "contoh: B, C" in pesan
+    assert "ganda=1" in pesan and "tidak ada di master=1" in pesan
+    assert "contoh: B, C02" in pesan
 
 
 def _tulis_master_xlsx(jalur, baris) -> None:
@@ -286,8 +291,8 @@ def test_berkas_subsls_ganda_dan_beda_komposisi_gagal(tmp_path) -> None:
     assert "ganda=1" in hasil.pesan
 
 
-def test_berkas_kolom_idsls_salah_satu_baris(tmp_path) -> None:
-    """Kode subsls di kolom idsls menghasilkan satu temuan kolom-salah."""
+def test_berkas_idsls_16_digit_jadi_tidak_di_master(tmp_path) -> None:
+    """Kode 16 digit di kolom idsls = salah pengisi: tetap tidak_di_master + catatan."""
     _siapkan_master(
         tmp_path, "3312",
         [("3312010001000100", "SLS A"), ("3312010001000101", "SLS A")],
@@ -302,4 +307,7 @@ def test_berkas_kolom_idsls_salah_satu_baris(tmp_path) -> None:
     )
     hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
     assert not hasil.lolos
-    assert "kolom idsls salah=1" in hasil.pesan
+    assert "tidak ada di master=1" in hasil.pesan
+    assert "tidak ada di peta=1" in hasil.pesan
+    temuan = [s for s in hasil.matching.temuan if s.jenis == "tidak_di_master"]
+    assert len(temuan) == 1 and temuan[0].catatan == "kolom idsls bukan kode SLS 14 digit"

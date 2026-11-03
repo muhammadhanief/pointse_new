@@ -113,7 +113,6 @@ class HasilDuplikat:
 JENIS_TIDAK_DI_PETA = "tidak_di_peta"
 JENIS_TIDAK_DI_MASTER = "tidak_di_master"
 JENIS_GANDA = "ganda"
-JENIS_KOLOM_SALAH = "kolom_salah"
 
 
 @dataclass
@@ -242,19 +241,15 @@ def bandingkan(
     """Bandingkan pasangan ``(idsls, idsubsls)`` peta vs master (murni).
 
     Tiap pasangan berbeda dilaporkan tepat sekali: pasangan peta yang sama
-    persis di master = cocok; yang subsls-nya dikenal master di bawah SLS
-    berbeda = ``kolom_salah`` (kode subsls tertulis di kolom ``idsls``);
-    selebihnya = ``tidak_di_master``; pasangan master yang tak muncul di peta
-    = ``tidak_di_peta``; pasangan peta yang muncul >1x = ``ganda``.
+    persis di master = cocok; selebihnya = ``tidak_di_master``; pasangan
+    master yang tak muncul di peta = ``tidak_di_peta``; pasangan peta yang
+    muncul >1x = ``ganda``. Nilai 16 digit di kolom ``idsls`` tidak mendapat
+    perlakuan khusus: ia tetap ``tidak_di_master`` karena memang tidak
+    terdaftar sebagai SLS, plus catatan bahwa kolomnya salah isi.
     """
     hitung = dict(hitung_peta or {})
     temuan: list[BarisUnmatch] = []
     sisa_master = dict(master)
-    # Indeks subsls -> pasangan master (peta 11 ribu baris tidak boleh pindai
-    # ulang seluruh master untuk tiap pasangan).
-    master_per_sub: dict[str, list[tuple[str, str]]] = {}
-    for kunci in master:
-        master_per_sub.setdefault(kunci[1], []).append(kunci)
     for pasang in sorted(peta):
         idsls, subsls = pasang
         nama = peta[pasang]
@@ -273,29 +268,11 @@ def bandingkan(
                     )
                 )
             continue
-        if subsls:
-            calon = sorted(
-                kunci for kunci in master_per_sub.get(subsls, []) if kunci in sisa_master
-            )
-            if calon:
-                kunci_master = calon[0]
-                del sisa_master[kunci_master]
-                temuan.append(
-                    BarisUnmatch(
-                        jenis=JENIS_KOLOM_SALAH,
-                        idsls_peta=idsls or None,
-                        idsubsls_peta=subsls or None,
-                        idsls_master=kunci_master[0] or None,
-                        idsubsls_master=kunci_master[1] or None,
-                        nmsls=nama,
-                        catatan=(
-                            f"seharusnya {kunci_master[0]}"
-                            if len(calon) == 1
-                            else f"kandidat: {', '.join(k[0] for k in calon)}"
-                        ),
-                    )
-                )
-                continue
+        catatan: list[str] = []
+        if hitung.get(pasang, 1) > 1:
+            catatan.append(f"ganda di peta ({hitung[pasang]} baris)")
+        if idsls and (len(idsls) != 14 or not idsls.isdigit()):
+            catatan.append("kolom idsls bukan kode SLS 14 digit")
         temuan.append(
             BarisUnmatch(
                 jenis=JENIS_TIDAK_DI_MASTER,
@@ -304,11 +281,7 @@ def bandingkan(
                 idsls_master=None,
                 idsubsls_master=None,
                 nmsls=nama,
-                catatan=(
-                    f"ganda di peta ({hitung[pasang]} baris)"
-                    if hitung.get(pasang, 1) > 1
-                    else None
-                ),
+                catatan="; ".join(catatan) or None,
             )
         )
     for pasang in sorted(sisa_master):
@@ -364,7 +337,6 @@ def rangkum_pesan(
             f"(tidak ada di peta={hitung_jenis.get(JENIS_TIDAK_DI_PETA, 0)}"
             f"; tidak ada di master={hitung_jenis.get(JENIS_TIDAK_DI_MASTER, 0)}"
             f"; ganda={hitung_jenis.get(JENIS_GANDA, 0)}"
-            f"; kolom idsls salah={hitung_jenis.get(JENIS_KOLOM_SALAH, 0)}"
             + (f"; contoh: {contoh}" if contoh else "")
             + ")"
         )

@@ -839,7 +839,6 @@ KOLOM_UNMATCH_V: tuple[str, ...] = (
 LEMBAR_UNMATCH_V: tuple[tuple[str, str], ...] = (
     ("tidak_di_peta", "Tidak ada di peta"),
     ("tidak_di_master", "Tidak ada di master"),
-    ("kolom_salah", "Kolom idsls salah"),
     ("ganda", "Ganda di peta"),
 )
 

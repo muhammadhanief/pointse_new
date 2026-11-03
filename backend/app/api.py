@@ -833,7 +833,6 @@ def daftar_unmatch_validasi(
         validasi_sls.JENIS_TIDAK_DI_PETA,
         validasi_sls.JENIS_TIDAK_DI_MASTER,
         validasi_sls.JENIS_GANDA,
-        validasi_sls.JENIS_KOLOM_SALAH,
     ):
         raise HTTPException(status_code=422, detail=f"jenis tidak dikenal: {jenis}")
     total, baris = layanan.daftar_unmatch(

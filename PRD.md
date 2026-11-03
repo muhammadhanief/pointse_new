@@ -326,9 +326,9 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
    `Cek_Master_PetaSLS`, berbasis Excel bukan geometri), per pasangan
    `(idsls, idsubsls)`:
    - Pasangan peta yang sama persis ada di master = cocok.
-   - Pasangan peta yang `idsubsls`-nya dikenal master di bawah `idsls`
-     berbeda = `kolom idsls salah` (sisi master memuat pasangan yang benar).
-   - Pasangan peta yang tidak dikenal = `tidak ada di master`.
+   - Pasangan peta yang tidak dikenal master = `tidak ada di master`
+     (termasuk nilai 16 digit yang nyasar di kolom `idsls`: memang tidak
+     terdaftar sebagai SLS, plus catatan bahwa kolomnya salah isi).
    - Pasangan master yang tidak muncul di peta = `tidak ada di peta`.
    - Pasangan peta yang muncul >1x = `ganda di peta`.
 4. **Blokir bila gagal, tetap tercatat**: skema/duplikat/matching gagal =
