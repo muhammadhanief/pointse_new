@@ -59,7 +59,7 @@ PANJANG_MAKS_V: dict[str, int] = {
     "kdsls": 4,
     "kdsubsls": 2,
     "idsls": 14,
-    "idsubsls": 18,
+    "idsubsls": 16,
     "nmprov": 50,
     "nmkab": 50,
     "nmkec": 50,
@@ -101,19 +101,19 @@ class HasilSkema:
 
 @dataclass
 class HasilDuplikat:
-    """Hasil blok duplikat ``idsls`` (14 digit) dan ``idsubsls`` (18 digit)."""
+    """Hasil blok duplikat ``idsls`` (14 digit) dan ``idsubsls`` (16 digit)."""
 
     lolos: bool
     jumlah_ganda: int = 0
     contoh: list[str] = field(default_factory=list)
-    #: Duplikat di level SubSLS (aturan yang sama, kunci 18 digit).
+    #: Duplikat di level SubSLS (aturan yang sama, kunci 16 digit).
     jumlah_ganda_sub: int = 0
     contoh_sub: list[str] = field(default_factory=list)
 
 
 @dataclass
 class BarisUnmatch:
-    """Satu kode bermasalah untuk tabel/CSV (``idsls`` 14 digit atau ``idsubsls`` 18 digit)."""
+    """Satu kode bermasalah untuk tabel/CSV (``idsls`` 14 digit atau ``idsubsls`` 16 digit)."""
 
     arah: str
     idsls: str
@@ -227,7 +227,7 @@ def cocokkan(
     """Matching dua arah peta vs master (murni, tanpa I/O).
 
     ``peta``/``master`` = mapping kode -> ``nmsls``; generik untuk dua level:
-    ``idsls`` (14 digit) maupun ``idsubsls`` (18 digit).
+    ``idsls`` (14 digit) maupun ``idsubsls`` (16 digit).
     """
     ganda = duplikat_peta or set()
     himpunan_peta = set(peta)
@@ -405,7 +405,7 @@ def baca_master(
             if indeks_nama is not None and indeks_nama < len(satu):
                 mentah = satu[indeks_nama]
                 nama = str(mentah).strip() if mentah is not None else None
-            if len(subsls) == 18 and subsls.isdigit():
+            if len(subsls) == 16 and subsls.isdigit():
                 master_sub.setdefault(subsls, nama or None)
             idsls = subsls[:14]
             if len(idsls) != 14 or not idsls.isdigit():
@@ -442,7 +442,7 @@ def baca_peta(
 
     Kembalikan ``(peta, daftar_idsls, contoh_nilai, kolom, kdprov, kdkab,
     peta_sub, daftar_subsls)``. Dua terakhir untuk matching level SubSLS
-    (18 digit). ``kolom`` = daftar nama kolom berkas; ``contoh_nilai`` =
+    (16 digit). ``kolom`` = daftar nama kolom berkas; ``contoh_nilai`` =
     nilai per kolom untuk cek panjang (maks 2000 baris pertama sudah cukup).
     """
     import pyogrio

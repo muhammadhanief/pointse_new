@@ -311,9 +311,11 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
 
 1. **Skema atribut**: peta wajib punya 17 field dengan tipe dan panjang data
    sesuai tabel: `kdprov`(2), `kdkab`(2), `kdkec`(3), `kddesa`(3), `kdsls`(4),
-   `kdsubsls`(2), `idsls`(14), `idsubsls`(18), `nmprov`/`nmkab`/`nmkec`/`nmdesa`(50),
+   `kdsubsls`(2), `idsls`(14), `idsubsls`(16), `nmprov`/`nmkab`/`nmkec`/`nmdesa`(50),
    `nmsls`(100), `rw_dki`(3), `tingkat`(1), `nm_gedung`(50), `posisi`(50).
-   Nama bertipe string semua; `tingkat` tipe integer.
+   Nama bertipe string semua; `tingkat` tipe integer. Catatan: dokumen sumber
+   menulis `idsubsls`(18), tetapi seluruh data aktual (peta, `msubsls`,
+   hirarki dua semester) memakai 16 digit, jadi itu yang dipakai mesin.
 2. **ID duplikat**: `idsls` (14 digit) tidak boleh ganda di dalam berkas
    (cek QGIS sebelum matching); aturan yang sama berlaku untuk `idsubsls`
    (18 digit).

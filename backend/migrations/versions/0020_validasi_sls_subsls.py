@@ -5,8 +5,8 @@ Revises: 0019
 Create Date: 2026-11-04
 
 Matching validasi run V kini dua level: ``idsls`` (14 digit, beda himpunan
-SLS) dan ``idsubsls`` (18 digit, beda komposisi SubSLS di dalam SLS yang
-cocok). Kolom ``validasi_sls_unmatch.idsls`` ikut menyimpan kode 18 digit,
+SLS) dan ``idsubsls`` (16 digit, beda komposisi SubSLS di dalam SLS yang
+cocok). Kolom ``validasi_sls_unmatch.idsls`` ikut menyimpan kode 16 digit,
 jadi lebarnya ditambah 16 -> 20. Widening saja: data lama (14 digit) tidak
 berubah, nullable/tidak-null tidak berubah.
 """
@@ -36,7 +36,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Kembalikan ke VARCHAR(16) (gagal bila ada baris 18 digit)."""
+    """Kembalikan ke VARCHAR(16) (gagal bila ada baris 16 digit)."""
     op.alter_column(
         "validasi_sls_unmatch",
         "idsls",

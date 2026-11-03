@@ -834,7 +834,7 @@ def spool_unmatch_v_csv(sesi: Session, run_id: int, setelan: Settings) -> Binary
 
     Mencakup kedua arah (``peta`` = ada di peta tapi tidak di master,
     ``master`` = hilang dari peta) dan kedua level: ``idsls`` 14 digit (beda
-    himpunan SLS) serta ``idsubsls`` 18 digit (beda komposisi SubSLS).
+    himpunan SLS) serta ``idsubsls`` 16 digit (beda komposisi SubSLS).
     Bedakan dari panjang kodenya. Satu unduhan cukup untuk perbaikan.
     """
     baris_db = sesi.execute(

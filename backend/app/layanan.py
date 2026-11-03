@@ -802,7 +802,7 @@ def daftar_unmatch(
     """Daftar unmatch satu run V (paging, urut kode).
 
     ``arah`` = ``peta``/``master`` untuk menyaring satu sisi; kosong berarti
-    kedua sisi. Baris mencakup ``idsls`` 14 digit dan ``idsubsls`` 18 digit
+    kedua sisi. Baris mencakup ``idsls`` 14 digit dan ``idsubsls`` 16 digit
     (bedakan dari panjang kodenya). Run V gagal tetap tercatat, jadi daftar
     ini yang diunduh sebagai CSV untuk diperbaiki di QGIS.
     """
