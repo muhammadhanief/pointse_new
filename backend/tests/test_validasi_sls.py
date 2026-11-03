@@ -93,7 +93,7 @@ def test_pesan_tiga_blok() -> None:
     lolos, pesan = validasi_sls.rangkum_pesan(skema, duplikat, matching)
     assert not lolos
     assert "skema: OK" in pesan
-    assert "duplikat: GAGAL (2 idsls ganda; contoh: A, B)" in pesan
+    assert "duplikat: GAGAL (2 idsls ganda; contoh: A, B; 0 idsubsls ganda)" in pesan
     assert "unmatch_peta=1" in pesan and "unmatch_master=1" in pesan
     assert "contoh: A" in pesan and "contoh: C" in pesan
 

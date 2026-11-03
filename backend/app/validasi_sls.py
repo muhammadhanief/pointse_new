@@ -292,14 +292,13 @@ def rangkum_pesan(
         bagian.append("duplikat: OK (idsls/idsubsls unik)")
     else:
         contoh = ", ".join(duplikat.contoh)
+        contoh_sub = ", ".join(duplikat.contoh_sub)
         bagian.append(
-            f"duplikat: GAGAL ({duplikat.jumlah_ganda} idsls ganda; contoh: {contoh})"
-            + (
-                f"; {duplikat.jumlah_ganda_sub} idsubsls ganda; "
-                f"contoh: {', '.join(duplikat.contoh_sub)}"
-                if duplikat.jumlah_ganda_sub
-                else ""
-            )
+            f"duplikat: GAGAL ({duplikat.jumlah_ganda} idsls ganda"
+            + (f"; contoh: {contoh}" if contoh else "")
+            + f"; {duplikat.jumlah_ganda_sub} idsubsls ganda"
+            + (f"; contoh: {contoh_sub}" if contoh_sub else "")
+            + ")"
         )
     if matching.lolos:
         bagian.append("matching: OK (peta <-> master cocok)")
