@@ -26,13 +26,13 @@ depends_on: Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Ganti kolom arah/level/idsls/alasan dengan pasangan sisi + jenis."""
+    """Ganti kolom arah/level/idsls/alasan dengan pasangan sisi + jenis.
+
+    Indeks baru dibuat dulu sebelum indeks lama dihapus: FK ``run_id``
+    butuh indeks berawalan ``run_id``, dan MySQL menolak menghapus indeks
+    yang sedang dipakai constraint.
+    """
     with op.batch_alter_table("validasi_sls_unmatch") as batch:
-        batch.drop_index("ix_validasi_sls_unmatch_run_arah")
-        batch.drop_column("arah")
-        batch.drop_column("level")
-        batch.drop_column("idsls")
-        batch.drop_column("alasan")
         batch.add_column(sa.Column("jenis", sa.String(length=16), nullable=False, server_default="tidak_di_peta"))
         batch.add_column(sa.Column("idsls_peta", sa.String(length=20), nullable=True))
         batch.add_column(sa.Column("idsubsls_peta", sa.String(length=20), nullable=True))
@@ -40,11 +40,21 @@ def upgrade() -> None:
         batch.add_column(sa.Column("idsubsls_master", sa.String(length=20), nullable=True))
         batch.add_column(sa.Column("catatan", sa.String(length=255), nullable=True))
         batch.create_index("ix_validasi_sls_unmatch_run_jenis", ["run_id", "jenis"])
+        batch.drop_index("ix_validasi_sls_unmatch_run_arah")
+        batch.drop_column("arah")
+        batch.drop_column("level")
+        batch.drop_column("idsls")
+        batch.drop_column("alasan")
 
 
 def downgrade() -> None:
     """Kembalikan kolom lama (data temuan tidak dipertahankan)."""
     with op.batch_alter_table("validasi_sls_unmatch") as batch:
+        batch.add_column(sa.Column("arah", sa.String(length=8), nullable=False, server_default="peta"))
+        batch.add_column(sa.Column("level", sa.String(length=8), nullable=False, server_default="sls"))
+        batch.add_column(sa.Column("idsls", sa.String(length=20), nullable=False, server_default=""))
+        batch.add_column(sa.Column("alasan", sa.String(length=32), nullable=True))
+        batch.create_index("ix_validasi_sls_unmatch_run_arah", ["run_id", "arah"])
         batch.drop_index("ix_validasi_sls_unmatch_run_jenis")
         batch.drop_column("catatan")
         batch.drop_column("idsls_master")
@@ -52,8 +62,3 @@ def downgrade() -> None:
         batch.drop_column("idsls_peta")
         batch.drop_column("idsubsls_peta")
         batch.drop_column("jenis")
-        batch.add_column(sa.Column("arah", sa.String(length=8), nullable=False, server_default="peta"))
-        batch.add_column(sa.Column("level", sa.String(length=8), nullable=False, server_default="sls"))
-        batch.add_column(sa.Column("idsls", sa.String(length=20), nullable=False, server_default=""))
-        batch.add_column(sa.Column("alasan", sa.String(length=32), nullable=True))
-        batch.create_index("ix_validasi_sls_unmatch_run_arah", ["run_id", "arah"])
