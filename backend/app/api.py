@@ -248,6 +248,18 @@ def unggah_run(
                 )
             nama_peta, kdprov, kdkab = layanan.periksa_peta(berkas_peta, layer_peta)
             auth.pastikan_akses(pengguna, kdprov, kdkab)
+            # Master harus sudah ada di server; kalau tidak, job pasti gagal di
+            # worker (``baca_master``). Tolak di awal supaya tidak ada run gagal
+            # yang menyesatkan di riwayat (seperti Proses A tanpa geotag master).
+            kode_kab_v = layanan.kode_kabupaten(kdprov, kdkab)
+            jalur_msubsls_v = validasi_sls.jalur_master(
+                setelan.dir_master_sls_2026_s1, kode_kab_v
+            )[0]
+            if not jalur_msubsls_v.exists():
+                raise KesalahanUnggahan(
+                    f"master SLS 2026 S1 untuk kabupaten/kota {kode_kab_v} "
+                    "belum tersedia di server; hubungi admin provinsi"
+                )
             info = layanan.InfoUnggahan(
                 kdprov=kdprov,
                 kdkab=kdkab,
