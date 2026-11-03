@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     dir_unggahan: str = "data/unggahan"
     #: Geotag master per kabupaten (permanen, tidak ikut pemangkasan run).
     dir_master: str = "data/master"
+    #: Master Excel SLS 2026 Semester 1 per kabupaten
+    #: (``<kdkab>/msubsls_26_1_<kdkab>.xlsx`` + hirarki; PRD §11.2).
+    #: Disalin sekali via skrip + checksum, tidak ikut pemangkasan run.
+    dir_master_sls_2026_s1: str = "data/master-sls-2026-s1"
 
     # Unggahan body mentah: batas ukuran per berkas dan umur berkas sementara.
     # 0 = tanpa batas total; potongan tetap dibatasi proxy.

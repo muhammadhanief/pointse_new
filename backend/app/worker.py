@@ -101,12 +101,16 @@ from app.config import Settings, get_settings
 from app.db import get_sessionmaker
 from app.kunci import KunciBerkas, jalur_kunci
 from app.models import (
+    ARAH_MASTER,
+    ARAH_PETA,
+    SEMESTER_SLS_2026_1,
     STATUS_GAGAL,
     STATUS_JALAN,
     STATUS_MENUNGGU,
     STATUS_SUKSES,
     TIPE_A,
     TIPE_B,
+    TIPE_V,
     WORKER_BERHENTI,
     WORKER_JALAN,
     WORKER_MENANGGUR,
@@ -116,6 +120,7 @@ from app.models import (
     RekapSubsls,
     Run,
     TitikHasil,
+    ValidasiSlsUnmatch,
     Wilayah,
     WorkerEvent,
     WorkerHeartbeat,
@@ -958,12 +963,71 @@ def ikat_ulang_sumber_a(sesi: Session, run: Run) -> Run | None:
     return sumber
 
 
+def proses_validasi_v(
+    sesi: Session, run: Run, setelan: Settings | None = None
+) -> tuple[int, str, bool]:
+    """Jalankan validasi SLS 2026 S1 untuk satu run V; kembalikan (baris, pesan, lolos).
+
+    Menulis ``validasi_sls_unmatch`` dan menandai ``runs.semester``. Tidak
+    menyentuh ``wilayah``/``titik_hasil``/rekap (steril dari SE2026).
+    """
+    from app import validasi_sls
+
+    setelan = setelan or get_settings()
+    kode = layanan_kode_kab(run)
+    hasil = validasi_sls.validasi_berkas(
+        run.berkas_peta, run.layer_peta, setelan.dir_master_sls_2026_s1, kode
+    )
+    unmatch = [
+        *hasil.matching.unmatch_peta,
+        *hasil.matching.unmatch_master,
+    ]
+    sesi.execute(delete(ValidasiSlsUnmatch).where(ValidasiSlsUnmatch.run_id == run.id))
+    sesi.execute(
+        insert(ValidasiSlsUnmatch),
+        [
+            {
+                "run_id": run.id,
+                "arah": satu.arah,
+                "idsls": satu.idsls,
+                "nmsls": satu.nmsls,
+                "alasan": satu.alasan,
+            }
+            for satu in unmatch
+        ],
+    )
+    return len(unmatch), hasil.pesan, hasil.lolos
+
+
+def layanan_kode_kab(run: Run) -> str:
+    """Kode kabupaten 4 digit untuk run (mendukung kode pendek peta)."""
+    from app import layanan
+
+    return layanan.kode_kabupaten(run.kdprov, run.kdkab)
+
+
+def simpan_fase_akhir_v(sesi: Session, run: Run, hasil: tuple[int, str, bool]) -> None:
+    """Tutup run V: jumlah unmatch + status sukses/gagal + pesan 3 blok."""
+    jumlah, pesan, lolos = hasil
+    run.jumlah_baris = jumlah
+    run.jumlah_tanpa_wilayah = 0
+    run.pesan = pesan
+    run.semester = run.semester or SEMESTER_SLS_2026_1
+    run.status = STATUS_SUKSES if lolos else STATUS_GAGAL
+    run.heartbeat_at = sekarang()
+    run.finished_at = sekarang()
+    run.detail_tersedia = 0
+    sesi.commit()
+
+
 def bersihkan_hasil(sesi: Session, run_id: int) -> None:
     """Buang sisa hasil/rekap satu job (job diulang atau gagal di tengah jalan)."""
     sesi.execute(delete(TitikHasil).where(TitikHasil.run_id == run_id))
     sesi.execute(delete(RekapDesa).where(RekapDesa.run_id == run_id))
     sesi.execute(delete(RekapKabupaten).where(RekapKabupaten.run_id == run_id))
     sesi.execute(delete(RekapSubsls).where(RekapSubsls.run_id == run_id))
+    # Unmatch run V ikut dibuang supaya run ulang tidak menampilkan sisa lama.
+    sesi.execute(delete(ValidasiSlsUnmatch).where(ValidasiSlsUnmatch.run_id == run_id))
     # Anomali job B ikut dibuang supaya menu tidak menampilkan hasil lama saat
     # run diproses ulang (kalau gagal di tengah, tidak ada sisa yang menyesatkan).
     sesi.execute(delete(AnomaliTitik).where(AnomaliTitik.run_b_id == run_id))
@@ -1340,7 +1404,14 @@ def proses_satu_job(
             bersihkan_hasil(sesi, run_id)
             sesi.commit()
 
-            if potongan:
+            if run.tipe == TIPE_V:
+                # Validasi SLS 2026 S1: steril dari SE2026, tanpa potongan/
+                # wilayah/titik_hasil/rekap (PRD §11).
+                hasil_v = proses_validasi_v(sesi, run, setelan)
+                simpan_fase_akhir_v(sesi, run, hasil_v)
+                jumlah = hasil_v[0]
+                jumlah_anomali = 0
+            elif potongan:
                 jumlah = proses_potongan(sesi, run, setelan, penghenti)
             else:
                 titik, peta = baca_masukan(run)
@@ -1361,8 +1432,10 @@ def proses_satu_job(
                 )
 
             # Fase akhir (rekap, anomali, capaian, perapian urut) dijalankan di
-            # bawah kunci antar-worker; lihat ``simpan_fase_akhir``.
-            jumlah_anomali = simpan_fase_akhir(sesi, run, jumlah, potongan)
+            # bawah kunci antar-worker; lihat ``simpan_fase_akhir``. Run V
+            # steril dari SE2026: sudah ditutup simpan_fase_akhir_v di atas.
+            if run.tipe != TIPE_V:
+                jumlah_anomali = simpan_fase_akhir(sesi, run, jumlah, potongan)
         logger.info(
             "job %s sukses: %s baris (anomali: %s)",
             run_id,

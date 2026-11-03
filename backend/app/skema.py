@@ -48,6 +48,8 @@ class RunOut(BaseModel):
     sumber_run_a_id: int | None = None
     #: Nomor urut run A sumber pada (kdprov, kdkab, tipe A).
     sumber_run_a_nomor: int | None = None
+    #: Semester peta SLS yang divalidasi run V (mis. ``2026_1``); NULL untuk A/B.
+    semester: str | None = None
 
 
 class UnggahanOut(BaseModel):
@@ -132,6 +134,25 @@ class DaftarRunOut(BaseModel):
 
     total: int
     baris: list[RunOut]
+
+
+class ValidasiUnmatchBarisOut(BaseModel):
+    """Satu ``idsls`` bermasalah pada run V (PRD §11.4)."""
+
+    arah: str
+    idsls: str
+    nmsls: str | None = None
+    alasan: str | None = None
+
+
+class ValidasiUnmatchOut(BaseModel):
+    """Daftar unmatch satu run V (paging, urut ``idsls``)."""
+
+    run_id: int
+    total: int
+    limit: int
+    offset: int
+    baris: list[ValidasiUnmatchBarisOut]
 
 
 class HasilOut(BaseModel):

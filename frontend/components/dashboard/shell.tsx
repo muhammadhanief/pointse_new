@@ -63,16 +63,21 @@ const MENU: GrupMenu[] = [
     item: [{ href: "/", label: "Beranda", ikon: IkonBeranda }],
   },
   {
-    label: "Proses",
+    label: "Unggah",
     item: [
       {
         href: "/proses/identifikasi",
-        label: "1. Unggah Peta SLS/SubSLS Final",
+        label: "1. Unggah Peta SLS/SubSLS Final 2025 Semester 2",
         ikon: IkonUnggah,
       },
       {
         href: "/proses/pengecekan",
         label: "2. Unggah Titik Hasil Perbaikan",
+        ikon: IkonPengecekan,
+      },
+      {
+        href: "/proses/validasi",
+        label: "3. Validasi Peta SLS/SubSLS 2026 Semester 1",
         ikon: IkonPengecekan,
       },
     ],
@@ -86,7 +91,7 @@ const MENU: GrupMenu[] = [
   {
     label: "Hasil",
     item: [
-      { href: "/rekap", label: "Rekap progres", ikon: IkonRekap },
+      { href: "/rekap", label: "Progres Perbaikan Titik SE2026", ikon: IkonRekap },
       { href: "/anomali", label: "Pencermatan Titik", ikon: IkonAnomali },
       { href: "/geser", label: "Pergeseran Titik", ikon: IkonGeser },
     ],

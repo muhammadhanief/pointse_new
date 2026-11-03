@@ -1,4 +1,4 @@
-export type TipeRun = "A" | "B";
+export type TipeRun = "A" | "B" | "V";
 export type StatusRun = "menunggu" | "jalan" | "sukses" | "gagal";
 
 export type Run = {
@@ -26,6 +26,7 @@ export type Run = {
   geotag_master_nomor: number | null;
   sumber_run_a_id: number | null;
   sumber_run_a_nomor: number | null;
+  semester: string | null;
 };
 
 export type DaftarRun = {

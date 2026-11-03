@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
-import { Panel, TombolAksi } from "@/components/dashboard/ui";
+import { Panel, TautanAksi, TombolAksi } from "@/components/dashboard/ui";
+import { Modal } from "@/components/dashboard/modal";
 import { BidangBerkas } from "@/components/unggah/bidang-berkas";
 import { CatatanUnggah } from "@/components/unggah/catatan";
 import { PesanUnggah } from "@/components/unggah/pesan";
@@ -16,6 +17,7 @@ import { labelNomorJob } from "@/lib/istilah";
 export function FormProsesA({ onSelesai }: { onSelesai?: () => void }) {
   const [peta, setPeta] = useState<File | null>(null);
   const [kunciBerkas, setKunciBerkas] = useState(0);
+  const [notifikasi, setNotifikasi] = useState(false);
   const { status, progres, pesan, data, unggah, batal, reset } =
     useUnggah<Run>();
   const sedang = status === "mengunggah";
@@ -49,6 +51,7 @@ export function FormProsesA({ onSelesai }: { onSelesai?: () => void }) {
     if (hasil) {
       setPeta(null);
       setKunciBerkas((nilai) => nilai + 1);
+      setNotifikasi(true);
     }
   }
 
@@ -94,6 +97,29 @@ export function FormProsesA({ onSelesai }: { onSelesai?: () => void }) {
           )}
         </PesanUnggah>
       </form>
+
+      <Modal
+        terbuka={notifikasi}
+        judul="Peta SLS Berhasil Diunggah"
+        onTutup={() => setNotifikasi(false)}
+      >
+        <div className="space-y-field">
+          <p className="text-sm leading-normal text-ink">
+            Mohon diperhatikan, pembaruan peta SLS menyebabkan progres Anda
+            kembali menjadi 0. Untuk melanjutkan, Anda wajib mengunggah ulang
+            Titik Geotagging melalui halaman Pengecekan
+            (https://pointse.web.bps.go.id/proses/pengecekan).
+          </p>
+          <div className="flex flex-wrap justify-end gap-field border-t border-line pt-kartu">
+            <TombolAksi varian="sekunder" onClick={() => setNotifikasi(false)}>
+              Saya Mengerti
+            </TombolAksi>
+            <TautanAksi href="/proses/pengecekan">
+              Buka Halaman Pengecekan
+            </TautanAksi>
+          </div>
+        </div>
+      </Modal>
     </Panel>
   );
 }

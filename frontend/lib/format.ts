@@ -40,6 +40,21 @@ export function formatAngka(nilai: number | null | undefined): string {
   return nilai == null ? "-" : formatterAngka.format(nilai);
 }
 
+/**
+ * Persentase penyelesaian: 4 angka di belakang koma, tanpa nol berekor
+ * (``50%``, bukan ``50,0000%``). Empat angka itu perlu supaya wilayah yang
+ * masih menyisakan 1 titik tidak tampil bulat 100% (``99,999%``, bukan ``100%``).
+ */
+export function formatPersen(nilai: number | null | undefined): string {
+  if (nilai == null) {
+    return "-";
+  }
+  return `${nilai.toLocaleString("id-ID", {
+    maximumFractionDigits: 4,
+    minimumFractionDigits: 0,
+  })}%`;
+}
+
 export function formatBytes(nilai: number | null | undefined): string {
   if (nilai == null || !Number.isFinite(nilai) || nilai < 0) {
     return "-";

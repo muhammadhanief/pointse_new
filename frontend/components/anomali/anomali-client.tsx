@@ -57,6 +57,9 @@ const STATUS_BAWAAN: StatusKonfirmasi[] = [
 
 type UkuranHalaman = number | "semua";
 type KodeStatus = "akan_diperbaiki" | "sesuai_kenyataan";
+/** Kabar aksi: ``sukses`` menutup sendiri, ``peringatan`` menunggu dikenali. */
+type JenisNotifikasi = "sukses" | "peringatan";
+type Notifikasi = { jenis: JenisNotifikasi; pesan: string };
 
 /**
  * Jenis pencermatan yang wajib ditangani: tidak boleh dimaklumi, jadi status
@@ -71,7 +74,7 @@ const JENIS_WAJIB_TANGANI: ReadonlySet<string> = new Set([
 ]);
 
 const PESAN_WAJIB_TANGANI =
-  "jenis pencermatan ini harus ditangani, tidak bisa dimaklumi";
+  "Jenis pencermatan ini harus ditangani, tidak bisa dimaklumi";
 
 function wajibTangani(jenis: string): boolean {
   return JENIS_WAJIB_TANGANI.has(jenis);
@@ -166,23 +169,54 @@ export function AnomaliClient({
   const [bukaKlarifikasi, setBukaKlarifikasi] = useState(false);
   const [klarifikasiCatatan, setKlarifikasiCatatan] = useState("");
   const [mengirim, setMengirim] = useState(false);
-  // Notifikasi ringkas (toast) untuk aksi yang ditolak tanpa memanggil API.
-  const [toast, setToast] = useState<string | null>(null);
-  const jamToast = useRef<number | null>(null);
+  // Notifikasi terpusat untuk kabar aksi: ditampilkan menutupi tengah layar
+  // supaya tidak terlewat saat tabel sudah digulir jauh dari panel pesan.
+  const [notifikasi, setNotifikasi] = useState<Notifikasi | null>(null);
+  const jamNotifikasi = useRef<number | null>(null);
   const kdkabSatu = kdkabs.length === 1 ? kdkabs[0] : null;
 
-  const tampilkanToast = useCallback((pesan: string) => {
-    setToast(pesan);
-    if (jamToast.current != null) {
-      window.clearTimeout(jamToast.current);
+  const tutupNotifikasi = useCallback(() => {
+    if (jamNotifikasi.current != null) {
+      window.clearTimeout(jamNotifikasi.current);
+      jamNotifikasi.current = null;
     }
-    jamToast.current = window.setTimeout(() => setToast(null), 4000);
+    setNotifikasi(null);
   }, []);
+
+  /**
+   * ``peringatan`` menunggu dikenali operator; kabar ``sukses`` menutup sendiri
+   * supaya konfirmasi baris berturut-turut tidak menumpuk klik.
+   */
+  const tampilkanNotifikasi = useCallback(
+    (pesan: string, jenis: JenisNotifikasi = "sukses") => {
+      setNotifikasi({ jenis, pesan });
+      if (jamNotifikasi.current != null) {
+        window.clearTimeout(jamNotifikasi.current);
+        jamNotifikasi.current = null;
+      }
+      if (jenis === "sukses") {
+        jamNotifikasi.current = window.setTimeout(() => {
+          jamNotifikasi.current = null;
+          setNotifikasi(null);
+        }, 3500);
+      }
+    },
+    [],
+  );
+
+  /** Kabar sukses tetap dicatat di atas tabel sekaligus tampil di tengah layar. */
+  const catatBerhasil = useCallback(
+    (pesan: string) => {
+      setBerhasil(pesan);
+      tampilkanNotifikasi(pesan);
+    },
+    [tampilkanNotifikasi],
+  );
 
   useEffect(
     () => () => {
-      if (jamToast.current != null) {
-        window.clearTimeout(jamToast.current);
+      if (jamNotifikasi.current != null) {
+        window.clearTimeout(jamNotifikasi.current);
       }
     },
     [],
@@ -448,14 +482,16 @@ export function AnomaliClient({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(isi),
       });
-      setBerhasil(`${formatAngka(hasil.jumlah)} titik dikonfirmasi.`);
+      catatBerhasil(`${formatAngka(hasil.jumlah)} titik dikonfirmasi.`);
       setDrawer(null);
       setBukaMassal(false);
       bersihkanPilihan();
       await muat();
       return hasil.jumlah;
     } catch (kesalahan) {
-      setGalat(pesanKesalahan(kesalahan));
+      const pesan = pesanKesalahan(kesalahan);
+      setGalat(pesan);
+      tampilkanNotifikasi(pesan, "peringatan");
       return null;
     } finally {
       setMengirim(false);
@@ -475,14 +511,16 @@ export function AnomaliClient({
           body: JSON.stringify(isi),
         },
       );
-      setBerhasil(
+      catatBerhasil(
         `${formatAngka(hasil.jumlah)} konfirmasi dibatalkan (kembali belum dikonfirmasi).`,
       );
       setDrawer(null);
       bersihkanPilihan();
       await muat();
     } catch (kesalahan) {
-      setGalat(pesanKesalahan(kesalahan));
+      const pesan = pesanKesalahan(kesalahan);
+      setGalat(pesan);
+      tampilkanNotifikasi(pesan, "peringatan");
     } finally {
       setMengirim(false);
     }
@@ -492,7 +530,7 @@ export function AnomaliClient({
     // Jenis wajib-tangani tidak boleh diisi statusnya. Drawer masih boleh
     // dibuka bila sudah ada konfirmasi lama -- hanya untuk membatalkannya.
     if (wajibTangani(baris.jenis) && (statusAwal != null || !baris.konfirmasi)) {
-      tampilkanToast(PESAN_WAJIB_TANGANI);
+      tampilkanNotifikasi(PESAN_WAJIB_TANGANI, "peringatan");
       return;
     }
     setDrawer(baris);
@@ -511,7 +549,7 @@ export function AnomaliClient({
       return;
     }
     if (drawer != null && wajibTangani(drawer.jenis)) {
-      tampilkanToast(PESAN_WAJIB_TANGANI);
+      tampilkanNotifikasi(PESAN_WAJIB_TANGANI, "peringatan");
       return;
     }
     if (formStatus === "sesuai_kenyataan" && formCatatan.trim() === "") {
@@ -526,7 +564,7 @@ export function AnomaliClient({
 
   async function konfirmasiCepat(baris: AnomaliBaris, status: KodeStatus) {
     if (wajibTangani(baris.jenis)) {
-      tampilkanToast(PESAN_WAJIB_TANGANI);
+      tampilkanNotifikasi(PESAN_WAJIB_TANGANI, "peringatan");
       return;
     }
     const id = baris.id;
@@ -587,7 +625,7 @@ export function AnomaliClient({
           }),
         },
       );
-      setBerhasil(
+      catatBerhasil(
         `Permintaan klarifikasi dikirim untuk ${formatAngka(hasil.jumlah)} titik.`,
       );
       setBukaKlarifikasi(false);
@@ -595,7 +633,9 @@ export function AnomaliClient({
       setKlarifikasiCatatan("");
       await muat();
     } catch (kesalahan) {
-      setGalat(pesanKesalahan(kesalahan));
+      const pesan = pesanKesalahan(kesalahan);
+      setGalat(pesan);
+      tampilkanNotifikasi(pesan, "peringatan");
     } finally {
       setMengirim(false);
     }
@@ -1029,7 +1069,7 @@ export function AnomaliClient({
                 onClick={() => setBukaMassal(true)}
                 disabled={mengirim}
               >
-                Sesuai Kenyataan
+                Sesuai Kondisi Kenyataan
               </TombolAksi>
               <TombolAksi
                 varian="sekunder"
@@ -1107,7 +1147,7 @@ export function AnomaliClient({
                               className={`hidden min-h-6 rounded-md border border-line-strong bg-surface px-1.5 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 lg:inline-flex ${
                                 wajibTangani(baris.jenis)
                                   ? "cursor-not-allowed text-muted opacity-60"
-                                  : "text-ink hover:border-accent hover:text-accent"
+                                  : "text-danger hover:border-danger hover:text-danger"
                               }`}
                               title={
                                 wajibTangani(baris.jenis)
@@ -1115,7 +1155,7 @@ export function AnomaliClient({
                                   : "Tandai Akan Diperbaiki"
                               }
                             >
-                              Akan
+                              Akan Diperbaiki
                             </button>
                             <button
                               type="button"
@@ -1125,7 +1165,7 @@ export function AnomaliClient({
                               className={`hidden min-h-6 rounded-md border border-line-strong bg-surface px-1.5 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 lg:inline-flex ${
                                 wajibTangani(baris.jenis)
                                   ? "cursor-not-allowed text-muted opacity-60"
-                                  : "text-ink hover:border-success hover:text-success"
+                                  : "text-success hover:border-success hover:text-success"
                               }`}
                               title={
                                 wajibTangani(baris.jenis)
@@ -1133,7 +1173,7 @@ export function AnomaliClient({
                                   : "Tandai Sesuai Kondisi Kenyataan (wajib keterangan)"
                               }
                             >
-                              Sesuai
+                              Sesuai Kondisi Kenyataan
                             </button>
                             <button
                               type="button"
@@ -1637,15 +1677,21 @@ export function AnomaliClient({
         </div>
       </Modal>
 
-      {/* Notifikasi ringkas untuk aksi yang ditolak (mis. jenis wajib-tangani). */}
-      {toast ? (
-        <div
-          role="alert"
-          className="fixed bottom-4 left-1/2 z-[60] w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 rounded-lg border border-danger/40 bg-danger-soft px-4 py-3 text-sm font-medium text-ink shadow-lg"
-        >
-          {toast}
+      {/* Notifikasi terpusat: kabar aksi di atas tabel mudah terlewat karena
+          tabelnya bisa sudah tergulir jauh saat tombol baris diklik. */}
+      <Modal
+        terbuka={notifikasi != null}
+        judul={notifikasi?.jenis === "peringatan" ? "Perlu ditangani" : "Berhasil"}
+        onTutup={tutupNotifikasi}
+        ukuran="sm"
+      >
+        <p className="text-sm leading-6 text-ink">{notifikasi?.pesan}</p>
+        <div className="mt-4 flex justify-end">
+          <TombolAksi onClick={tutupNotifikasi}>
+            {notifikasi?.jenis === "peringatan" ? "Mengerti" : "Tutup"}
+          </TombolAksi>
         </div>
-      ) : null}
+      </Modal>
     </div>
   );
 }

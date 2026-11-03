@@ -6,12 +6,15 @@ import type { TipeRun } from "@/lib/api/types";
 
 import { FormProsesA } from "./form-a";
 import { FormProsesB } from "./form-b";
+import { FormProsesV } from "./form-v";
 
 export function ProsesWorkspace({ tipe }: { tipe: TipeRun }) {
   return (
     <div className="space-y-field">
       {tipe === "A" ? (
         <FormProsesA onSelesai={() => undefined} />
+      ) : tipe === "V" ? (
+        <FormProsesV onSelesai={() => undefined} />
       ) : (
         <FormProsesB onSelesai={() => undefined} />
       )}

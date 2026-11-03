@@ -45,14 +45,19 @@ from app.layanan import (
     Tingkat,
 )
 from app.models import (
+    ARAH_MASTER,
+    ARAH_PETA,
     DASAR_TUGAS,
+    SEMESTER_SLS_2026_1,
     STATUS_SUKSES,
     TIPE_A,
     TIPE_B,
+    TIPE_V,
     AnomaliTitik,
     KonfirmasiAnomali,
     RekapTarget,
     Run,
+    ValidasiSlsUnmatch,
 )
 from app.peran import PERAN_ADMIN_PROVINSI
 from app.skema import (
@@ -83,6 +88,8 @@ from app.skema import (
     StatusKonfirmasiOut,
     TabulasiProgresOut,
     TrenOut,
+    ValidasiUnmatchBarisOut,
+    ValidasiUnmatchOut,
 )
 
 router = APIRouter()
@@ -111,7 +118,7 @@ def _ambil_run(sesi: Session, run_id: int) -> Run:
 
 @router.post("/runs", response_model=RunOut, status_code=201)
 def unggah_run(
-    tipe: str = Form(..., description=f"'{TIPE_A}' (identifikasi titik) atau '{TIPE_B}'"),
+    tipe: str = Form(..., description=f"'{TIPE_A}' (identifikasi titik), '{TIPE_B}' (pengecekan), atau '{TIPE_V}' (validasi SLS 2026 S1)"),
     unggahan_id: str | None = Form(
         None,
         description=(
@@ -163,11 +170,17 @@ def unggah_run(
     Mengirim kedua berkas tetap didukung untuk kompatibilitas (mode manual/uji).
     Job lama untuk kabupaten/kota+tipe yang sama **tidak** dihapus/ditandai: semua
     job antre dikerjakan berurutan oleh worker.
+
+    Tipe ``V`` (validasi SLS 2026 S1, PRD §11): hanya butuh berkas peta
+    (GeoJSON/GPKG full 1 kab); berkas disimpan dua kali (input+peta menunjuk
+    berkas yang sama) supaya worker membaca satu jalur. ``semester`` otomatis
+    ``2026_1``.
     """
     tipe_bersih = (tipe or "").strip().upper()
-    if tipe_bersih not in (TIPE_A, TIPE_B):
+    if tipe_bersih not in (TIPE_A, TIPE_B, TIPE_V):
         raise HTTPException(
-            status_code=422, detail=f"tipe harus '{TIPE_A}' atau '{TIPE_B}', bukan '{tipe}'"
+            status_code=422,
+            detail=f"tipe harus '{TIPE_A}', '{TIPE_B}', atau '{TIPE_V}', bukan '{tipe}'",
         )
     if unggahan_id and (peta is not None or titik is not None):
         raise HTTPException(
@@ -177,6 +190,10 @@ def unggah_run(
     if tipe_bersih == TIPE_A and peta is None and not unggahan_id:
         raise HTTPException(
             status_code=422, detail="Proses A butuh berkas peta batas wilkerstat"
+        )
+    if tipe_bersih == TIPE_V and peta is None and not unggahan_id:
+        raise HTTPException(
+            status_code=422, detail="Validasi SLS butuh berkas peta 2026 Semester 1"
         )
     if tipe_bersih == TIPE_B and titik is None and not unggahan_id:
         raise HTTPException(
@@ -197,7 +214,59 @@ def unggah_run(
     dir_run = Path(setelan.dir_unggahan) / uuid.uuid4().hex
     unggahan_dipakai: str | None = None
     try:
-        if tipe_bersih == TIPE_A:
+        if tipe_bersih == TIPE_V:
+            # Validasi SLS 2026 S1: peta saja; input+peta menunjuk berkas sama.
+            if unggahan_id:
+                sumber_peta, meta_unggah = unggahan.ambil_berkas(
+                    unggahan_id, "peta", pengguna, setelan
+                )
+                nama_peta_asli = str(meta_unggah["nama"])
+                dir_run.mkdir(parents=True, exist_ok=True)
+                berkas_peta = dir_run / f"peta_{nama_peta_asli}"
+                shutil.copy2(sumber_peta, berkas_peta)
+                unggahan_dipakai = unggahan_id
+            else:
+                berkas_peta = _simpan_unggahan(peta, dir_run, "peta")
+                nama_peta_asli = Path(peta.filename or berkas_peta.name).name
+            # Pemeriksaan kolom peta ringan di sini (penuh di worker); satu kab.
+            from app import validasi_sls
+
+            try:
+                kolom_berkas = validasi_sls.kolom_berkas_peta(
+                    berkas_peta, layer_peta
+                )
+            except Exception as galat:  # noqa: BLE001 - pesan diteruskan ke pengguna
+                raise KesalahanUnggahan(f"berkas peta tidak bisa dibaca: {galat}") from galat
+            kurang = [
+                kolom
+                for kolom in validasi_sls.KOLOM_PETA_V
+                if kolom not in set(kolom_berkas)
+            ]
+            if kurang:
+                raise KesalahanUnggahan(
+                    f"berkas peta kurang kolom wajib validasi ({', '.join(kurang)})"
+                )
+            nama_peta, kdprov, kdkab = layanan.periksa_peta(berkas_peta, layer_peta)
+            auth.pastikan_akses(pengguna, kdprov, kdkab)
+            info = layanan.InfoUnggahan(
+                kdprov=kdprov,
+                kdkab=kdkab,
+                layer_input=nama_peta,
+                layer_peta=nama_peta,
+            )
+            run = layanan.buat_run(
+                sesi,
+                tipe=tipe_bersih,
+                info=info,
+                user=nama_user,
+                nama_input=nama_peta_asli,
+                nama_peta=nama_peta_asli,
+                berkas_input=berkas_peta,
+                berkas_peta=berkas_peta,
+                tanggal_data=tanggal_data,
+                semester=SEMESTER_SLS_2026_1,
+            )
+        elif tipe_bersih == TIPE_A:
             if unggahan_id:
                 sumber_peta, meta_unggah = unggahan.ambil_berkas(
                     unggahan_id, "peta", pengguna, setelan
@@ -507,7 +576,7 @@ def daftar_master_geotag(
 
 @router.get("/runs", response_model=DaftarRunOut)
 def daftar_run(
-    tipe: str | None = Query(None, description=f"'{TIPE_A}' atau '{TIPE_B}'"),
+    tipe: str | None = Query(None, description=f"'{TIPE_A}', '{TIPE_B}', atau '{TIPE_V}'"),
     status: str | None = Query(None, description="menunggu/jalan/sukses/gagal"),
     kdprov: str | None = Query(None, description="Kode provinsi, mis. 33"),
     kdkab: str | None = Query(None, description="Kode kabupaten/kota, mis. 07"),
@@ -519,9 +588,14 @@ def daftar_run(
 ) -> DaftarRunOut:
     """Daftar job terbaru lebih dulu (dengan penyaring dan paging), dibatasi wilayah."""
     kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
+    tipe_bersih = tipe.strip().upper() if tipe else None
+    if tipe_bersih is not None and tipe_bersih not in (TIPE_A, TIPE_B, TIPE_V):
+        raise HTTPException(
+            status_code=422, detail=f"tipe harus '{TIPE_A}', '{TIPE_B}', atau '{TIPE_V}'"
+        )
     total, daftar = layanan.daftar_run(
         sesi,
-        tipe=tipe.strip().upper() if tipe else None,
+        tipe=tipe_bersih,
         status=status,
         kdprov=kdprov,
         kdkab=kdkab,
@@ -550,10 +624,15 @@ def ringkasan(
     kabupaten/kota yang belum pernah menerima unggahan Proses B.
     """
     kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
+    tipe_bersih = tipe.strip().upper() if tipe else None
+    if tipe_bersih is not None and tipe_bersih not in (TIPE_A, TIPE_B):
+        raise HTTPException(
+            status_code=422, detail=f"tipe harus '{TIPE_A}' atau '{TIPE_B}', bukan '{tipe}'"
+        )
     return RingkasanOut.model_validate(
         layanan.ringkasan(
             sesi,
-            tipe=tipe.strip().upper() if tipe else None,
+            tipe=tipe_bersih,
             provinsi=kdprov,
             kdkab=kdkab,
             dasar=dasar,
@@ -627,11 +706,16 @@ def tren(
     if tingkat not in ("kabupaten", "provinsi"):
         raise HTTPException(status_code=422, detail="tingkat tren harus 'kabupaten' atau 'provinsi'")
     kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
+    tipe_bersih = tipe.strip().upper() if tipe else None
+    if tipe_bersih is not None and tipe_bersih not in (TIPE_A, TIPE_B):
+        raise HTTPException(
+            status_code=422, detail=f"tipe harus '{TIPE_A}' atau '{TIPE_B}', bukan '{tipe}'"
+        )
     return TrenOut.model_validate(
         layanan.tren(
             sesi,
             tingkat=tingkat,
-            tipe=tipe.strip().upper() if tipe else None,
+            tipe=tipe_bersih,
             provinsi=kdprov,
             kdkab=kdkab,
             dasar=dasar,
@@ -674,6 +758,8 @@ def hasil_run(
     """
     run = _ambil_run(sesi, run_id)
     auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    if run.tipe == TIPE_V:
+        raise HTTPException(status_code=409, detail="run validasi tidak punya hasil titik")
     total, baris = layanan.hasil_run(sesi, run_id, limit=limit, offset=offset)
     return HasilOut(
         run_id=run_id,
@@ -705,12 +791,67 @@ def rekap_run(
     """
     run = _ambil_run(sesi, run_id)
     auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    if run.tipe == TIPE_V:
+        raise HTTPException(status_code=409, detail="run validasi tidak punya rekap progres")
     try:
         rekap = layanan.rekap_run(sesi, run, tingkat, dasar)
     except DetailTidakTersedia as galat:
         raise HTTPException(status_code=409, detail=str(galat)) from galat
     model = RekapOut if tingkat in layanan.TINGKAT_REKAP else RekapDetailOut
     return model.model_validate(rekap)
+
+
+@router.get("/runs/{run_id}/validasi-sls/unmatch", response_model=ValidasiUnmatchOut)
+def daftar_unmatch_validasi(
+    run_id: int,
+    arah: str | None = Query(None, description="'peta' atau 'master'; kosong = kedua sisi"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> ValidasiUnmatchOut:
+    """Daftar ``idsls`` bermasalah satu run V (paging, urut ``idsls``).
+
+    Run V gagal tetap tercatat, jadi daftar ini yang diunduh sebagai CSV
+    untuk diperbaiki di QGIS. Bukan run V dibalas 404.
+    """
+    run = _ambil_run(sesi, run_id)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    if run.tipe != TIPE_V:
+        raise HTTPException(status_code=404, detail=f"job {run_id} bukan run validasi")
+    arah_bersih = arah.strip().lower() if arah else None
+    if arah_bersih is not None and arah_bersih not in (ARAH_PETA, ARAH_MASTER):
+        raise HTTPException(
+            status_code=422, detail=f"arah harus '{ARAH_PETA}' atau '{ARAH_MASTER}'"
+        )
+    total, baris = layanan.daftar_unmatch(
+        sesi, run_id, arah=arah_bersih, limit=limit, offset=offset
+    )
+    return ValidasiUnmatchOut(
+        run_id=run_id,
+        total=total,
+        limit=limit,
+        offset=offset,
+        baris=[ValidasiUnmatchBarisOut.model_validate(satu) for satu in baris],
+    )
+
+
+@router.get("/runs/{run_id}/ekspor/unmatch-v.csv", response_class=StreamingResponse)
+def ekspor_unmatch_v(
+    run_id: int,
+    sesi: Session = Depends(get_session),
+    setelan: Settings = Depends(get_settings),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> StreamingResponse:
+    """Unduh daftar unmatch satu run V sebagai CSV (kedua arah)."""
+    run = _ambil_run(sesi, run_id)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    if run.tipe != TIPE_V:
+        raise HTTPException(status_code=404, detail=f"job {run_id} bukan run validasi")
+    spool = ekspor.spool_unmatch_v_csv(sesi, run_id, setelan)
+    kode = _kode_unduh(run.kdprov, run.kdkab)
+    nomor = layanan.nomor_urut_run(sesi, [run]).get(run.id, run.id)
+    return _unduhan_csv(spool, f"{kode}_validasi_sls_2026_s1_ke{nomor}.csv")
 
 
 @router.get("/perubahan", response_model=PerubahanOut)
@@ -733,6 +874,8 @@ def perubahan(
     akhir = _ambil_run(sesi, run_akhir)
     auth.pastikan_akses(pengguna, awal.kdprov, awal.kdkab)
     auth.pastikan_akses(pengguna, akhir.kdprov, akhir.kdkab)
+    if awal.tipe == TIPE_V or akhir.tipe == TIPE_V:
+        raise HTTPException(status_code=409, detail="perubahan hanya untuk run Proses A/B")
     try:
         hasil = layanan.perubahan(
             sesi, run_awal=awal, run_akhir=akhir, dasar=dasar, limit=limit, offset=offset
@@ -790,6 +933,8 @@ def ekspor_hasil_a(
     """
     run = _ambil_run(sesi, run_id)
     auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    if run.tipe == TIPE_V:
+        raise HTTPException(status_code=409, detail="run validasi tidak punya keluaran GPKG")
     try:
         berkas = ekspor.berkas_hasil_a(run, setelan)
     except ekspor.EksporTidakTersedia as galat:
@@ -811,6 +956,8 @@ def ekspor_hasil_b(
     """Unduh keluaran Proses B penuh sebagai GPKG, sama dengan layer QGIS."""
     run = _ambil_run(sesi, run_id)
     auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    if run.tipe == TIPE_V:
+        raise HTTPException(status_code=409, detail="run validasi tidak punya keluaran GPKG")
     try:
         berkas = ekspor.berkas_hasil_b(run, setelan)
     except ekspor.EksporTidakTersedia as galat:
@@ -832,6 +979,8 @@ def ekspor_titik_csv(
     """Unduh titik perlu tindakan run ini sebagai CSV (dibaca dari ``titik_hasil``)."""
     run = _ambil_run(sesi, run_id)
     auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    if run.tipe == TIPE_V:
+        raise HTTPException(status_code=409, detail="run validasi tidak punya titik hasil")
     try:
         spool = ekspor.spool_titik_csv(sesi, run, setelan)
     except ekspor.EksporTidakTersedia as galat:
@@ -853,6 +1002,8 @@ def ekspor_titik_gpkg(
     """Unduh titik perlu tindakan run ini sebagai GPKG (titik EPSG:4326)."""
     run = _ambil_run(sesi, run_id)
     auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    if run.tipe == TIPE_V:
+        raise HTTPException(status_code=409, detail="run validasi tidak punya titik hasil")
     try:
         berkas = ekspor.berkas_titik_gpkg(sesi, run, setelan)
     except ekspor.EksporTidakTersedia as galat:

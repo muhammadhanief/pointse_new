@@ -61,7 +61,11 @@ export function DetailJob({
   }, [run]);
 
   const judul =
-    run?.tipe === "A" ? "Peta SLS/SubSLS Final" : "Titik Hasil Perbaikan";
+    run?.tipe === "A"
+      ? "Peta SLS/SubSLS Final"
+      : run?.tipe === "V"
+        ? "Validasi SLS 2026 S1"
+        : "Titik Hasil Perbaikan";
   const terhenti =
     run?.status === "gagal" && /terhenti/i.test(run.pesan ?? "");
   const sumber =
@@ -69,9 +73,11 @@ export function DetailJob({
       ? run.geotag_master_nomor
         ? `Master geotag ke-${run.geotag_master_nomor}`
         : "-"
-      : run?.sumber_run_a_nomor
-        ? `Peta SLS/SubSLS ke-${run.sumber_run_a_nomor}`
-        : "-";
+      : run?.tipe === "V"
+        ? (run.semester ?? "2026_1")
+        : run?.sumber_run_a_nomor
+          ? `Peta SLS/SubSLS ke-${run.sumber_run_a_nomor}`
+          : "-";
   const detailTitik =
     run?.status === "sukses"
       ? run.detail_tersedia
@@ -183,7 +189,13 @@ export function DetailJob({
                   nilai={formatAngka(run.jumlah_tanpa_wilayah)}
                 />
                 <Info
-                  label={run.tipe === "A" ? "Master geotag" : "Sumber peta"}
+                  label={
+                    run.tipe === "A"
+                      ? "Master geotag"
+                      : run.tipe === "V"
+                        ? "Semester"
+                        : "Sumber peta"
+                  }
                   nilai={sumber}
                 />
                 <Info label="Detail titik" nilai={detailTitik} />

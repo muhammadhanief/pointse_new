@@ -24,6 +24,7 @@ import { DetailJob } from "./detail-job";
 const TAB: { tipe: TipeRun; label: string }[] = [
   { tipe: "A", label: "1. Peta SLS/SubSLS Final" },
   { tipe: "B", label: "2. Titik Hasil Perbaikan" },
+  { tipe: "V", label: "3. Validasi 2026 S1" },
 ];
 
 const UKURAN_HALAMAN = 20;
@@ -338,7 +339,11 @@ export function RiwayatWorkspace() {
   const labelAktif =
     tipe === "A" ? "Peta SLS/SubSLS Final" : "Titik Hasil Perbaikan";
   const jalurUnggah =
-    tipe === "A" ? "/proses/identifikasi" : "/proses/pengecekan";
+    tipe === "A"
+      ? "/proses/identifikasi"
+      : tipe === "V"
+        ? "/proses/validasi"
+        : "/proses/pengecekan";
   const totalHalaman = Math.max(1, Math.ceil(total / UKURAN_HALAMAN));
   const nomorHalaman = daftarHalaman(totalHalaman, halaman + 1);
   const mulai = total === 0 ? 0 : halaman * UKURAN_HALAMAN + 1;
@@ -448,7 +453,9 @@ export function RiwayatWorkspace() {
               >
                 {tipe === "A"
                   ? "Unggah peta SLS/SubSLS final untuk membuat job identifikasi pertama."
-                  : "Selesaikan langkah 1, edit GPKG di QGIS, lalu unggah hasil perbaikan titik."}
+                  : tipe === "V"
+                    ? "Unggah peta SLS/SubSLS 2026 Semester 1 untuk divalidasi (tidak mengubah progres SE2026)."
+                    : "Selesaikan langkah 1, edit GPKG di QGIS, lalu unggah hasil perbaikan titik."}
               </EmptyState>
             )
           ) : null}

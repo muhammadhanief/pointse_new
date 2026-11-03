@@ -15,14 +15,16 @@ export function Modal({
   judul: string;
   onTutup: () => void;
   children: ReactNode;
-  ukuran?: "md" | "lg";
+  ukuran?: "sm" | "md" | "lg";
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const judulId = useId();
   const lebar =
     ukuran === "lg"
       ? "w-[min(64rem,calc(100vw-2rem))]"
-      : "w-[min(42rem,calc(100vw-2rem))]";
+      : ukuran === "sm"
+        ? "w-[min(26rem,calc(100vw-2rem))]"
+        : "w-[min(42rem,calc(100vw-2rem))]";
 
   useEffect(() => {
     const dialog = dialogRef.current;

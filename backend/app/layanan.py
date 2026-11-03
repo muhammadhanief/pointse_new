@@ -36,6 +36,7 @@ from app.models import (
     RekapTarget,
     Run,
     TitikHasil,
+    ValidasiSlsUnmatch,
     Wilayah,
     hari_ini,
 )
@@ -387,6 +388,7 @@ def buat_run(
     tanggal_data: date | None = None,
     geotag_master_id: int | None = None,
     sumber_run_a_id: int | None = None,
+    semester: str | None = None,
 ) -> Run:
     """Buat baris ``runs`` berstatus ``menunggu`` (siap diambil worker)."""
     run = Run(
@@ -404,6 +406,7 @@ def buat_run(
         tanggal_data=hari_ini() if tanggal_data is None else tanggal_data,
         geotag_master_id=geotag_master_id,
         sumber_run_a_id=sumber_run_a_id,
+        semester=semester,
     )
     sesi.add(run)
     sesi.commit()
@@ -793,6 +796,42 @@ def hasil_run(
     return total, keluaran
 
 
+def daftar_unmatch(
+    sesi: Session, run_id: int, *, arah: str | None = None, limit: int = 100, offset: int = 0
+) -> tuple[int, list[dict[str, object]]]:
+    """Daftar unmatch satu run V (paging, urut ``idsls``).
+
+    ``arah`` = ``peta``/``master`` untuk menyaring satu sisi; kosong berarti
+    kedua sisi. Run V gagal tetap tercatat, jadi daftar ini yang diunduh
+    sebagai CSV untuk diperbaiki di QGIS.
+    """
+    saring: list[Any] = [ValidasiSlsUnmatch.run_id == run_id]
+    if arah is not None:
+        saring.append(ValidasiSlsUnmatch.arah == arah)
+    total = int(
+        sesi.scalar(
+            select(func.count()).select_from(ValidasiSlsUnmatch).where(*saring)
+        )
+        or 0
+    )
+    baris = sesi.execute(
+        select(ValidasiSlsUnmatch)
+        .where(*saring)
+        .order_by(ValidasiSlsUnmatch.idsls)
+        .limit(limit)
+        .offset(offset)
+    ).scalars()
+    return total, [
+        {
+            "arah": str(satu.arah),
+            "idsls": str(satu.idsls),
+            "nmsls": satu.nmsls,
+            "alasan": satu.alasan,
+        }
+        for satu in baris
+    ]
+
+
 # --------------------------------------------------------------------------- rekap
 
 
@@ -981,10 +1020,17 @@ def rekap_run(sesi: Session, run: Run, tingkat: Tingkat, dasar: str = DASAR_TUGA
 def _saring_run(
     tipe: str | None, provinsi: str | None, kdkab: str | None
 ) -> list[object]:
-    """Penyaring run untuk ringkasan/tren (selalu dibatasi run sukses)."""
+    """Penyaring run untuk ringkasan/tren (selalu dibatasi run sukses).
+
+    Run validasi (tipe V) steril dari SE2026: tanpa tipe berarti hanya A/B.
+    """
+    from app.models import TIPE_A, TIPE_B
+
     saring: list[object] = [Run.status == STATUS_SUKSES]
     if tipe is not None:
         saring.append(Run.tipe == tipe)
+    else:
+        saring.append(Run.tipe.in_([TIPE_A, TIPE_B]))
     if provinsi is not None:
         saring.append(Run.kdprov == provinsi)
     if kdkab is not None:
@@ -1446,7 +1492,7 @@ def _baris_level6(
                 "target": target,
                 "selesai": selesai,
                 "sisa": sisa,
-                "persen": round(selesai / target * 100, 2) if target else None,
+                "persen": round(selesai / target * 100, 4) if target else None,
                 "status": _status_agregat(units, target, sisa),
                 "ada_b": any(bool(unit["ada_b"]) for unit in units),
                 "pengunggah": run_b.user if run_b is not None else None,
@@ -1722,7 +1768,7 @@ def _baris_kabupaten(
         "target": target,
         "selesai": selesai,
         "sisa": sisa_target,
-        "persen": round(selesai / target * 100, 2) if target else None,
+        "persen": round(selesai / target * 100, 4) if target else None,
         "status": _status_tabulasi(target, sisa_target, ada_b),
         "ada_b": ada_b,
         "pengunggah": pengunggah,
@@ -1971,7 +2017,7 @@ def tabulasi_progres(
                     "target": target,
                     "selesai": selesai,
                     "sisa": sisa,
-                    "persen": round(selesai / target * 100, 2) if target else None,
+                    "persen": round(selesai / target * 100, 4) if target else None,
                     "status": _status_tabulasi(target, sisa, b_metrik is not None),
                     "ada_b": b_metrik is not None,
                     "pengunggah": run_b.user if run_b is not None else None,

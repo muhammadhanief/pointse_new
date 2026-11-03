@@ -38,7 +38,7 @@ const LANGKAH = [
     ),
   },
   {
-    judul: "Kabupaten/Kota unggah Peta Digital SLS/SubSLS final",
+    judul: "Kabupaten/Kota unggah Peta SLS/SubSLS Final 2025 Semester 2",
     isi: (
       <>
         Peta batas final menjadi dasar pencocokan titik bangunan.{" "}

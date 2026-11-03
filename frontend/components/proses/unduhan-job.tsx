@@ -11,20 +11,8 @@ export function UnduhanJob({ run }: { run: Run }) {
   const [sibuk, setSibuk] = useState<string | null>(null);
   const [galat, setGalat] = useState<string | null>(null);
 
-  if (run.status !== "sukses") {
-    return (
-      <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-sm leading-normal text-muted">
-        Ekspor hanya tersedia untuk job yang sukses.
-      </p>
-    );
-  }
-
   const kode = kodeWilayah(run.kdprov, run.kdkab);
   const nomor = run.nomor_urut ?? "?";
-  const namaHasilA = `${kode}_hasil_identifikasi_titik_ke${nomor}.gpkg`;
-  const namaHasilB = `${kode}_hasil_pengecekan_titik_ke${nomor}.gpkg`;
-  const namaTitikCsv = `${kode}_titik_perlu_tindakan_ke${nomor}.csv`;
-  const namaTitikGpkg = `${kode}_titik_perlu_tindakan_ke${nomor}.gpkg`;
 
   async function unduh(id: string, jalur: string, nama: string) {
     setGalat(null);
@@ -37,6 +25,56 @@ export function UnduhanJob({ run }: { run: Run }) {
       setSibuk(null);
     }
   }
+
+  if (run.tipe === "V") {
+    const namaUnmatch = `${kode}_validasi_sls_2026_s1_ke${nomor}.csv`;
+    return (
+      <div className="rounded-lg border border-line bg-paper p-kartu">
+        <h3 className="text-sm font-semibold text-ink">Unduh hasil validasi</h3>
+        <div className="mt-2 flex flex-wrap gap-field">
+          <TombolAksi
+            onClick={() =>
+              void unduh(
+                "unmatch",
+                `/runs/${run.id}/ekspor/unmatch-v.csv`,
+                namaUnmatch,
+              )
+            }
+            disabled={sibuk !== null}
+          >
+            {sibuk === "unmatch" ? "Menyiapkan..." : "Daftar unmatch (CSV)"}
+          </TombolAksi>
+        </div>
+
+        {galat ? (
+          <p
+            role="alert"
+            className="mt-2 rounded-lg border border-danger/25 bg-danger-soft px-3 py-2 text-sm leading-normal text-danger"
+          >
+            {galat}
+          </p>
+        ) : null}
+
+        <p className="mt-2 text-xs leading-5 text-muted">
+          Tersedia untuk job sukses maupun gagal; perbaiki di QGIS lalu unggah
+          ulang.
+        </p>
+      </div>
+    );
+  }
+
+  if (run.status !== "sukses") {
+    return (
+      <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-sm leading-normal text-muted">
+        Ekspor hanya tersedia untuk job yang sukses.
+      </p>
+    );
+  }
+
+  const namaHasilA = `${kode}_hasil_identifikasi_titik_ke${nomor}.gpkg`;
+  const namaHasilB = `${kode}_hasil_pengecekan_titik_ke${nomor}.gpkg`;
+  const namaTitikCsv = `${kode}_titik_perlu_tindakan_ke${nomor}.csv`;
+  const namaTitikGpkg = `${kode}_titik_perlu_tindakan_ke${nomor}.gpkg`;
 
   return (
     <div className="rounded-lg border border-line bg-paper p-kartu">

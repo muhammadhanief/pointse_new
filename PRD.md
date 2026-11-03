@@ -66,10 +66,10 @@ melihat data wilayahnya.
    `level_6_full_code` harus milik kabupaten/kota tersebut (4 digit pertama =
    `kdprov`+`kdkab`).
 4. Untuk Proses B: **titik hasil pengolahan** (output Proses A yang sudah
-   diedit/digeser). Peta tidak diunggah ulang; form memilih run Proses A sukses
-   sebagai sumber peta, dengan pilihan awal run A sukses terakhir. Alur kerjanya:
-   unduh GPKG keluaran Proses A dari aplikasi, edit titik di QGIS, lalu unggah
-   hasil edit itu sebagai masukan Proses B.
+   diedit/digeser). Peta tidak diunggah ulang; backend memakai run Proses A
+   sukses terakhir untuk kabupaten/kota tersebut. Alur kerjanya: unduh GPKG
+   keluaran Proses A dari aplikasi, edit titik di QGIS, lalu unggah hasil edit
+   (GPKG atau GeoJSON) sebagai masukan Proses B.
 
 ## 5. Proses
 
@@ -176,12 +176,12 @@ Setiap rekap disimpan untuk dua dasar:
 2. **Master geotag** per kabupaten/kota: unggah, versi, dan pemakaian otomatis
    oleh Proses A.
 3. **Proses A (1. Identifikasi Titik)**: unggah peta, jalankan job, pantau status.
-4. **Proses B (2. Pengecekan Titik)**: unggah GPKG hasil edit, pilih peta dari run
-   A sukses, jalankan, pantau status.
+4. **Proses B (2. Pengecekan Titik)**: unggah GPKG/GeoJSON hasil edit, peta
+   diambil otomatis dari run A sukses terakhir, jalankan, pantau status.
 5. **Dashboard rekap progres** per wilayah (tabel + filter, `tugas`/`posisi`,
    ekspor rekap).
-6. **Ekspor hasil**: GPKG keluaran Proses A untuk bahan edit QGIS, titik perlu
-   tindakan (CSV/GPKG), dan rekap kabupaten/desa (CSV).
+6. **Ekspor**: hasil per job (GPKG/CSV) lewat popup detail di Riwayat upload;
+   rekap kabupaten/desa (CSV) lewat menu Ekspor rekap.
 7. **Status Sistem**: status worker, heartbeat, antrean job, progres job aktif,
    pemakaian memori/disk, sesi unggahan sementara, dan kondisi cadangan database.
 8. **Peta visualisasi titik** (opsional, terakhir).
@@ -300,7 +300,88 @@ Edit titik langsung di web, notifikasi, multi-bahasa, dan perbaikan logika model
 (misalnya `flag_position` yang hanya membandingkan latitude) sebelum replikasi
 persis lulus uji.
 
-## 11. Pertanyaan terbuka
+## 11. Menu Validasi Peta SLS/SubSLS 2026 Semester 1
+
+Menu baru di grup "Unggah" untuk memeriksa peta SLS/SubSLS 2026 Semester 1
+hasil editing **sebelum** dipakai lebih jauh. Tidak ada hubungannya dengan
+progres SE2026: tidak memakai run A/B, tidak mengubah rekap, dan tidak
+mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
+
+### 11.1 Aturan validasi (dari dokumen "Validasi Atribut")
+
+1. **Skema atribut**: peta wajib punya 17 field dengan tipe dan panjang data
+   sesuai tabel: `kdprov`(2), `kdkab`(2), `kdkec`(3), `kddesa`(3), `kdsls`(4),
+   `kdsubsls`(2), `idsls`(14), `idsubsls`(18), `nmprov`/`nmkab`/`nmkec`/`nmdesa`(50),
+   `nmsls`(100), `rw_dki`(3), `tingkat`(1), `nm_gedung`(50), `posisi`(50).
+   Nama bertipe string semua; `tingkat` tipe integer.
+2. **ID duplikat**: `idsls` tidak boleh ganda di dalam berkas (cek QGIS sebelum
+   matching).
+3. **Matching dua arah lawan master** (pengganti langkah poligon
+   `Cek_Master_PetaSLS`, berbasis Excel bukan geometri):
+   - `peta vs master`: `idsls` di peta tapi tidak ada di master =
+     `unmatch_peta` (daftar SLS yang harus diperbaiki/cek di peta).
+   - `master vs peta`: `idsls` di master tapi tidak ada di peta =
+     `unmatch_master` (daftar SLS yang hilang dari peta).
+   - Aturan gambar "idsls_count tidak sama dengan 1 harus diperbaiki":
+     `idsls` yang muncul >1x di peta atau 0x lawan master wajib ada di daftar.
+4. **Blokir bila gagal, tetap tercatat**: skema/duplikat/matching gagal =
+   tombol antre tidak aktif; run tercatat dengan status `gagal` dan perincian
+   kegagalan bisa dilihat di riwayat + diunduh sebagai CSV.
+
+### 11.2 Master 2026 Semester 1
+
+Master per kabupaten/kota berupa **dua berkas Excel** (disalin ke server
+sekali saja lewat skrip + checksum, bukan diunggah per job):
+
+- `Master/msubsls_26_1_<kdkab>.xlsx` (contoh 3302: 11.602 baris): memuat
+  `idsubsls`, `kdprov..kdsubsls`, `nmprov..nmsls`, `jenis`, `klas`,
+  `dominan`, `berubah_batas`, dan kolom muatan lainnya.
+- `Hirarki/hirarki_sls_26_1_<kdkab>.xlsx`: jembatan
+  `idsls_25_2 <-> idsls_26_1` + `id_perub`/`ket_perub` (kode alasan perubahan)
+  untuk matching lintas semester.
+
+Folder lokal per kabupaten (`3300`–`3376`, subfolder `Hirarki`/`Master`/`Rekap`)
+sudah rapi per kode kab; folder `Hirarki`/`Master` per kab disalin utuh ke
+`backend/data/master-sls-2026-s1/<kdkab>/`. Format `.xlsx` (bukan poligon);
+dikecualikan dari commit (data mentah).
+
+### 11.3 Model data
+
+- **Tipe run baru `V`** ("validasi"): `runs.tipe` boleh `A`/`B`/`V`; V tidak
+  dibaca rekap/progres, tidak ikut hitung nomor job A/B, dan tidak menjadi
+  sumber peta Proses B. Kolom pesan `runs.pesan` menyimpan ringkasan 3 blok
+  (skema/duplikat/matching).
+- **Tabel `validasi_sls_unmatch`**: satu baris per `idsls` bermasalah per run,
+  kolom `run_id` (FK `runs.id` cascade), `arah` (`peta`/`master`), `idsls`,
+  `nmsls` (nullable), `alasan` (mis. `duplikat_di_peta`, `tidak_di_master`,
+  `tidak_di_peta`), dan `created_at`. Di luar cakupan? Tidak: dipakai untuk
+  daftar unduhan CSV dan audit. Tidak ikut pemangkasan baseline.
+- **Kolom `runs.semester`** (`VARCHAR(7)`, mis. `2026_1`): menandai periode
+  peta yang divalidasi; NULL untuk run A/B lama. Migrasi `0019`.
+- **Master di `DIR_MASTER`-sampingan**: berkas Excel master 2026 S1 di
+  `data/master-sls-2026-s1/<kdkab>/`, ikut dicadangkan `deploy/backup.sh`
+  (seperti master geotag), tidak ikut pemangkasan berkas run mentah.
+
+### 11.4 Alur kerja
+
+1. Petugas memilih kabupaten/kota + mengunggah peta (GeoJSON/GPKG full 1 kab,
+   berpotongan 16 MiB seperti biasa) dari halaman validasi.
+2. Backend membuat run `V` status `menunggu`; worker menjalankan validasi
+   (baca atribut via pyogrio `read_geometry=False`, bandingkan dengan Excel
+   master via openpyxl/pandas, tulis `validasi_sls_unmatch`).
+3. `sukses` = ketiga blok lolos; `gagal` = ada blok gagal + pesan berisi
+   hitungan per blok dan 5 contoh idsls pertama per arah (tanpa rahasia).
+4. Riwayat menampilkan tab/run V dengan lencana status; tombol unduh CSV
+   daftar `unmatch` per run untuk diperbaiki di QGIS lalu unggah ulang.
+5. Anggaran memori worker tetap 800MB; baca Excel/peta per potong bila perlu.
+
+### 11.5 Di luar cakupan tahap ini
+
+Overlay geometri poligon ala QGIS, perbaikan otomatis peta di web, dan
+pemakaian hasil validasi sebagai target/progres baru (itu butuh flag semester
+di rekap, pekerjaan terpisah).
+
+## 12. Pertanyaan terbuka
 
 - **Protokol SSO production**: client id/secret, redirect URI, dan apakah callback
   ditangani API atau frontend. Pemetaan klaim `org` ke peran juga masih perlu
@@ -318,7 +399,7 @@ persis lulus uji.
 - **Anggaran memori final**: `WORKER_MEM_BUDGET_MB=800` masih perlu divalidasi
   dengan data 397 ribu titik dan ukuran potongan yang dipakai di production.
 
-## 12. Status task T0–T8
+## 12. Status task T0–T9
 
 - **T0 — Kerangka repo, AGENTS.md, .gitignore**: selesai.
 - **T1 — Fungsi Proses A + tes lawan output QGIS**: selesai.
@@ -345,6 +426,10 @@ persis lulus uji.
   disiapkan. Frontend statis tetap di cPanel. Migrasi database, SSL/domain API,
   SSO production, tabel operasional, uji restore cadangan, dan pengujian penuh
   Status Sistem di server baru belum selesai/diuji.
+- **T9 — Validasi Peta SLS 2026 Semester 1 (tipe run V)**: rancangan di §11.
+  Backend: migrasi `0019` (`runs.semester`, tabel `validasi_sls_unmatch`),
+  modul `validasi_sls.py`, endpoint + worker. Frontend: halaman unggah +
+  panel hasil 3 blok + unduh CSV, tab/run V di riwayat. Belum dikerjakan.
 
 ## 13. Keputusan dan alasannya
 

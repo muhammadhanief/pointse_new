@@ -1,6 +1,9 @@
 import type { TipeRun } from "@/lib/api/types";
 
 export function labelTipe(tipe: TipeRun): string {
+  if (tipe === "V") {
+    return "3. Validasi SLS 2026 S1";
+  }
   return tipe === "A" ? "1. Identifikasi Titik" : "2. Pengecekan Titik";
 }
 

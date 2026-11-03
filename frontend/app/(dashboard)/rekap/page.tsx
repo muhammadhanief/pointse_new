@@ -4,7 +4,8 @@ import { RekapClient } from "@/components/rekap/rekap-client";
 import { wajibSesi } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
-  title: "Rekap progres",
+  title:
+    "Progres Perbaikan Titik SE2026 berdasarkan Peta SLS/SubSLS Final 2026 Semester 2",
 };
 
 export const instant = false;
@@ -16,7 +17,8 @@ export default async function RekapPage() {
     <div className="space-y-field">
       <header className="border-b border-line pb-4">
         <h1 className="text-lg font-semibold tracking-tight text-ink sm:text-xl">
-          Rekap progres
+          Progres Perbaikan Titik SE2026 berdasarkan Peta SLS/SubSLS Final 2026
+          Semester 2
         </h1>
         <p className="mt-1 max-w-3xl text-xs leading-5 text-muted sm:text-sm">
           Tabulasi target dan penyelesaian wilayah. Klik kabupaten/kota untuk

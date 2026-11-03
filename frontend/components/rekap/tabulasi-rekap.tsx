@@ -19,7 +19,8 @@ import type {
   TabulasiProgresBaris,
 } from "@/lib/api/types";
 import type { SheetData } from "write-excel-file/browser";
-import { formatAngka, formatTanggal } from "@/lib/format";
+import { formatAngka, formatPersen, formatTanggal } from "@/lib/format";
+import { persenPenyelesaian } from "@/lib/rekap/persen";
 import {
   daftarKabupaten,
   kodeKabupaten,
@@ -81,16 +82,6 @@ function labelStatus(baris: TabulasiProgresBaris): string {
   return label;
 }
 
-function formatPersen(nilai: number | null): string {
-  if (nilai == null) {
-    return "-";
-  }
-  return `${nilai.toLocaleString("id-ID", {
-    maximumFractionDigits: 1,
-    minimumFractionDigits: 0,
-  })}%`;
-}
-
 function Chevron() {
   return (
     <svg
@@ -110,17 +101,44 @@ function Chevron() {
   );
 }
 
-function BarPenyelesaian({ nilai }: { nilai: number | null }) {
+/**
+ * Warna batang mengikuti penyelesaian, dan dihitung dari bilangan bulat titik
+ * (bukan persen yang sudah dibulatkan) supaya sisa 1 titik tidak pernah
+ * terbaca sebagai tuntas.
+ */
+function kelasIsi(target: number, selesai: number): string {
+  if (target <= 0) {
+    return "bg-line-strong";
+  }
+  if (selesai <= 0) {
+    return "bg-danger";
+  }
+  if (selesai >= target) {
+    return "bg-success";
+  }
+  return "bg-warning";
+}
+
+function BarPenyelesaian({ baris }: { baris: TabulasiProgresBaris }) {
+  const nilai = persenPenyelesaian(baris);
   const lebar = nilai == null ? 0 : Math.max(0, Math.min(100, nilai));
+  // Batang 0% tidak punya isi, jadi jalurnya yang dimerahi supaya wilayah yang
+  // belum tersentuh tetap terbaca merah, bukan cuma jalur biru muda.
+  const kosong = baris.target > 0 && baris.selesai <= 0;
   return (
     <div className="flex items-center justify-end gap-2">
       <div
-        className="h-1.5 w-16 overflow-hidden rounded-full bg-brand-soft sm:w-20"
+        className={`h-1.5 w-16 overflow-hidden rounded-full sm:w-20 ${
+          kosong ? "bg-danger-soft" : "bg-brand-soft"
+        }`}
         aria-hidden="true"
       >
-        <div className="h-full rounded-full bg-brand" style={{ width: `${lebar}%` }} />
+        <div
+          className={`h-full rounded-full ${kelasIsi(baris.target, baris.selesai)}`}
+          style={{ width: `${lebar}%` }}
+        />
       </div>
-      <span className="w-14 text-right tabular-nums">{formatPersen(nilai)}</span>
+      <span className="w-20 text-right tabular-nums">{formatPersen(nilai)}</span>
     </div>
   );
 }
@@ -147,7 +165,7 @@ function nilaiSort(
     case "sisa":
       return baris.sisa;
     case "persen":
-      return baris.persen ?? -1;
+      return persenPenyelesaian(baris) ?? -1;
     case "pengunggah":
       return baris.pengunggah ?? "";
     case "status":
@@ -482,6 +500,7 @@ export function TabulasiRekap({
           baris.level === "kabupaten"
             ? namaKabupatenTampil(baris.kode ?? "", baris.nama)
             : baris.nama;
+        const persen = persenPenyelesaian(baris);
         isi.push([
           { value: baris.kode ?? "-", ...kiri },
           { value: nama ?? baris.kode ?? "-", ...kiri },
@@ -490,9 +509,9 @@ export function TabulasiRekap({
           { value: baris.selesai, ...kanan },
           { value: baris.sisa, ...kanan },
           {
-            value: baris.persen == null ? "-" : baris.persen / 100,
+            value: persen == null ? "-" : persen / 100,
             ...kanan,
-            ...(baris.persen == null ? {} : { format: "0.0%" }),
+            ...(persen == null ? {} : { format: "0.####%" }),
           },
           { value: baris.pengunggah ?? "-", ...kiri },
           {
@@ -513,7 +532,7 @@ export function TabulasiRekap({
           value: persenTotal == null ? "-" : persenTotal / 100,
           ...kanan,
           fontWeight: "bold",
-          ...(persenTotal == null ? {} : { format: "0.0%" }),
+          ...(persenTotal == null ? {} : { format: "0.####%" }),
         },
         { value: "", ...kiri },
         { value: "", ...kiri },
@@ -808,7 +827,7 @@ export function TabulasiRekap({
                         {formatAngka(baris.sisa)}
                       </td>
                       <td className="px-3 py-1 text-right tabular-nums text-ink">
-                        <BarPenyelesaian nilai={baris.persen} />
+                        <BarPenyelesaian baris={baris} />
                       </td>
                       <td className="max-w-[14rem] px-3 py-1 text-muted sm:px-3">
                         <span

@@ -13,7 +13,8 @@ import {
 } from "recharts";
 
 import type { TabulasiProgresBaris } from "@/lib/api/types";
-import { formatAngka } from "@/lib/format";
+import { formatAngka, formatPersen } from "@/lib/format";
+import { persenPenyelesaian } from "@/lib/rekap/persen";
 import { namaKabupatenTampil } from "@/lib/wilayah/kabupaten";
 
 type Batang = {
@@ -43,16 +44,6 @@ function warnaBatang(status: string): string {
     default:
       return "var(--line-strong)";
   }
-}
-
-function formatPersen(nilai: number | null): string {
-  if (nilai == null) {
-    return "-";
-  }
-  return `${nilai.toLocaleString("id-ID", {
-    maximumFractionDigits: 1,
-    minimumFractionDigits: 0,
-  })}%`;
 }
 
 function TooltipBatang({ active, payload }: TooltipContentProps) {
@@ -88,14 +79,14 @@ export function GrafikBatang({
       satu.level === "kabupaten"
         ? namaKabupatenTampil(satu.kode ?? "", satu.nama)
         : satu.nama;
+    const persen = persenPenyelesaian(satu);
     return {
       kode: satu.kode ?? "-",
       nama: nama ?? "(tanpa wilayah)",
-      nilai:
-        satu.persen == null ? 0 : Math.max(0, Math.min(100, satu.persen)),
+      nilai: persen == null ? 0 : Math.max(0, Math.min(100, persen)),
       selesai: satu.selesai,
       target: satu.target,
-      persenLabel: formatPersen(satu.persen),
+      persenLabel: formatPersen(persen),
       status: satu.status,
       bisaDibuka: Boolean(satu.kode && tingkat !== "desa"),
       asli: satu,

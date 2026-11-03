@@ -71,6 +71,13 @@ from app.db import Base
 # Nilai kolom ``runs.tipe``
 TIPE_A = "A"
 TIPE_B = "B"
+#: Validasi peta SLS 2026 Semester 1 (menu §11 PRD). Tidak ada hubungannya
+#: dengan progres SE2026: tidak dibaca rekap/progres, tidak ikut hitung nomor
+#: job A/B, dan tidak menjadi sumber peta Proses B.
+TIPE_V = "V"
+
+#: Semester peta yang divalidasi run V, mis. ``2026_1``. NULL untuk run A/B lama.
+SEMESTER_SLS_2026_1 = "2026_1"
 
 # Nilai kolom ``runs.status``: ``menunggu`` -> ``jalan`` -> ``sukses``/``gagal``.
 STATUS_MENUNGGU = "menunggu"
@@ -94,6 +101,10 @@ WORKER_BERHENTI = "berhenti"
 # Nilai kolom ``konfirmasi_anomali.status`` (lihat :mod:`app.konfirmasi`).
 KONFIRMASI_AKAN_DIPERBAIKI = "akan_diperbaiki"
 KONFIRMASI_SESUAI_KENYATAAN = "sesuai_kenyataan"
+
+# Nilai kolom ``validasi_sls_unmatch.arah``
+ARAH_PETA = "peta"
+ARAH_MASTER = "master"
 
 #: Kolom hitungan tabel rekap (selain kunci dan kode wilayah).
 KOLOM_HITUNGAN: tuple[str, ...] = (
@@ -169,6 +180,8 @@ class Run(Base):
     #: run tersebut kelak dirapikan. NULL = job lama sebelum fitur ini.
     jumlah_anomali: Mapped[int | None] = mapped_column(Integer, default=0)
     pesan: Mapped[str | None] = mapped_column(Text)
+    semester: Mapped[str | None] = mapped_column(String(7))
+    #: Semester peta SLS yang divalidasi run V (mis. ``2026_1``); NULL untuk A/B.
     tanggal_data: Mapped[date] = mapped_column(Date, default=hari_ini)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -503,6 +516,32 @@ class AnomaliTitik(Base):
     flag_unggah: Mapped[int | None] = mapped_column(AngkaKecil)
     #: ``flag_repair`` hasil hitung ulang model.
     flag_model: Mapped[int | None] = mapped_column(AngkaKecil)
+
+
+class ValidasiSlsUnmatch(Base):
+    """SLS bermasalah pada satu job validasi peta 2026 Semester 1 (tipe V).
+
+    Satu baris per ``idsls`` bermasalah per run. ``arah='peta'`` = idsls ada di
+    peta tapi tidak ada di master (daftar ``unmatch_peta`` yang harus
+    diperbaiki/cek di peta); ``arah='master'`` = idsls ada di master tapi tidak
+    ada di peta (daftar ``unmatch_master`` yang hilang dari peta). ``alasan``
+    mis. ``duplikat_di_peta``, ``tidak_di_master``, ``tidak_di_peta``.
+    Baris ikut terhapus saat run-nya dihapus (CASCADE) dan tidak ikut
+    pemangkasan baseline karena run V tidak punya ``titik_hasil``.
+    """
+
+    __tablename__ = "validasi_sls_unmatch"
+    __table_args__ = (
+        Index("ix_validasi_sls_unmatch_run_arah", "run_id", "arah"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
+    arah: Mapped[str] = mapped_column(String(8))
+    idsls: Mapped[str] = mapped_column(String(16))
+    nmsls: Mapped[str | None] = mapped_column(String(128))
+    alasan: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
 
 
 class KonfirmasiAnomali(Base):

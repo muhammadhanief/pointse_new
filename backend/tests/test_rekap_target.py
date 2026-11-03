@@ -262,3 +262,17 @@ def test_run_a_tanpa_baris_target(sesi: Session) -> None:
 
     simpan_rekap_target(sesi, run_b)
     assert _target(sesi, run_b, DASAR_TUGAS) == {KODE_A: (2, 2, 2)}
+
+
+def test_persen_tabulasi_empat_angka() -> None:
+    """Sisa 1 titik dari 100.000 tetap 99,999% -- tidak dibulatkan jadi 100%."""
+    baris = layanan._baris_kabupaten(
+        "3307",
+        "CONTOH",
+        total=100_001,
+        target=100_000,
+        sisa_target=1,
+        ada_b=True,
+        pengunggah="uji",
+    )
+    assert (baris["selesai"], baris["sisa"], baris["persen"]) == (99_999, 1, 99.999)
