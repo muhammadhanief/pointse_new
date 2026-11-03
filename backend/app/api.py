@@ -85,6 +85,8 @@ from app.skema import (
     StatusKonfirmasiOut,
     TabulasiProgresOut,
     TrenOut,
+    ValidasiRingkasanBarisOut,
+    ValidasiRingkasanOut,
     ValidasiUnmatchBarisOut,
     ValidasiUnmatchOut,
 )
@@ -872,6 +874,27 @@ def ekspor_unmatch_v(
         headers={
             "Content-Disposition": f'attachment; filename="{kode}_validasi_sls_2026_s1_ke{nomor}.xlsx"'
         },
+    )
+
+
+@router.get("/validasi-sls/ringkasan", response_model=ValidasiRingkasanOut)
+def ringkasan_validasi(
+    kdprov: str | None = Query(None, description="Saring satu provinsi, mis. 33"),
+    kdkab: str | None = Query(None, description="Saring satu kabupaten/kota, mis. 07"),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> ValidasiRingkasanOut:
+    """Ringkasan validasi SLS 2026 S1: run V terakhir tiap kabupaten/kota.
+
+    Tiap baris memuat status run terakhir beserta hitungan temuan per jenis,
+    untuk dipantau dari halaman progres validasi. Steril dari SE2026.
+    """
+    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
+    return ValidasiRingkasanOut(
+        baris=[
+            ValidasiRingkasanBarisOut.model_validate(satu)
+            for satu in layanan.ringkasan_validasi(sesi, kdprov=kdprov, kdkab=kdkab)
+        ],
     )
 
 

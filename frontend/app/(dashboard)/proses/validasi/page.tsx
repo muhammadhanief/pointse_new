@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { PageHeader } from "@/components/dashboard/ui";
 import { ProsesWorkspace } from "@/components/proses/workspace";
@@ -12,6 +13,16 @@ export default function ValidasiPage() {
     <div className="space-y-field">
       <PageHeader judul="3. Validasi Peta SLS/SubSLS 2026 Semester 1" />
       <ProsesWorkspace tipe="V" />
+      <p className="px-1 text-sm text-muted">
+        Lihat ringkasan per kabupaten/kota di{" "}
+        <Link
+          href="/proses/validasi/progres"
+          className="font-medium text-brand underline-offset-4 hover:underline"
+        >
+          Progres validasi
+        </Link>
+        .
+      </p>
     </div>
   );
 }

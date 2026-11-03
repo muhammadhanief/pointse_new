@@ -158,7 +158,7 @@ export function FormProsesV({ onSelesai }: { onSelesai?: () => void }) {
             <TombolAksi varian="sekunder" onClick={() => setNotifikasi(false)}>
               Saya Mengerti
             </TombolAksi>
-            <TautanAksi href="/riwayat">Buka Riwayat Upload</TautanAksi>
+            <TautanAksi href="/riwayat?tipe=V">Buka Riwayat Upload</TautanAksi>
           </div>
         </div>
       </Modal>

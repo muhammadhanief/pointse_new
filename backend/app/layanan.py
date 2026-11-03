@@ -834,7 +834,7 @@ def daftar_unmatch(
     """Daftar temuan satu run V (paging, urut kode).
 
     ``jenis`` menyaring satu sheet unduhan (``tidak_di_peta``/
-    ``tidak_di_master``/``ganda``/``kolom_salah``); kosong berarti semua.
+    ``tidak_di_master``/``ganda``); kosong berarti semua.
     Run V gagal tetap tercatat, jadi daftar ini yang diunduh sebagai Excel
     untuk diperbaiki di QGIS.
     """
@@ -869,6 +869,66 @@ def daftar_unmatch(
         }
         for satu in baris
     ]
+
+
+def ringkasan_validasi(
+    sesi: Session,
+    *,
+    kdprov: str | None = None,
+    kdkab: str | None = None,
+) -> list[dict[str, object]]:
+    """Satu baris per kabupaten/kota: run V terakhir + hitungan per jenis.
+
+    Run V gagal tetap tercatat (itu justru yang perlu ditindaklanjuti), jadi
+    saringan status tidak dipakai. Kabupaten/kota tanpa run V tidak muncul;
+    panggil dengan ``kdprov``/``kdkab`` sesuai kewenangan pemanggil (lihat
+    :func:`app.auth.saring_akses`). Steril dari rekap SE2026: hanya membaca
+    ``runs`` tipe V dan ``validasi_sls_unmatch``.
+    """
+    from app.models import TIPE_V
+
+    saring: list[object] = [Run.tipe == TIPE_V]
+    if kdprov is not None:
+        saring.append(Run.kdprov == kdprov)
+    if kdkab is not None:
+        saring.append(Run.kdkab.in_(kandidat_kdkab(kdprov, kdkab)))
+    terakhir = (
+        select(func.max(Run.id).label("run_id")).where(*saring).group_by(Run.kdprov, Run.kdkab)
+    )
+    runs = {
+        satu.id: satu
+        for satu in sesi.scalars(select(Run).where(Run.id.in_(terakhir)))
+    }
+    hitung: dict[int, dict[str, int]] = {}
+    if runs:
+        for run_id, jenis, jumlah in sesi.execute(
+            select(
+                ValidasiSlsUnmatch.run_id,
+                ValidasiSlsUnmatch.jenis,
+                func.count().label("jumlah"),
+            )
+            .where(ValidasiSlsUnmatch.run_id.in_(runs))
+            .group_by(ValidasiSlsUnmatch.run_id, ValidasiSlsUnmatch.jenis)
+        ):
+            hitung.setdefault(int(run_id), {})[str(jenis)] = int(jumlah)
+    keluaran: dict[str, dict[str, object]] = {}
+    for satu in sorted(runs.values(), key=lambda r: (r.kdprov, r.kdkab)):
+        kode = kode_kabupaten(satu.kdprov, satu.kdkab)
+        per_jenis = hitung.get(satu.id, {})
+        baris = {
+            "kdprov": satu.kdprov,
+            "kdkab": kode,
+            "run_id": satu.id,
+            "status": satu.status,
+            "tanggal_data": satu.tanggal_data,
+            "semester": satu.semester,
+            "total": sum(per_jenis.values()),
+            "per_jenis": per_jenis,
+        }
+        lama = keluaran.get(kode)
+        if lama is None or int(lama["run_id"]) < satu.id:  # noqa: E731
+            keluaran[kode] = baris
+    return [keluaran[kode] for kode in sorted(keluaran)]
 
 
 # --------------------------------------------------------------------------- rekap

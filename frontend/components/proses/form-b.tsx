@@ -82,7 +82,7 @@ export function FormProsesB({ onSelesai }: { onSelesai?: () => void }) {
               )}).`}{" "}
               Pantau statusnya di{" "}
               <Link
-                href="/riwayat"
+                href="/riwayat?tipe=B"
                 className="font-semibold underline underline-offset-4"
               >
                 Riwayat upload

@@ -89,6 +89,56 @@ def test_saring_run_tanpa_tipe_kecualikan_v() -> None:
     assert len(saring) >= 2
 
 
+def test_ringkasan_validasi_run_terakhir_dan_hitungan(sesi) -> None:
+    """Satu baris per kab: run V terakhir + hitungan per jenis."""
+    from app.models import STATUS_GAGAL, STATUS_SUKSES, Run
+
+    lama = Run(
+        tipe=TIPE_V,
+        kdprov="33",
+        kdkab="12",
+        status=STATUS_GAGAL,
+        nama_file_input="a.gpkg",
+        nama_file_peta="a.gpkg",
+        berkas_input="/tmp/a",
+        berkas_peta="/tmp/a",
+        semester="2026_1",
+    )
+    sesi.add(lama)
+    sesi.commit()
+    sesi.refresh(lama)
+    sesi.add(
+        ValidasiSlsUnmatch(
+            run_id=lama.id, jenis="tidak_di_master", idsls_peta="X",
+            nmsls="SLS",
+        )
+    )
+    baru = Run(
+        tipe=TIPE_V,
+        kdprov="33",
+        kdkab="12",
+        status=STATUS_SUKSES,
+        nama_file_input="b.gpkg",
+        nama_file_peta="b.gpkg",
+        berkas_input="/tmp/b",
+        berkas_peta="/tmp/b",
+        semester="2026_1",
+    )
+    sesi.add(baru)
+    sesi.commit()
+    sesi.refresh(baru)
+
+    baris = layanan.ringkasan_validasi(sesi, kdprov="33")
+    assert len(baris) == 1
+    assert baris[0]["run_id"] == baru.id
+    assert baris[0]["kdkab"] == "3312"
+    assert baris[0]["total"] == 0
+    assert baris[0]["per_jenis"] == {}
+
+    kosong = layanan.ringkasan_validasi(sesi, kdprov="33", kdkab="99")
+    assert kosong == []
+
+
 def _peta_v(path) -> object:
     """Berkas peta 2026 S1 minimal (17 kolom, satu kabupaten 3313)."""
     import geopandas as gpd

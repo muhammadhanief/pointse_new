@@ -35,6 +35,21 @@ export type DaftarRun = {
   baris: Run[];
 };
 
+export type ValidasiRingkasanBaris = {
+  kdprov: string;
+  kdkab: string;
+  run_id: number;
+  status: StatusRun;
+  tanggal_data: string;
+  semester: string | null;
+  total: number;
+  per_jenis: Record<string, number>;
+};
+
+export type ValidasiRingkasan = {
+  baris: ValidasiRingkasanBaris[];
+};
+
 export type MasterGeotag = {
   id: number;
   nomor_versi: number | null;

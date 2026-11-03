@@ -151,6 +151,25 @@ class ValidasiUnmatchBarisOut(BaseModel):
     catatan: str | None = None
 
 
+class ValidasiRingkasanBarisOut(BaseModel):
+    """Satu kabupaten/kota: run V terakhir + hitungan temuan per jenis."""
+
+    kdprov: str
+    kdkab: str
+    run_id: int
+    status: str
+    tanggal_data: date
+    semester: str | None = None
+    total: int
+    per_jenis: dict[str, int] = Field(default_factory=dict)
+
+
+class ValidasiRingkasanOut(BaseModel):
+    """Ringkasan validasi SLS per kabupaten/kota (run V terakhir tiap kab)."""
+
+    baris: list[ValidasiRingkasanBarisOut]
+
+
 class ValidasiUnmatchOut(BaseModel):
     """Daftar unmatch satu run V (paging, urut ``idsls``)."""
 

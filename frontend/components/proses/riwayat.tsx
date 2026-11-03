@@ -22,9 +22,9 @@ import { BadgeStatus } from "./badge-status";
 import { DetailJob } from "./detail-job";
 
 const TAB: { tipe: TipeRun; label: string }[] = [
-  { tipe: "A", label: "1. Peta SLS/SubSLS Final" },
+  { tipe: "A", label: "1. Peta SLS/SubSLS Final 2025 Semester 2" },
   { tipe: "B", label: "2. Titik Hasil Perbaikan" },
-  { tipe: "V", label: "3. Validasi 2026 S1" },
+  { tipe: "V", label: "3. Validasi Peta SLS/SubSLS 2026 Semester 1" },
 ];
 
 const UKURAN_HALAMAN = 20;
@@ -138,8 +138,8 @@ function SelSort({
   );
 }
 
-export function RiwayatWorkspace() {
-  const [tipe, setTipe] = useState<TipeRun>("A");
+export function RiwayatWorkspace({ tabAwal = "A" }: { tabAwal?: TipeRun }) {
+  const [tipe, setTipe] = useState<TipeRun>(tabAwal);
   const [runs, setRuns] = useState<Run[]>([]);
   const [total, setTotal] = useState(0);
   const [aktif, setAktif] = useState(0);
@@ -337,7 +337,11 @@ export function RiwayatWorkspace() {
   ).length;
 
   const labelAktif =
-    tipe === "A" ? "Peta SLS/SubSLS Final" : "Titik Hasil Perbaikan";
+    tipe === "A"
+      ? "Peta SLS/SubSLS Final 2025 Semester 2"
+      : tipe === "V"
+        ? "Peta SLS/SubSLS 2026 Semester 1"
+        : "Titik Hasil Perbaikan";
   const jalurUnggah =
     tipe === "A"
       ? "/proses/identifikasi"
