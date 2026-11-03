@@ -44,6 +44,9 @@ export type ValidasiRingkasanBaris = {
   semester: string | null;
   total: number;
   per_jenis: Record<string, number>;
+  target: number | null;
+  selesai: number | null;
+  sisa: number | null;
 };
 
 export type ValidasiRingkasan = {

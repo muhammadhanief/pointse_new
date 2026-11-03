@@ -25,6 +25,7 @@ from app import rekap as modul_rekap
 from app.models import (
     DASAR_TUGAS,
     KOLOM_HITUNGAN,
+    STATUS_GAGAL,
     STATUS_MENUNGGU,
     STATUS_SUKSES,
     TIPE_A,
@@ -876,15 +877,20 @@ def ringkasan_validasi(
     *,
     kdprov: str | None = None,
     kdkab: str | None = None,
+    akar_master: str | Path | None = None,
 ) -> list[dict[str, object]]:
-    """Satu baris per kabupaten/kota: run V terakhir + hitungan per jenis.
+    """Satu baris per kabupaten/kota: run V terakhir + target/selesai/sisa.
 
-    Run V gagal tetap tercatat (itu justru yang perlu ditindaklanjuti), jadi
-    saringan status tidak dipakai. Kabupaten/kota tanpa run V tidak muncul;
+    ``target`` = jumlah pasangan ``(idsls, idsubsls)`` di master kab tersebut
+    (dibaca sekali lalu di-cache; ``None`` bila master belum disalin).
+    ``selesai`` = pasangan master yang cocok persis tanpa temuan apa pun;
+    hanya dihitung untuk run final (``sukses``/``gagal``), ``sisa`` =
+    ``target`` - ``selesai``. Kabupaten/kota tanpa run V tidak muncul;
     panggil dengan ``kdprov``/``kdkab`` sesuai kewenangan pemanggil (lihat
     :func:`app.auth.saring_akses`). Steril dari rekap SE2026: hanya membaca
-    ``runs`` tipe V dan ``validasi_sls_unmatch``.
+    ``runs`` tipe V dan ``validasi_sls_unmatch`` (+ berkas master).
     """
+    from app import validasi_sls
     from app.models import TIPE_V
 
     saring: list[object] = [Run.tipe == TIPE_V]
@@ -900,21 +906,46 @@ def ringkasan_validasi(
         for satu in sesi.scalars(select(Run).where(Run.id.in_(terakhir)))
     }
     hitung: dict[int, dict[str, int]] = {}
+    kotor: dict[int, set[tuple[str, str]]] = {}
     if runs:
-        for run_id, jenis, jumlah in sesi.execute(
+        for run_id, jenis, idsls_m, idsubsls_m, jumlah in sesi.execute(
             select(
                 ValidasiSlsUnmatch.run_id,
                 ValidasiSlsUnmatch.jenis,
+                ValidasiSlsUnmatch.idsls_master,
+                ValidasiSlsUnmatch.idsubsls_master,
                 func.count().label("jumlah"),
             )
             .where(ValidasiSlsUnmatch.run_id.in_(runs))
-            .group_by(ValidasiSlsUnmatch.run_id, ValidasiSlsUnmatch.jenis)
+            .group_by(
+                ValidasiSlsUnmatch.run_id,
+                ValidasiSlsUnmatch.jenis,
+                ValidasiSlsUnmatch.idsls_master,
+                ValidasiSlsUnmatch.idsubsls_master,
+            )
         ):
-            hitung.setdefault(int(run_id), {})[str(jenis)] = int(jumlah)
+            kunci = str(jenis)
+            hitung.setdefault(int(run_id), {}).setdefault(kunci, 0)
+            hitung[int(run_id)][kunci] += int(jumlah)
+            if kunci in (
+                validasi_sls.JENIS_TIDAK_DI_PETA,
+                validasi_sls.JENIS_NAMA_BEDA,
+                validasi_sls.JENIS_GANDA,
+            ) and (idsls_m or idsubsls_m):
+                kotor.setdefault(int(run_id), set()).add((str(idsls_m or ""), str(idsubsls_m or "")))
+    target_kab: dict[str, int] = (
+        validasi_sls.hitungan_master(akar_master) if akar_master is not None else {}
+    )
     keluaran: dict[str, dict[str, object]] = {}
     for satu in sorted(runs.values(), key=lambda r: (r.kdprov, r.kdkab)):
         kode = kode_kabupaten(satu.kdprov, satu.kdkab)
         per_jenis = hitung.get(satu.id, {})
+        target = target_kab.get(kode)
+        selesai: int | None = None
+        sisa: int | None = None
+        if satu.status in (STATUS_SUKSES, STATUS_GAGAL) and target is not None:
+            selesai = max(0, target - len(kotor.get(satu.id, set())))
+            sisa = target - selesai
         baris = {
             "kdprov": satu.kdprov,
             "kdkab": kode,
@@ -924,6 +955,9 @@ def ringkasan_validasi(
             "semester": satu.semester,
             "total": sum(per_jenis.values()),
             "per_jenis": per_jenis,
+            "target": target,
+            "selesai": selesai,
+            "sisa": sisa,
         }
         lama = keluaran.get(kode)
         if lama is None or int(lama["run_id"]) < satu.id:  # noqa: E731

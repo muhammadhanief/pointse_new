@@ -318,7 +318,9 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
    hirarki dua semester) memakai 16 digit, jadi itu yang dipakai mesin.
    Cek panjang memindai seluruh baris (bukan sampel awal saja); pelanggaran
    melaporkan nomor baris pertama ("pertama di baris N") supaya mudah
-   ditemukan di attribute table QGIS.
+   ditemukan di attribute table QGIS. Untuk `idsls`/`idsubsls` berlaku
+   panjang eksak (tepat 14/16 digit); kode 13/15/17 digit langsung gagal
+   dengan pesan yang menyebut panjang yang ditemukan.
    Nilai kosong pada baris dilewati pemeriksaan panjang (tidak menggagalkan); kolom yang seluruh barisnya kosong tetap lolos skema.
 2. **ID duplikat**: pasangan `idsls`+`idsubsls` yang sama persis tidak boleh
    muncul lebih dari sekali. Satu `idsls` boleh ada di banyak baris selama
@@ -337,6 +339,11 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
      kemungkinan subsls baru hasil pemekaran.
    - Pasangan master yang tidak muncul di peta = `tidak ada di peta`.
    - Pasangan peta yang muncul >1x = `ganda di peta`.
+   - Pasangan yang cocok persis tetapi ejaan `nmsls`-nya beda dari master
+     (perbandingan peka huruf besar/kecil setelah rapikan spasi) = `nama
+     beda` (tetap menggagalkan; samakan dengan ejaan di master).
+   - Baris yang `idsls` dan `idsubsls`-nya dua-duanya kosong dilewati
+     (tidak ikut validasi) dan dihitung sebagai catatan, bukan temuan.
 4. **Blokir bila gagal, tetap tercatat**: skema/duplikat/matching gagal =
    tombol antre tidak aktif; run tercatat dengan status `gagal` dan perincian
    kegagalan bisa dilihat di riwayat + diunduh sebagai Excel (satu sheet per
@@ -392,15 +399,15 @@ dikecualikan dari commit (data mentah).
    hitungan per jenis temuan, contoh kode per jenis (maks 3), dan ajakan
    mengunduh rincian Excel (tanpa rahasia).
 4. Riwayat menampilkan tab/run V dengan lencana status; tombol unduh Excel
-   daftar temuan per run (lembar Ringkasan + satu sheet per jenis, tab merah
+   daftar temuan per run (lembar Ringkasan + satu sheet per jenis:
+   tidak ada di peta / tidak ada di master / ganda / nama beda; tab merah
    bila ada temuan) untuk diperbaiki di QGIS lalu unggah ulang.
-5. Halaman progres validasi (`/proses/validasi/progres`, didukung endpoint
+5. Halaman Hasil Validasi (`/hasil-validasi-sls`, didukung endpoint
    `GET /validasi-sls/ringkasan`) menampilkan run V terakhir tiap
-   kabupaten/kota beserta hitungan temuan per jenis; antrean menunggu
-   bernomor urut global di kolom riwayat.
-   daftar temuan per run (lembar Ringkasan + satu sheet per jenis, tab merah
-   bila ada temuan) untuk diperbaiki di QGIS lalu unggah ulang.
-5. Anggaran memori worker tetap 800MB; baca Excel/peta per potong bila perlu.
+   kabupaten/kota beserta target (jumlah pasangan di master), selesai, sisa,
+   dan hitungan temuan per jenis; antrean menunggu bernomor urut global di
+   kolom riwayat.
+6. Anggaran memori worker tetap 800MB; baca Excel/peta per potong bila perlu.
 
 ### 11.5 Di luar cakupan tahap ini
 

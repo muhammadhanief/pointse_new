@@ -204,6 +204,14 @@ def periksa_skema(
                     else:
                         if len(str(abs(angka))) > maks:
                             buruk.append(teks[:40])
+                elif kolom in ("idsls", "idsubsls"):
+                    # Kode wilayah panjangnya pasti (14 digit SLS, 16 digit
+                    # SubSLS); buang ".0" ala Excel seperti normalisasi_idsls.
+                    bersih = teks
+                    if bersih.endswith(".0") and bersih[:-2].isdigit():
+                        bersih = bersih[:-2]
+                    if len(bersih) != maks or not bersih.isdigit():
+                        buruk.append(teks[:60])
                 elif len(teks) > maks:
                     buruk.append(teks[:60])
                 if buruk and baris_pertama is None:
@@ -211,13 +219,20 @@ def periksa_skema(
                 if len(buruk) >= CONTOH_N:
                     break
             if buruk:
+                if kolom in ("idsls", "idsubsls"):
+                    masalah = (
+                        f"harus tepat {maks} digit "
+                        f"(pertama di baris {baris_pertama})"
+                    )
+                else:
+                    masalah = (
+                        f"melebihi panjang {maks} "
+                        f"(pertama di baris {baris_pertama})"
+                    )
                 temuan.append(
                     TemuanSkema(
                         kolom=kolom,
-                        masalah=(
-                            f"melebihi panjang {maks} "
-                            f"(pertama di baris {baris_pertama})"
-                        ),
+                        masalah=masalah,
                         contoh=buruk[:CONTOH_N],
                     )
                 )
@@ -338,7 +353,10 @@ def bandingkan(
 
 
 def rangkum_pesan(
-    skema: HasilSkema, duplikat: HasilDuplikat, matching: HasilMatching
+    skema: HasilSkema,
+    duplikat: HasilDuplikat,
+    matching: HasilMatching,
+    baris_kosong: int = 0,
 ) -> tuple[bool, str]:
     """Susun ringkasan per blok, satu blok satu baris (tanpa rahasia)."""
     bagian: list[str] = []
@@ -368,6 +386,10 @@ def rangkum_pesan(
         bagian.append(
             f"Validasi Duplikat: Gagal \u2014 "
             f"{duplikat.jumlah_ganda} pasangan ganda; contoh: {contoh}."
+        )
+    if baris_kosong:
+        bagian.append(
+            f"Catatan: {baris_kosong} baris kosong dilewati (tidak ikut validasi)."
         )
     if matching.lolos:
         bagian.append(
@@ -403,6 +425,11 @@ def rangkum_pesan(
                     for satu in contoh
                 )
                 bagian.append(f"Contoh {label_jenis[jenis]}: {kode}.")
+        if hitung_jenis.get(JENIS_GANDA, 0) >= 20:
+            bagian.append(
+                "Kemungkinan 2 layer tergabung (banyak pasangan ganda): "
+                "periksa/buang layer ganda di QGIS sebelum ekspor ulang."
+            )
         bagian.append(
             "Unduh rincian Excel di halaman Riwayat, perbaiki di QGIS, lalu unggah ulang."
         )
@@ -412,10 +439,13 @@ def rangkum_pesan(
 
 
 def gabungkan_hasil(
-    skema: HasilSkema, duplikat: HasilDuplikat, matching: HasilMatching
+    skema: HasilSkema,
+    duplikat: HasilDuplikat,
+    matching: HasilMatching,
+    baris_kosong: int = 0,
 ) -> HasilValidasi:
     """Gabungkan tiga blok + pesan."""
-    lolos, pesan = rangkum_pesan(skema, duplikat, matching)
+    lolos, pesan = rangkum_pesan(skema, duplikat, matching, baris_kosong=baris_kosong)
     return HasilValidasi(
         lolos=lolos, skema=skema, duplikat=duplikat, matching=matching, pesan=pesan
     )
@@ -444,6 +474,74 @@ def jalur_master(
         akar / "Master" / f"msubsls_26_1_{kode_kab}.xlsx",
         akar / "Hirarki" / f"hirarki_sls_26_1_{kode_kab}.xlsx",
     )
+
+
+#: Nama berkas cache hitungan pasangan master per kabupaten.
+NAMA_RINGKASAN_MASTER = "_ringkasan_master.json"
+
+
+def hitungan_master(akar_master_sls: str | Path) -> dict[str, int]:
+    """Jumlah pasangan unik ``(idsls, idsubsls)`` master per kode kab 4 digit.
+
+    Hasil di-cache di ``<akar>/_ringkasan_master.json`` beserta cap waktu
+    berkas termuda; cache dipakai ulang bila tidak ada msubsls yang lebih
+    baru. Tanpa cache tiap halaman progres harus membuka puluhan Excel.
+    """
+    import json
+    import os
+
+    from openpyxl import load_workbook
+
+    akar = Path(akar_master_sls)
+    cache = akar / NAMA_RINGKASAN_MASTER
+    berkas: dict[str, Path] = {}
+    if akar.is_dir():
+        for satu in sorted(akar.iterdir()):
+            if not satu.is_dir():
+                continue
+            jalur, _ = jalur_master(akar, satu.name)
+            if jalur.is_file():
+                berkas[satu.name] = jalur
+    cap = max((os.path.getmtime(str(j)) for j in berkas.values()), default=0)
+    if cache.is_file():
+        try:
+            data = json.loads(cache.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and float(data.get("_cap_mtime", -1)) >= cap:
+                return {
+                    str(kode): int(jumlah)
+                    for kode, jumlah in data.get("kabupaten", {}).items()
+                }
+        except (OSError, ValueError):
+            pass
+    hasil: dict[str, int] = {}
+    for kode in sorted(berkas):
+        jalur = berkas[kode]
+        wb = load_workbook(str(jalur), read_only=True, data_only=True)
+        try:
+            ws = wb.active
+            assert ws is not None
+            baris = ws.iter_rows(values_only=True)
+            kepala = [str(k).strip() if k is not None else "" for k in next(baris)]
+            if "idsubsls" not in kepala:
+                continue
+            indeks = kepala.index("idsubsls")
+            unik: set[str] = set()
+            for satu in baris:
+                if satu is None or indeks >= len(satu):
+                    continue
+                subsls = normalisasi_idsls(satu[indeks])
+                if subsls and len(subsls) == 16 and subsls.isdigit():
+                    unik.add(subsls)
+            hasil[kode] = len(unik)
+        finally:
+            wb.close()
+    try:
+        cache.write_text(
+            json.dumps({"_cap_mtime": cap, "kabupaten": hasil}), encoding="utf-8"
+        )
+    except OSError:
+        pass
+    return hasil
 
 
 def baca_master(
@@ -535,11 +633,11 @@ def baca_peta(
 ]:
     """Baca atribut peta (tanpa geometri): pasangan ``(idsls, idsubsls)``.
 
-    Kembalikan ``(peta, pasangan, contoh_nilai, kolom, kdprov, kdkab)``.
+    Kembalikan ``(peta, pasangan, contoh_nilai, kolom, kdprov, kdkab, baris_kosong)``.
     ``peta`` = mapping pasangan -> ``nmsls`` (kunci kosong ``""`` bila kolomnya
     kosong); ``pasangan`` = daftar semua pasangan termasuk rangkap (untuk
     hitung duplikat); ``kolom`` = daftar nama kolom berkas; ``contoh_nilai``
-    = nilai per kolom untuk cek panjang (maks 2000 baris pertama sudah cukup).
+    = nilai per kolom untuk cek panjang (seluruh baris dipindai).
     """
     import pyogrio
     from collections import Counter
@@ -552,7 +650,7 @@ def baca_peta(
         str(jalur), layer=layer, columns=kolom_baca, read_geometry=False
     )
     contoh: dict[str, list[Any]] = {
-        nama: list(data[nama].head(2000)) if nama in data.columns else []
+        nama: list(data[nama]) if nama in data.columns else []
         for nama in KOLOM_PETA_V
         if nama in data.columns
     }
@@ -565,6 +663,7 @@ def baca_peta(
     jumlah = max(len(mentah_idsls), len(mentah_sub), len(mentah_nama))
     peta: dict[tuple[str, str], str | None] = {}
     pasangan: list[tuple[str, str]] = []
+    baris_kosong = 0
     for urut in range(jumlah):
         mentah_a = mentah_idsls[urut] if urut < len(mentah_idsls) else None
         mentah_b = mentah_sub[urut] if urut < len(mentah_sub) else None
@@ -572,6 +671,7 @@ def baca_peta(
         kode = normalisasi_idsls(mentah_a) or ""
         sub = normalisasi_idsls(mentah_b) or ""
         if not kode and not sub:
+            baris_kosong += 1
             continue
         pasangan.append((kode, sub))
         if (kode, sub) not in peta:
@@ -588,7 +688,7 @@ def baca_peta(
 
     kdprov = _tunggal("kdprov")
     kdkab = _tunggal("kdkab")
-    return peta, pasangan, contoh, kolom, kdprov, kdkab
+    return peta, pasangan, contoh, kolom, kdprov, kdkab, baris_kosong
 
 
 def validasi_berkas(
@@ -598,7 +698,9 @@ def validasi_berkas(
     kode_kab: str | None = None,
 ) -> HasilValidasi:
     """Jalankan tiga blok validasi untuk satu berkas peta (dipakai worker)."""
-    peta, pasangan, contoh, kolom, kdprov, kdkab = baca_peta(berkas, layer)
+    peta, pasangan, contoh, kolom, kdprov, kdkab, baris_kosong = baca_peta(
+        berkas, layer
+    )
     skema = periksa_skema(kolom, contoh)
     skema.jumlah_baris = len(pasangan)
     # Satu job hanya satu kabupaten/kota.
@@ -622,4 +724,4 @@ def validasi_berkas(
     master = baca_master(akar_master_sls, kode_master) if kode_master else {}
     hitung = Counter(pasangan)
     matching = bandingkan(peta, master, hitung)
-    return gabungkan_hasil(skema, duplikat, matching)
+    return gabungkan_hasil(skema, duplikat, matching, baris_kosong=baris_kosong)

@@ -231,6 +231,24 @@ export function ProgresValidasi() {
                 </th>
                 <th
                   scope="col"
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 text-right font-semibold"
+                >
+                  Target
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 text-right font-semibold"
+                >
+                  Selesai
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 text-right font-semibold"
+                >
+                  Sisa
+                </th>
+                <th
+                  scope="col"
                   className="sticky top-0 z-10 bg-paper px-3 py-2 font-semibold"
                 >
                   Rincian
@@ -277,6 +295,15 @@ export function ProgresValidasi() {
                       <span className="block text-[11px] font-normal text-muted">
                         {satu.total > 0 ? "Perlu tindakan" : "Beres"}
                       </span>
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-muted">
+                      {satu.target ?? "-"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-success">
+                      {satu.selesai ?? "-"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-ink">
+                      {satu.sisa ?? "-"}
                     </td>
                     <td className="max-w-[22rem] px-3 py-2 text-xs leading-5 text-muted">
                       {rincian || "Tidak ada temuan"}

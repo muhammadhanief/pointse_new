@@ -135,9 +135,62 @@ def test_ringkasan_validasi_run_terakhir_dan_hitungan(sesi) -> None:
     assert baris[0]["kdkab"] == "3312"
     assert baris[0]["total"] == 0
     assert baris[0]["per_jenis"] == {}
+    assert baris[0]["target"] is None
+    assert baris[0]["selesai"] is None
+    assert baris[0]["sisa"] is None
 
     kosong = layanan.ringkasan_validasi(sesi, kdprov="33", kdkab="99")
     assert kosong == []
+
+
+def test_ringkasan_validasi_target_selesai_sisa(tmp_path, sesi) -> None:
+    """Target dari master; selesai = target dikurangi pasangan bermasalah."""
+    import openpyxl
+
+    from app.models import STATUS_SUKSES, Run
+
+    akar = tmp_path / "m" / "3312"
+    akar.mkdir(parents=True)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["idsubsls", "nmsls"])
+    for sub in ("3312010001000100", "3312010001000101", "3312010001000102"):
+        ws.append([sub, "SLS"])
+    wb.save(str(akar / "msubsls_26_1_3312.xlsx"))
+
+    run = Run(
+        tipe=TIPE_V,
+        kdprov="33",
+        kdkab="12",
+        status=STATUS_SUKSES,
+        nama_file_input="b.gpkg",
+        nama_file_peta="b.gpkg",
+        berkas_input="/tmp/b",
+        berkas_peta="/tmp/b",
+        semester="2026_1",
+    )
+    sesi.add(run)
+    sesi.commit()
+    sesi.refresh(run)
+    sesi.add(
+        ValidasiSlsUnmatch(
+            run_id=run.id,
+            jenis="tidak_di_peta",
+            idsls_master="33120100010001",
+            idsubsls_master="3312010001000199",
+            nmsls="SLS",
+        )
+    )
+    sesi.commit()
+
+    baris = layanan.ringkasan_validasi(
+        sesi, kdprov="33", akar_master=str(tmp_path / "m")
+    )
+    assert len(baris) == 1
+    assert baris[0]["target"] == 3
+    assert baris[0]["selesai"] == 2
+    assert baris[0]["sisa"] == 1
+    assert (tmp_path / "m" / "_ringkasan_master.json").is_file()
 
 
 def test_unggah_v_tolak_ekstensi_tidak_dikenal(sesi_pabrik, sesi, tmp_path) -> None:

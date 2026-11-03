@@ -152,7 +152,7 @@ class ValidasiUnmatchBarisOut(BaseModel):
 
 
 class ValidasiRingkasanBarisOut(BaseModel):
-    """Satu kabupaten/kota: run V terakhir + hitungan temuan per jenis."""
+    """Satu kabupaten/kota: run V terakhir + target/selesai/sisa + hitungan jenis."""
 
     kdprov: str
     kdkab: str
@@ -162,6 +162,12 @@ class ValidasiRingkasanBarisOut(BaseModel):
     semester: str | None = None
     total: int
     per_jenis: dict[str, int] = Field(default_factory=dict)
+    #: Target = jumlah pasangan master kab ini (None bila master belum ada).
+    target: int | None = None
+    #: Pasangan master yang cocok persis tanpa temuan (None bila run belum final).
+    selesai: int | None = None
+    #: Sisa = target - selesai (None bila salah satunya belum diketahui).
+    sisa: int | None = None
 
 
 class ValidasiRingkasanOut(BaseModel):
