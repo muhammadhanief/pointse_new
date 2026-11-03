@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import { PageHeader } from "@/components/dashboard/ui";
 import { RiwayatWorkspace } from "@/components/proses/riwayat";
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
 const TIPE_VALID: readonly TipeRun[] = ["A", "B", "V"];
 
 /** Tab awal dari query ``?tipe=A|B|V`` (untuk tautan "lihat hasil" sehabis unggah). */
-export default async function RiwayatPage({
+async function IsiRiwayat({
   searchParams,
 }: {
   searchParams: Promise<{ tipe?: string | string[] }>;
@@ -23,13 +24,27 @@ export default async function RiwayatPage({
     ? (bersih as TipeRun)
     : "A";
 
+  return <RiwayatWorkspace key={tabAwal} tabAwal={tabAwal} />;
+}
+
+export default function RiwayatPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tipe?: string | string[] }>;
+}) {
   return (
     <div className="space-y-field">
       <PageHeader
         judul="Riwayat upload"
         deskripsi="Pantau status unggahan peta SLS/SubSLS dan titik hasil perbaikan."
       />
-      <RiwayatWorkspace key={tabAwal} tabAwal={tabAwal} />
+      <Suspense
+        fallback={
+          <div className="h-64 w-full animate-pulse rounded-xl border border-line bg-surface" />
+        }
+      >
+        <IsiRiwayat searchParams={searchParams} />
+      </Suspense>
     </div>
   );
 }
