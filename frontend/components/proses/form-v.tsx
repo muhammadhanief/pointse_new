@@ -78,8 +78,9 @@ export function FormProsesV({ onSelesai }: { onSelesai?: () => void }) {
             type="button"
             onClick={() => setBukaKolom(true)}
             aria-haspopup="dialog"
-            className="text-sm font-medium text-brand underline-offset-4 hover:underline"
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 text-sm font-semibold text-brand-strong transition-colors hover:border-brand hover:bg-brand-soft/40"
           >
+            <span aria-hidden="true" className="text-base leading-none">ⓘ</span>
             Lihat 17 kolom wajib + tipe datanya
           </button>
         </div>
@@ -140,10 +141,6 @@ export function FormProsesV({ onSelesai }: { onSelesai?: () => void }) {
             ))}
           </tbody>
         </table>
-        <p className="mt-3 text-xs leading-5 text-muted">
-          Dokumen sumber menulis 18 untuk <span className="font-mono">idsubsls</span>,
-          tetapi seluruh data aktual memakai 16 digit — mesin memakai 16.
-        </p>
       </Modal>
 
       <Modal
