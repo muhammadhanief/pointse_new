@@ -26,21 +26,21 @@ depends_on: Sequence[str] | None = None
 
 def upgrade() -> None:
     """Lebarkan ``validasi_sls_unmatch.idsls`` menjadi VARCHAR(20)."""
-    op.alter_column(
-        "validasi_sls_unmatch",
-        "idsls",
-        existing_type=sa.String(length=16),
-        type_=sa.String(length=20),
-        existing_nullable=False,
-    )
+    with op.batch_alter_table("validasi_sls_unmatch") as batch_op:
+        batch_op.alter_column(
+            "idsls",
+            existing_type=sa.String(length=16),
+            type_=sa.String(length=20),
+            existing_nullable=False,
+        )
 
 
 def downgrade() -> None:
     """Kembalikan ke VARCHAR(16) (gagal bila ada baris 16 digit)."""
-    op.alter_column(
-        "validasi_sls_unmatch",
-        "idsls",
-        existing_type=sa.String(length=20),
-        type_=sa.String(length=16),
-        existing_nullable=False,
-    )
+    with op.batch_alter_table("validasi_sls_unmatch") as batch_op:
+        batch_op.alter_column(
+            "idsls",
+            existing_type=sa.String(length=20),
+            type_=sa.String(length=16),
+            existing_nullable=False,
+        )

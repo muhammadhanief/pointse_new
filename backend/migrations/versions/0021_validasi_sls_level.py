@@ -35,7 +35,7 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             "UPDATE validasi_sls_unmatch SET level = 'subsls' "
-            "WHERE CHAR_LENGTH(idsls) <> 14"
+            "WHERE LENGTH(idsls) <> 14"
         )
     )
 

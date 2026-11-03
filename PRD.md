@@ -351,20 +351,24 @@ mereset progres 0. Satu job hanya untuk satu kabupaten/kota.
 
 ### 11.2 Master 2026 Semester 1
 
-Master per kabupaten/kota berupa **dua berkas Excel** (disalin ke server
-sekali saja lewat skrip + checksum, bukan diunggah per job):
+Master per kabupaten/kota berasal dari **dua berkas Excel** (`Master/msubsls_26_1_<kdkab>.xlsx`
+dan `Hirarki/hirarki_sls_26_1_<kdkab>.xlsx`), tetapi yang dibaca worker/API
+saat validasi dan ringkasan **selalu tabel database `master_sls_2026_s1`**
+(satu baris per pasangan `(kdkab, idsubsls)`), bukan berkas Excel. Excel hanya
+media transport: isinya dimasukkan sekali per kabupaten lewat perintah impor
+(dari folder `backend`):
 
-- `Master/msubsls_26_1_<kdkab>.xlsx` (contoh 3302: 11.602 baris): memuat
-  `idsubsls`, `kdprov..kdsubsls`, `nmprov..nmsls`, `jenis`, `klas`,
-  `dominan`, `berubah_batas`, dan kolom muatan lainnya.
-- `Hirarki/hirarki_sls_26_1_<kdkab>.xlsx`: jembatan
-  `idsls_25_2 <-> idsls_26_1` + `id_perub`/`ket_perub` (kode alasan perubahan)
-  untuk matching lintas semester.
+    .venv/Scripts/python -m app.master_impor --sumber <dir-akar> [--kdkab 3312]
 
+Per kabupaten: baca `msubsls`, buang baris tanpa `idsubsls` 16 digit (dilaporkan
+sebagai "dilewati" + contoh), hapus baris lama kabupaten itu, lalu sisipkan
+yang baru dalam satu transaksi. Berkas `hirarki_sls` hanya jembatan
+`idsls_25_2 <-> idsls_26_1` untuk analisis lintas semester, tidak ikut diimpor.
 Folder lokal per kabupaten (`3300`–`3376`, subfolder `Hirarki`/`Master`/`Rekap`)
-sudah rapi per kode kab; folder `Hirarki`/`Master` per kab disalin utuh ke
-`backend/data/master-sls-2026-s1/<kdkab>/`. Format `.xlsx` (bukan poligon);
-dikecualikan dari commit (data mentah).
+dipakai sebagai sumber impor; format `.xlsx` dikecualikan dari commit (data
+mentah). Keputusan ini menggantikan cache `_ringkasan_master.json`: tanpa
+pemindaian puluhan Excel tiap halaman progres (pindai penuh 36 kab terbukti
+>200 detik), dan master ikut backup database.
 
 ### 11.3 Model data
 
@@ -382,19 +386,23 @@ dikecualikan dari commit (data mentah).
   unduhan Excel dan audit. Tidak ikut pemangkasan baseline.
 - **Kolom `runs.semester`** (`VARCHAR(7)`, mis. `2026_1`): menandai periode
   peta yang divalidasi; NULL untuk run A/B lama. Migrasi `0019` (+ `0020`
-  untuk lebar kolom unmatch 16 -> 20).
-- **Master di `DIR_MASTER`-sampingan**: berkas Excel master 2026 S1 di
-  `data/master-sls-2026-s1/<kdkab>/`, ikut dicadangkan `deploy/backup.sh`
-  (seperti master geotag), tidak ikut pemangkasan berkas run mentah.
+  untuk lebar kolom unmatch 16 -> 20, `0021`/`0022` skema sisi-berdampingan,
+  `0023` tabel master DB).
+- **Tabel `master_sls_2026_s1`**: sumber kebenaran validasi V — `id`,
+  `kdprov`, `kdkab` (4 digit, unik bersama `idsubsls`), `idsls` (14 digit),
+  `idsubsls` (16 digit), `nmsls`, `created_at`. Diisi lewat `app.master_impor`,
+  dibaca lewat `layanan.muat_master` (worker) dan hitungan target ringkasan;
+  ikut backup database. Berkas Excel hanya arsip sumber impor di luar repo.
 
 ### 11.4 Alur kerja
 
 1. Petugas memilih kabupaten/kota + mengunggah peta (GeoJSON/GPKG full 1 kab,
    berpotongan 16 MiB seperti biasa) dari halaman validasi. Berkas tanpa
    akhiran .geojson/.json/.gpkg langsung ditolak dengan saran ganti nama.
-2. Backend membuat run `V` status `menunggu`; worker menjalankan validasi
-   (baca atribut via pyogrio `read_geometry=False`, bandingkan dengan Excel
-   master via openpyxl/pandas, tulis `validasi_sls_unmatch`).
+2. Backend membuat run `V` status `menunggu` (ditolak 422 bila master
+   kabupaten belum diimpor ke database); worker menjalankan validasi
+   (baca atribut via pyogrio `read_geometry=False`, bandingkan dengan master
+   di database via `layanan.muat_master`, tulis `validasi_sls_unmatch`).
 3. `sukses` = ketiga blok lolos; `gagal` = ada blok gagal + pesan berisi
    hitungan per jenis temuan, contoh kode per jenis (maks 3), dan ajakan
    mengunduh rincian Excel (tanpa rahasia).

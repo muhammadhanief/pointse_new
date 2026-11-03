@@ -514,6 +514,34 @@ class AnomaliTitik(Base):
     flag_model: Mapped[int | None] = mapped_column(AngkaKecil)
 
 
+class MasterSls2026S1(Base):
+    """Master SLS Semester 1 2026 di database (sumber kebenaran validasi V).
+
+    Satu baris per pasangan ``(kdkab, idsubsls)`` dari berkas
+    ``msubsls_26_1_<kdkab>.xlsx``, dimasukkan lewat perintah impor
+    (``python -m app.master_impor``). Berkas Excel hanya jadi media
+    transport; yang dibaca worker/API selalu tabel ini supaya cepat,
+    konsisten, dan ikut backup database.
+    """
+
+    __tablename__ = "master_sls_2026_s1"
+    __table_args__ = (
+        UniqueConstraint(
+            "kdkab", "idsubsls", name="uq_master_sls_2026_s1_kab_subsls"
+        ),
+        Index("ix_master_sls_2026_s1_kab", "kdkab"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kdprov: Mapped[str] = mapped_column(String(2))
+    #: Kode kabupaten/kota 4 digit, mis. ``3312``.
+    kdkab: Mapped[str] = mapped_column(String(4))
+    idsls: Mapped[str] = mapped_column(String(16))
+    idsubsls: Mapped[str] = mapped_column(String(16))
+    nmsls: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+
+
 class ValidasiSlsUnmatch(Base):
     """Temuan validasi peta 2026 Semester 1 untuk satu job (tipe V).
 

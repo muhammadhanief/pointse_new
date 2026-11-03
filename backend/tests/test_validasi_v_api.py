@@ -143,20 +143,44 @@ def test_ringkasan_validasi_run_terakhir_dan_hitungan(sesi) -> None:
     assert kosong == []
 
 
-def test_ringkasan_validasi_target_selesai_sisa(tmp_path, sesi) -> None:
-    """Target dari master; selesai = target dikurangi pasangan bermasalah."""
-    import openpyxl
-
-    from app.models import STATUS_SUKSES, Run
+def test_impor_master_db_idempoten(tmp_path, sesi) -> None:
+    """Impor menulis ulang kab yang sama; baris rusak dilaporkan, tidak masuk DB."""
+    from app import master_impor
+    from app.models import MasterSls2026S1
 
     akar = tmp_path / "m" / "3312"
     akar.mkdir(parents=True)
+    import openpyxl
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.append(["idsubsls", "nmsls"])
-    for sub in ("3312010001000100", "3312010001000101", "3312010001000102"):
-        ws.append([sub, "SLS"])
+    ws.append(["3312010001000100", "SLS A"])
+    ws.append(["SALAH", "SLS X"])
+    ws.append([None, "KOSONG"])
     wb.save(str(akar / "msubsls_26_1_3312.xlsx"))
+
+    hasil = master_impor.impor_kabupaten(sesi, tmp_path / "m", "3312")
+    assert hasil["disimpan"] == 1 and hasil["dilewati"] == 2
+    assert sesi.query(MasterSls2026S1).count() == 1
+
+    # Impor ulang menimpa, tidak menumpuk.
+    hasil = master_impor.impor_kabupaten(sesi, tmp_path / "m", "3312")
+    assert hasil["disimpan"] == 1
+    assert sesi.query(MasterSls2026S1).count() == 1
+
+
+def test_ringkasan_validasi_target_selesai_sisa(tmp_path, sesi) -> None:
+    """Target dari master DB; selesai = target dikurangi pasangan bermasalah."""
+    from app.models import STATUS_SUKSES, MasterSls2026S1, Run
+
+    for sub in ("3312010001000100", "3312010001000101", "3312010001000102"):
+        sesi.add(
+            MasterSls2026S1(
+                kdprov="33", kdkab="3312", idsls=sub[:14], idsubsls=sub, nmsls="SLS"
+            )
+        )
+    sesi.commit()
 
     run = Run(
         tipe=TIPE_V,
@@ -183,14 +207,11 @@ def test_ringkasan_validasi_target_selesai_sisa(tmp_path, sesi) -> None:
     )
     sesi.commit()
 
-    baris = layanan.ringkasan_validasi(
-        sesi, kdprov="33", akar_master=str(tmp_path / "m")
-    )
+    baris = layanan.ringkasan_validasi(sesi, kdprov="33")
     assert len(baris) == 1
     assert baris[0]["target"] == 3
     assert baris[0]["selesai"] == 2
     assert baris[0]["sisa"] == 1
-    assert (tmp_path / "m" / "_ringkasan_master.json").is_file()
 
 
 def test_unggah_v_tolak_ekstensi_tidak_dikenal(sesi_pabrik, sesi, tmp_path) -> None:
@@ -277,10 +298,20 @@ def test_unggah_v_tanpa_master_ditolak_tanpa_run(sesi_pabrik, sesi, tmp_path) ->
     assert sesi.query(Run).count() == 0
 
 
-def test_unggah_v_dengan_master_masuk_antre(sesi_pabrik, tmp_path) -> None:
-    """Master ada: unggah V lolos gerbang awal (201 menunggu)."""
-    (tmp_path / "m" / "3313").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "m" / "3313" / "msubsls_26_1_3313.xlsx").write_bytes(b"palsu")
+def test_unggah_v_dengan_master_masuk_antre(sesi_pabrik, sesi, tmp_path) -> None:
+    """Master ada di DB: unggah V lolos gerbang awal (201 menunggu)."""
+    from app.models import MasterSls2026S1
+
+    sesi.add(
+        MasterSls2026S1(
+            kdprov="33",
+            kdkab="3313",
+            idsls="33130100010001",
+            idsubsls="3313010001000100",
+            nmsls="SLS",
+        )
+    )
+    sesi.commit()
     peta = _peta_v(tmp_path / "peta.geojson")
     for klien in _klien_v(sesi_pabrik, tmp_path):
         with peta.open("rb") as berkas:

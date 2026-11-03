@@ -254,16 +254,14 @@ def _tulis_peta_geojson(jalur, baris) -> None:
     gdf.to_file(str(jalur), driver="GeoJSON")
 
 
-def _siapkan_master(tmp_path, kode, baris) -> None:
-    akar = tmp_path / "m" / kode
-    akar.mkdir(parents=True, exist_ok=True)
-    _tulis_master_xlsx(akar / f"msubsls_26_1_{kode}.xlsx", baris)
+def _master_dict(baris) -> dict:
+    """Mapping pasangan (idsls, idsubsls) -> nmsls untuk master uji."""
+    return {(subsls[:14], subsls): nmsls for subsls, nmsls in baris}
 
 
 def test_berkas_split_subsls_sesuai_master_lolos(tmp_path) -> None:
     """SLS yang sama di banyak baris bukan duplikat bila subsls-nya beda dan cocok."""
-    _siapkan_master(
-        tmp_path, "3312",
+    master = _master_dict(
         [("3312010001000100", "SLS A"), ("3312010001000101", "SLS A")],
     )
     peta = tmp_path / "peta.geojson"
@@ -274,15 +272,14 @@ def test_berkas_split_subsls_sesuai_master_lolos(tmp_path) -> None:
             ("33120100010001", "3312010001000101", "SLS A"),
         ],
     )
-    hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
+    hasil = validasi_sls.validasi_berkas(peta, None, master, "3312")
     assert hasil.lolos, hasil.pesan
     assert "Validasi Duplikat: Sukses" in hasil.pesan
 
 
 def test_berkas_subsls_ganda_dan_beda_komposisi_gagal(tmp_path) -> None:
     """Pasangan sama = ganda; subsls asing = tidak di master; hilang = tidak di peta."""
-    _siapkan_master(
-        tmp_path, "3312",
+    master = _master_dict(
         [("3312010001000100", "SLS A"), ("3312010001000101", "SLS A")],
     )
     peta = tmp_path / "peta.geojson"
@@ -294,7 +291,7 @@ def test_berkas_subsls_ganda_dan_beda_komposisi_gagal(tmp_path) -> None:
             ("33120100010001", "3312010001000102", "SLS A"),  # tidak di master
         ],
     )
-    hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
+    hasil = validasi_sls.validasi_berkas(peta, None, master, "3312")
     assert not hasil.lolos
     assert "1 pasangan ganda" in hasil.pesan
     assert "tidak ada di master=1" in hasil.pesan
@@ -304,8 +301,7 @@ def test_berkas_subsls_ganda_dan_beda_komposisi_gagal(tmp_path) -> None:
 
 def test_berkas_idsls_16_digit_jadi_tidak_di_master(tmp_path) -> None:
     """Kode 16 digit di kolom idsls = salah pengisi: tetap tidak_di_master + catatan."""
-    _siapkan_master(
-        tmp_path, "3312",
+    master = _master_dict(
         [("3312010001000100", "SLS A"), ("3312010001000101", "SLS A")],
     )
     peta = tmp_path / "peta.geojson"
@@ -316,7 +312,7 @@ def test_berkas_idsls_16_digit_jadi_tidak_di_master(tmp_path) -> None:
             ("3312010001000101", "3312010001000101", "SLS A"),  # idsls salah
         ],
     )
-    hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
+    hasil = validasi_sls.validasi_berkas(peta, None, master, "3312")
     assert not hasil.lolos
     assert "tidak ada di master=1" in hasil.pesan
     assert "tidak ada di peta=1" in hasil.pesan
@@ -326,16 +322,13 @@ def test_berkas_idsls_16_digit_jadi_tidak_di_master(tmp_path) -> None:
 
 def test_berkas_nama_beda_jadi_temuan(tmp_path) -> None:
     """Ejaan nmsls beda dari master = gagal (walau pasangan cocok)."""
-    _siapkan_master(
-        tmp_path, "3312",
-        [("3312010001000100", "LAHAN KODIM")],
-    )
+    master = _master_dict([("3312010001000100", "LAHAN KODIM")])
     peta = tmp_path / "peta.geojson"
     _tulis_peta_geojson(
         peta,
         [("33120100010001", "3312010001000100", "Lahan Kodim")],
     )
-    hasil = validasi_sls.validasi_berkas(peta, None, tmp_path / "m", "3312")
+    hasil = validasi_sls.validasi_berkas(peta, None, master, "3312")
     assert not hasil.lolos
     assert "nama beda=1" in hasil.pesan
     temuan = [s for s in hasil.matching.temuan if s.jenis == "nama_beda"]
@@ -376,15 +369,17 @@ def test_banding_subsls_baru_di_sls_dikenal_diberi_hint_pemekaran() -> None:
     assert any(s.jenis == validasi_sls.JENIS_TIDAK_DI_PETA for s in hasil.temuan)
 
 
-def test_baca_master_melaporkan_baris_dilewati(caplog, tmp_path) -> None:
-    """Baris master malformed dicatat di log, bukan didiamkan."""
-    import logging
-
-    _siapkan_master(
-        tmp_path, "3312",
+def test_baca_master_impor_lapor_baris_dilewati(tmp_path) -> None:
+    """Baris master malformed dihitung + contohnya dikembalikan untuk laporan impor."""
+    akar = tmp_path / "m" / "3312"
+    akar.mkdir(parents=True)
+    _tulis_master_xlsx(
+        akar / "msubsls_26_1_3312.xlsx",
         [("3312010001000100", "SLS A"), ("SALAH", "SLS X"), ("", "SLS KOSONG")],
     )
-    with caplog.at_level(logging.WARNING, logger="app.validasi_sls"):
-        master = validasi_sls.baca_master(tmp_path / "m", "3312")
+    master, total, dilewati, contoh = validasi_sls.baca_master_impor(
+        akar / "msubsls_26_1_3312.xlsx"
+    )
     assert set(master) == {("33120100010001", "3312010001000100")}
-    assert "dilewati" in caplog.text and "SALAH" in caplog.text
+    assert total == 3 and dilewati == 2
+    assert contoh == ["SALAH"]

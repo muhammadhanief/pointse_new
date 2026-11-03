@@ -476,93 +476,19 @@ def jalur_master(
     )
 
 
-#: Nama berkas cache hitungan pasangan master per kabupaten.
-NAMA_RINGKASAN_MASTER = "_ringkasan_master.json"
+def baca_master_impor(
+    jalur_msubsls: str | Path,
+) -> tuple[dict[tuple[str, str], str | None], int, int, list[str]]:
+    """Baca satu berkas msubsls untuk impor ke database.
 
-
-def hitungan_master(akar_master_sls: str | Path) -> dict[str, int]:
-    """Jumlah pasangan unik ``(idsls, idsubsls)`` master per kode kab 4 digit.
-
-    Hasil di-cache di ``<akar>/_ringkasan_master.json`` beserta cap waktu
-    berkas termuda; cache dipakai ulang bila tidak ada msubsls yang lebih
-    baru. Tanpa cache tiap halaman progres harus membuka puluhan Excel.
-    """
-    import json
-    import os
-
-    from openpyxl import load_workbook
-
-    akar = Path(akar_master_sls)
-    cache = akar / NAMA_RINGKASAN_MASTER
-    berkas: dict[str, Path] = {}
-    if akar.is_dir():
-        for satu in sorted(akar.iterdir()):
-            if not satu.is_dir():
-                continue
-            jalur, _ = jalur_master(akar, satu.name)
-            if jalur.is_file():
-                berkas[satu.name] = jalur
-    cap = max((os.path.getmtime(str(j)) for j in berkas.values()), default=0)
-    if cache.is_file():
-        try:
-            data = json.loads(cache.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and float(data.get("_cap_mtime", -1)) >= cap:
-                return {
-                    str(kode): int(jumlah)
-                    for kode, jumlah in data.get("kabupaten", {}).items()
-                }
-        except (OSError, ValueError):
-            pass
-    hasil: dict[str, int] = {}
-    for kode in sorted(berkas):
-        jalur = berkas[kode]
-        wb = load_workbook(str(jalur), read_only=True, data_only=True)
-        try:
-            ws = wb.active
-            assert ws is not None
-            baris = ws.iter_rows(values_only=True)
-            kepala = [str(k).strip() if k is not None else "" for k in next(baris)]
-            if "idsubsls" not in kepala:
-                continue
-            indeks = kepala.index("idsubsls")
-            unik: set[str] = set()
-            for satu in baris:
-                if satu is None or indeks >= len(satu):
-                    continue
-                subsls = normalisasi_idsls(satu[indeks])
-                if subsls and len(subsls) == 16 and subsls.isdigit():
-                    unik.add(subsls)
-            hasil[kode] = len(unik)
-        finally:
-            wb.close()
-    try:
-        cache.write_text(
-            json.dumps({"_cap_mtime": cap, "kabupaten": hasil}), encoding="utf-8"
-        )
-    except OSError:
-        pass
-    return hasil
-
-
-def baca_master(
-    akar_master_sls: str | Path, kode_kab: str
-) -> dict[tuple[str, str], str | None]:
-    """Baca master: mapping pasangan ``(idsls, idsubsls)`` -> ``nmsls``.
-
-    ``idsls`` diderivasi ``idsubsls[:14]``; hanya baris dengan ``idsubsls``
-    16 digit yang dipakai. Memakai ``msubsls`` lewat ``openpyxl`` mode
-    read-only supaya memori tetap kecil. ``hirarki_sls`` hanya dipakai sebagai
-    pembanding bila berkasnya ada.
+    Kembalikan ``(mapping pasangan -> nmsls, total_baris, baris_dilewati,
+    contoh)``. Hanya baris dengan ``idsubsls`` 16 digit yang dipakai; sisanya
+    dihitung sebagai dilewati beserta contohnya untuk laporan impor.
     """
     from openpyxl import load_workbook
 
-    kode = str(kode_kab).strip()
-    jalur_msubsls, _ = jalur_master(akar_master_sls, kode)
-    if not jalur_msubsls.exists():
-        raise FileNotFoundError(
-            f"master msubsls untuk kabupaten/kota {kode} tidak ditemukan: {jalur_msubsls}"
-        )
-    wb = load_workbook(str(jalur_msubsls), read_only=True, data_only=True)
+    jalur = Path(jalur_msubsls)
+    wb = load_workbook(str(jalur), read_only=True, data_only=True)
     try:
         ws = wb.active
         assert ws is not None
@@ -570,7 +496,7 @@ def baca_master(
         kepala = [str(kolom).strip() if kolom is not None else "" for kolom in next(baris)]
         if "idsubsls" not in kepala:
             raise ValueError(
-                f"kolom 'idsubsls' tidak ada di {jalur_msubsls.name} "
+                f"kolom 'idsubsls' tidak ada di {jalur.name} "
                 f"(kolom: {', '.join(kepala[:12])}...)"
             )
         indeks = kepala.index("idsubsls")
@@ -578,9 +504,11 @@ def baca_master(
         master: dict[tuple[str, str], str | None] = {}
         dilewati = 0
         contoh_lewat: list[str] = []
+        total_baris = 0
         for satu in baris:
             if satu is None or indeks >= len(satu):
                 continue
+            total_baris += 1
             subsls = normalisasi_idsls(satu[indeks])
             if not subsls:
                 dilewati += 1
@@ -588,9 +516,9 @@ def baca_master(
             if len(subsls) != 16 or not subsls.isdigit():
                 dilewati += 1
                 if len(contoh_lewat) < 3:
-                    mentah_lewat = satu[indeks]
+                    mentah = satu[indeks]
                     contoh_lewat.append(
-                        str(mentah_lewat).strip() if mentah_lewat is not None else ""
+                        str(mentah).strip() if mentah is not None else ""
                     )
                 continue
             idsls = subsls[:14]
@@ -601,16 +529,7 @@ def baca_master(
             master.setdefault((idsls, subsls), nama or None)
     finally:
         wb.close()
-    if dilewati:
-        logger.warning(
-            "master %s: %d baris idsubsls dilewati (contoh: %s)",
-            jalur_msubsls.name,
-            dilewati,
-            ", ".join(contoh_lewat),
-        )
-    if not master:
-        raise ValueError(f"master {jalur_msubsls.name} tidak memuat idsls apa pun")
-    return master
+    return master, total_baris, dilewati, contoh_lewat
 
 
 def kolom_berkas_peta(berkas: str | Path, layer: str | None) -> list[str]:
@@ -640,7 +559,6 @@ def baca_peta(
     = nilai per kolom untuk cek panjang (seluruh baris dipindai).
     """
     import pyogrio
-    from collections import Counter
 
     jalur = Path(berkas)
     kolom = kolom_berkas_peta(jalur, layer)
@@ -694,10 +612,15 @@ def baca_peta(
 def validasi_berkas(
     berkas: str | Path,
     layer: str | None,
-    akar_master_sls: str | Path,
+    master: Mapping[tuple[str, str], str | None],
     kode_kab: str | None = None,
 ) -> HasilValidasi:
-    """Jalankan tiga blok validasi untuk satu berkas peta (dipakai worker)."""
+    """Jalankan tiga blok validasi untuk satu berkas peta (dipakai worker).
+
+    ``master`` = mapping pasangan ``(idsls, idsubsls)`` -> ``nmsls`` dari
+    database (lihat ``app.layanan.muat_master``); berkas Excel hanya dibaca
+    saat impor, bukan saat validasi.
+    """
     peta, pasangan, contoh, kolom, kdprov, kdkab, baris_kosong = baca_peta(
         berkas, layer
     )
@@ -718,10 +641,6 @@ def validasi_berkas(
     from collections import Counter
 
     duplikat = periksa_duplikat([kunci_pasangan(a, b) for a, b in pasangan])
-    kode_master = str(kode_kab or "").strip()
-    if not kode_master and kdkab:
-        kode_master = f"{kdprov[:2]}{kdkab}" if kdprov and len(str(kdkab)) == 2 else str(kdkab)
-    master = baca_master(akar_master_sls, kode_master) if kode_master else {}
     hitung = Counter(pasangan)
     matching = bandingkan(peta, master, hitung)
     return gabungkan_hasil(skema, duplikat, matching, baris_kosong=baris_kosong)

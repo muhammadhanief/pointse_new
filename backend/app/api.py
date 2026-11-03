@@ -253,17 +253,14 @@ def unggah_run(
                 )
             nama_peta, kdprov, kdkab = layanan.periksa_peta(berkas_peta, layer_peta)
             auth.pastikan_akses(pengguna, kdprov, kdkab)
-            # Master harus sudah ada di server; kalau tidak, job pasti gagal di
-            # worker (``baca_master``). Tolak di awal supaya tidak ada run gagal
-            # yang menyesatkan di riwayat (seperti Proses A tanpa geotag master).
+            # Master harus sudah diimpor ke database; kalau tidak, job pasti
+            # gagal di worker. Tolak di awal supaya tidak ada run gagal yang
+            # menyesatkan di riwayat (seperti Proses A tanpa geotag master).
             kode_kab_v = layanan.kode_kabupaten(kdprov, kdkab)
-            jalur_msubsls_v = validasi_sls.jalur_master(
-                setelan.dir_master_sls_2026_s1, kode_kab_v
-            )[0]
-            if not jalur_msubsls_v.exists():
+            if not layanan.master_sls_tersedia(sesi, kode_kab_v):
                 raise KesalahanUnggahan(
                     f"master SLS 2026 S1 untuk kabupaten/kota {kode_kab_v} "
-                    "belum tersedia di server; hubungi admin provinsi"
+                    "belum tersedia di database; hubungi admin provinsi"
                 )
             info = layanan.InfoUnggahan(
                 kdprov=kdprov,
@@ -889,7 +886,6 @@ def ringkasan_validasi(
     kdprov: str | None = Query(None, description="Saring satu provinsi, mis. 33"),
     kdkab: str | None = Query(None, description="Saring satu kabupaten/kota, mis. 07"),
     sesi: Session = Depends(get_session),
-    setelan: Settings = Depends(get_settings),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> ValidasiRingkasanOut:
     """Ringkasan validasi SLS 2026 S1: run V terakhir tiap kabupaten/kota.
@@ -902,9 +898,7 @@ def ringkasan_validasi(
     return ValidasiRingkasanOut(
         baris=[
             ValidasiRingkasanBarisOut.model_validate(satu)
-            for satu in layanan.ringkasan_validasi(
-            sesi, kdprov=kdprov, kdkab=kdkab, akar_master=setelan.dir_master_sls_2026_s1
-        )
+            for satu in layanan.ringkasan_validasi(sesi, kdprov=kdprov, kdkab=kdkab)
         ],
     )
 

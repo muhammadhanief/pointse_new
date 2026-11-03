@@ -829,6 +829,42 @@ def hasil_run(
     return total, keluaran
 
 
+def muat_master(sesi: Session, kode_kab: str) -> dict[tuple[str, str], str | None]:
+    """Mapping pasangan ``(idsls, idsubsls)`` -> ``nmsls`` dari tabel master DB.
+
+    Dipakai worker validasi dan hitungan target; berkas Excel hanya dibaca
+    saat impor (``python -m app.master_impor``).
+    """
+    from app.models import MasterSls2026S1
+
+    kode = str(kode_kab).strip()
+    if not kode:
+        return {}
+    baris = sesi.execute(
+        select(
+            MasterSls2026S1.idsls, MasterSls2026S1.idsubsls, MasterSls2026S1.nmsls
+        ).where(MasterSls2026S1.kdkab == kode)
+    ).all()
+    return {(str(a), str(b)): (str(n) if n is not None else None) for a, b, n in baris}
+
+
+def master_sls_tersedia(sesi: Session, kode_kab: str) -> bool:
+    """True bila master SLS 2026 S1 kabupaten sudah diimpor ke database."""
+    from app.models import MasterSls2026S1
+
+    kode = str(kode_kab).strip()
+    if not kode:
+        return False
+    return (
+        sesi.scalar(
+            select(func.count())
+            .select_from(MasterSls2026S1)
+            .where(MasterSls2026S1.kdkab == kode)
+        )
+        or 0
+    ) > 0
+
+
 def daftar_unmatch(
     sesi: Session, run_id: int, *, jenis: str | None = None, limit: int = 100, offset: int = 0
 ) -> tuple[int, list[dict[str, object]]]:
@@ -877,20 +913,16 @@ def ringkasan_validasi(
     *,
     kdprov: str | None = None,
     kdkab: str | None = None,
-    akar_master: str | Path | None = None,
 ) -> list[dict[str, object]]:
     """Satu baris per kabupaten/kota: run V terakhir + target/selesai/sisa.
 
-    ``target`` = jumlah pasangan ``(idsls, idsubsls)`` di master kab tersebut
-    (dibaca sekali lalu di-cache; ``None`` bila master belum disalin).
-    ``selesai`` = pasangan master yang cocok persis tanpa temuan apa pun;
-    hanya dihitung untuk run final (``sukses``/``gagal``), ``sisa`` =
-    ``target`` - ``selesai``. Kabupaten/kota tanpa run V tidak muncul;
-    panggil dengan ``kdprov``/``kdkab`` sesuai kewenangan pemanggil (lihat
-    :func:`app.auth.saring_akses`). Steril dari rekap SE2026: hanya membaca
-    ``runs`` tipe V dan ``validasi_sls_unmatch`` (+ berkas master).
+    ``target`` = jumlah pasangan ``(idsls, idsubsls)`` master kab tersebut
+    di database. ``selesai`` = pasangan master yang cocok persis tanpa temuan
+    apa pun; hanya dihitung untuk run final (``sukses``/``gagal``), selebihnya
+    ``None``. ``sisa`` = ``target`` - ``selesai``. Kabupaten/kota tanpa run V
+    tidak muncul; panggil dengan ``kdprov``/``kdkab`` sesuai kewenangan
+    pemanggil (lihat :func:`app.auth.saring_akses`). Steril dari rekap SE2026.
     """
-    from app import validasi_sls
     from app.models import TIPE_V
 
     saring: list[object] = [Run.tipe == TIPE_V]
@@ -908,44 +940,46 @@ def ringkasan_validasi(
     hitung: dict[int, dict[str, int]] = {}
     kotor: dict[int, set[tuple[str, str]]] = {}
     if runs:
-        for run_id, jenis, idsls_m, idsubsls_m, jumlah in sesi.execute(
+        for run_id, jenis, idsls_m, idsubsls_m in sesi.execute(
             select(
                 ValidasiSlsUnmatch.run_id,
                 ValidasiSlsUnmatch.jenis,
                 ValidasiSlsUnmatch.idsls_master,
                 ValidasiSlsUnmatch.idsubsls_master,
-                func.count().label("jumlah"),
-            )
-            .where(ValidasiSlsUnmatch.run_id.in_(runs))
-            .group_by(
-                ValidasiSlsUnmatch.run_id,
-                ValidasiSlsUnmatch.jenis,
-                ValidasiSlsUnmatch.idsls_master,
-                ValidasiSlsUnmatch.idsubsls_master,
-            )
+            ).where(ValidasiSlsUnmatch.run_id.in_(runs))
         ):
-            kunci = str(jenis)
-            hitung.setdefault(int(run_id), {}).setdefault(kunci, 0)
-            hitung[int(run_id)][kunci] += int(jumlah)
-            if kunci in (
-                validasi_sls.JENIS_TIDAK_DI_PETA,
-                validasi_sls.JENIS_NAMA_BEDA,
-                validasi_sls.JENIS_GANDA,
-            ) and (idsls_m or idsubsls_m):
-                kotor.setdefault(int(run_id), set()).add((str(idsls_m or ""), str(idsubsls_m or "")))
-    target_kab: dict[str, int] = (
-        validasi_sls.hitungan_master(akar_master) if akar_master is not None else {}
-    )
+            rid = int(run_id)
+            hitung.setdefault(rid, {}).setdefault(str(jenis), 0)
+            hitung[rid][str(jenis)] += 1
+            if str(jenis) in ("tidak_di_peta", "nama_beda", "ganda") and (
+                idsls_m or idsubsls_m
+            ):
+                kotor.setdefault(rid, set()).add(
+                    (str(idsls_m or ""), str(idsubsls_m or ""))
+                )
+    kode_kab: dict[int, str] = {}
+    for satu in runs.values():
+        kode_kab.setdefault(satu.id, kode_kabupaten(satu.kdprov, satu.kdkab))
+    target: dict[str, int] = {}
+    if kode_kab:
+        from app.models import MasterSls2026S1
+
+        for kab, jumlah in sesi.execute(
+            select(MasterSls2026S1.kdkab, func.count())
+            .where(MasterSls2026S1.kdkab.in_(sorted(set(kode_kab.values()))))
+            .group_by(MasterSls2026S1.kdkab)
+        ):
+            target[str(kab)] = int(jumlah)
     keluaran: dict[str, dict[str, object]] = {}
     for satu in sorted(runs.values(), key=lambda r: (r.kdprov, r.kdkab)):
         kode = kode_kabupaten(satu.kdprov, satu.kdkab)
         per_jenis = hitung.get(satu.id, {})
-        target = target_kab.get(kode)
+        tgt = target.get(kode)
         selesai: int | None = None
         sisa: int | None = None
-        if satu.status in (STATUS_SUKSES, STATUS_GAGAL) and target is not None:
-            selesai = max(0, target - len(kotor.get(satu.id, set())))
-            sisa = target - selesai
+        if satu.status in (STATUS_SUKSES, STATUS_GAGAL) and tgt is not None:
+            selesai = max(0, tgt - len(kotor.get(satu.id, set())))
+            sisa = tgt - selesai
         baris = {
             "kdprov": satu.kdprov,
             "kdkab": kode,
@@ -955,7 +989,7 @@ def ringkasan_validasi(
             "semester": satu.semester,
             "total": sum(per_jenis.values()),
             "per_jenis": per_jenis,
-            "target": target,
+            "target": tgt,
             "selesai": selesai,
             "sisa": sisa,
         }

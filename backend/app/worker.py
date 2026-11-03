@@ -961,20 +961,19 @@ def ikat_ulang_sumber_a(sesi: Session, run: Run) -> Run | None:
     return sumber
 
 
-def proses_validasi_v(
-    sesi: Session, run: Run, setelan: Settings | None = None
-) -> tuple[int, str, bool]:
+def proses_validasi_v(sesi: Session, run: Run) -> tuple[int, str, bool]:
     """Jalankan validasi SLS 2026 S1 untuk satu run V; kembalikan (baris, pesan, lolos).
 
+    Master dibaca dari database (hasil impor ``python -m app.master_impor``).
     Menulis ``validasi_sls_unmatch`` dan menandai ``runs.semester``. Tidak
     menyentuh ``wilayah``/``titik_hasil``/rekap (steril dari SE2026).
     """
-    from app import validasi_sls
+    from app import layanan, validasi_sls
 
-    setelan = setelan or get_settings()
     kode = layanan_kode_kab(run)
+    master = layanan.muat_master(sesi, kode)
     hasil = validasi_sls.validasi_berkas(
-        run.berkas_peta, run.layer_peta, setelan.dir_master_sls_2026_s1, kode
+        run.berkas_peta, run.layer_peta, master, kode
     )
     unmatch: list[dict[str, Any]] = [
         {
@@ -1402,7 +1401,7 @@ def proses_satu_job(
             if run.tipe == TIPE_V:
                 # Validasi SLS 2026 S1: steril dari SE2026, tanpa potongan/
                 # wilayah/titik_hasil/rekap (PRD §11).
-                hasil_v = proses_validasi_v(sesi, run, setelan)
+                hasil_v = proses_validasi_v(sesi, run)
                 simpan_fase_akhir_v(sesi, run, hasil_v)
                 jumlah = hasil_v[0]
                 jumlah_anomali = 0
