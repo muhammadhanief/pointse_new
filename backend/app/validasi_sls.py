@@ -122,6 +122,8 @@ class BarisUnmatch:
     idsls: str
     nmsls: str | None
     alasan: str
+    #: Granularitas temuan: ``sls`` atau ``subsls`` (kolom CSV/DB memakai nama ini).
+    level: str = "sls"
 
 
 @dataclass
@@ -226,11 +228,13 @@ def cocokkan(
     peta: Mapping[str, str | None],
     master: Mapping[str, str | None],
     duplikat_peta: set[str] | None = None,
+    level: str = "sls",
 ) -> HasilMatching:
     """Matching dua arah peta vs master (murni, tanpa I/O).
 
     ``peta``/``master`` = mapping kode -> ``nmsls``; generik untuk dua level:
-    ``idsls`` (14 digit) maupun ``idsubsls`` (16 digit).
+    ``idsls`` (14 digit) maupun ``idsubsls`` (16 digit). ``level`` dicatat di
+    tiap baris supaya daftar gabungan bisa dibedakan.
     """
     ganda = duplikat_peta or set()
     himpunan_peta = set(peta)
@@ -243,6 +247,7 @@ def cocokkan(
             idsls=kode,
             nmsls=peta.get(kode),
             alasan=ALASAN_DUPLIKAT if kode in ganda else ALASAN_TIDAK_DI_MASTER,
+            level=level,
         )
         for kode in hanya_peta
     ]
@@ -256,6 +261,7 @@ def cocokkan(
                     idsls=kode,
                     nmsls=peta.get(kode),
                     alasan=ALASAN_DUPLIKAT,
+                    level=level,
                 )
             )
     unmatch_peta.sort(key=lambda satu: satu.idsls)
@@ -265,6 +271,7 @@ def cocokkan(
             idsls=kode,
             nmsls=master.get(kode),
             alasan=ALASAN_TIDAK_DI_PETA,
+            level=level,
         )
         for kode in hanya_master
     ]
@@ -533,7 +540,7 @@ def validasi_berkas(
         if sum(1 for nilai in daftar_sub if nilai == kode) > 1
     }
     cocok_sls = cocokkan(peta, master, set())
-    cocok_sub = cocokkan(peta_sub, master_sub, ganda_sub)
+    cocok_sub = cocokkan(peta_sub, master_sub, ganda_sub, level="subsls")
     matching = HasilMatching(
         lolos=cocok_sls.lolos and cocok_sub.lolos,
         unmatch_peta=cocok_sls.unmatch_peta,

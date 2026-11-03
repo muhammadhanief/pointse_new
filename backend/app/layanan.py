@@ -825,6 +825,7 @@ def daftar_unmatch(
     return total, [
         {
             "arah": str(satu.arah),
+            "level": str(satu.level),
             "idsls": str(satu.idsls),
             "nmsls": satu.nmsls,
             "alasan": satu.alasan,

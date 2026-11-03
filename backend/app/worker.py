@@ -991,6 +991,7 @@ def proses_validasi_v(
             {
                 "run_id": run.id,
                 "arah": satu.arah,
+                "level": satu.level,
                 "idsls": satu.idsls,
                 "nmsls": satu.nmsls,
                 "alasan": satu.alasan,

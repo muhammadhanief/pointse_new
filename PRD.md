@@ -361,12 +361,14 @@ dikecualikan dari commit (data mentah).
   sumber peta Proses B. Kolom pesan `runs.pesan` menyimpan ringkasan 3 blok
   (skema/duplikat/matching).
 - **Tabel `validasi_sls_unmatch`**: satu baris per kode bermasalah per run —
-  `idsls` 14 digit (beda himpunan SLS) atau `idsubsls` 18 digit (beda
+  `idsls` 14 digit (beda himpunan SLS) atau `idsubsls` 16 digit (beda
   komposisi SubSLS; bedakan dari panjang kodenya). Kolom `run_id` (FK
-  `runs.id` cascade), `arah` (`peta`/`master`), `idsls` (`VARCHAR(20)`),
-  `nmsls` (nullable), `alasan` (mis. `duplikat_di_peta`, `tidak_di_master`,
-  `tidak_di_peta`), dan `created_at`. Di luar cakupan? Tidak: dipakai untuk
-  daftar unduhan CSV dan audit. Tidak ikut pemangkasan baseline.
+  `runs.id` cascade), `arah` (`peta`/`master`), `level` (`sls`/`subsls`,
+  menandai granularitas temuan supaya dua baris berkode sama bisa dibedakan),
+  `idsls` (`VARCHAR(20)`), `nmsls` (nullable), `alasan` (mis.
+  `duplikat_di_peta`, `tidak_di_master`, `tidak_di_peta`), dan `created_at`.
+  Di luar cakupan? Tidak: dipakai untuk daftar unduhan CSV dan audit. Tidak
+  ikut pemangkasan baseline.
 - **Kolom `runs.semester`** (`VARCHAR(7)`, mis. `2026_1`): menandai periode
   peta yang divalidasi; NULL untuk run A/B lama. Migrasi `0019` (+ `0020`
   untuk lebar kolom unmatch 16 -> 20).

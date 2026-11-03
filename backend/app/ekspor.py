@@ -825,8 +825,8 @@ def spool_rekap_csv(sesi: Session, setelan: Settings, **saringan: Any) -> Binary
     return spool_csv(judul, baris, _folder_sementara(setelan))
 
 
-#: Kolom CSV unmatch run V (PRD §11.4): daftar idsls untuk diperbaiki di QGIS.
-KOLOM_UNMATCH_V: tuple[str, ...] = ("arah", "idsls", "nmsls", "alasan")
+#: Kolom CSV unmatch run V (PRD §11.4): daftar kode untuk diperbaiki di QGIS.
+KOLOM_UNMATCH_V: tuple[str, ...] = ("arah", "level", "idsls", "nmsls", "alasan")
 
 
 def spool_unmatch_v_csv(sesi: Session, run_id: int, setelan: Settings) -> BinaryIO:
@@ -843,6 +843,6 @@ def spool_unmatch_v_csv(sesi: Session, run_id: int, setelan: Settings) -> Binary
         .order_by(ValidasiSlsUnmatch.idsls)
     ).scalars()
     baris = (
-        [satu.arah, satu.idsls, satu.nmsls, satu.alasan] for satu in baris_db
+        [satu.arah, satu.level, satu.idsls, satu.nmsls, satu.alasan] for satu in baris_db
     )
     return spool_csv(KOLOM_UNMATCH_V, baris, _folder_sementara(setelan))

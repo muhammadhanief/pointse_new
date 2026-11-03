@@ -140,6 +140,7 @@ class ValidasiUnmatchBarisOut(BaseModel):
     """Satu ``idsls`` bermasalah pada run V (PRD §11.4)."""
 
     arah: str
+    level: str
     idsls: str
     nmsls: str | None = None
     alasan: str | None = None

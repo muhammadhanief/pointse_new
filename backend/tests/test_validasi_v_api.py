@@ -22,10 +22,14 @@ def _run_v(sesi) -> Run:
     sesi.add(run)
     sesi.commit()
     sesi.refresh(run)
-    for arah, kode in [("peta", "33020100010001"), ("master", "33020100010002")]:
+    for arah, kode, level in [
+        ("peta", "33020100010001", "sls"),
+        ("master", "33020100010002", "sls"),
+    ]:
         sesi.add(
             ValidasiSlsUnmatch(
-                run_id=run.id, arah=arah, idsls=kode, nmsls="SLS", alasan="x"
+                run_id=run.id, arah=arah, level=level, idsls=kode,
+                nmsls="SLS", alasan="x",
             )
         )
     sesi.commit()
@@ -50,7 +54,7 @@ def test_spool_unmatch_v_csv(sesi, tmp_path) -> None:
     setelan = Settings(dir_unggahan=str(tmp_path / "u"))
     spool = ekspor.spool_unmatch_v_csv(sesi, run.id, setelan)
     isi = spool.read().decode("utf-8")
-    assert isi.splitlines()[0] == "arah,idsls,nmsls,alasan"
+    assert isi.splitlines()[0] == "arah,level,idsls,nmsls,alasan"
     assert "33020100010001" in isi and "33020100010002" in isi
 
 

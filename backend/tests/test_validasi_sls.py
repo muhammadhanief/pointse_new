@@ -108,20 +108,29 @@ def test_normalisasi_idsls() -> None:
 
 def test_matching_subsls_dua_arah() -> None:
     """Selisih komposisi SubSLS terdeteksi walau himpunan idsls-nya sama."""
-    peta = {"330201000100010001": "SLS A", "330201000100010002": "SLS A"}
-    master = {"330201000100010002": "SLS A", "330201000100010003": "SLS A"}
+    peta = {"3302010001000100": "SLS A", "3302010001000101": "SLS A"}
+    master = {"3302010001000101": "SLS A", "3302010001000102": "SLS A"}
     hasil = validasi_sls.cocokkan(peta, master)
     assert not hasil.lolos
-    assert [satu.idsls for satu in hasil.unmatch_peta] == ["330201000100010001"]
-    assert [satu.idsls for satu in hasil.unmatch_master] == ["330201000100010003"]
+    assert [satu.idsls for satu in hasil.unmatch_peta] == ["3302010001000100"]
+    assert [satu.idsls for satu in hasil.unmatch_master] == ["3302010001000102"]
 
 
 def test_matching_subsls_duplikat_tetap_unmatch() -> None:
     """idsubsls ganda tetap unmatch walau ada di master."""
-    kode = "330201000100010001"
+    kode = "3302010001000100"
     hasil = validasi_sls.cocokkan({kode: "SLS A"}, {kode: "SLS A"}, {kode})
     assert not hasil.lolos
     assert hasil.unmatch_peta and hasil.unmatch_peta[0].alasan == validasi_sls.ALASAN_DUPLIKAT
+
+
+def test_baris_unmatch_membawa_level() -> None:
+    """Baris SubSLS bertanda level subsls, baris SLS bertanda sls."""
+    hasil = validasi_sls.cocokkan({"A": "x"}, {"B": "x"}, level="subsls")
+    assert [satu.level for satu in hasil.unmatch_peta] == ["subsls"]
+    assert [satu.level for satu in hasil.unmatch_master] == ["subsls"]
+    hasil_sls = validasi_sls.cocokkan({"A": "x"}, {"B": "x"})
+    assert [satu.level for satu in hasil_sls.unmatch_peta] == ["sls"]
 
 
 def test_pesan_memuat_hitungan_subsls() -> None:

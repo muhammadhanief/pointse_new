@@ -540,6 +540,8 @@ class ValidasiSlsUnmatch(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
     arah: Mapped[str] = mapped_column(String(8))
+    #: Granularitas temuan: ``sls`` (kode 14 digit) atau ``subsls`` (16 digit).
+    level: Mapped[str] = mapped_column(String(8))
     #: Kode bermasalah: ``idsls`` 14 digit atau ``idsubsls`` 16 digit (bedakan
     #: dari panjangnya; CSV unduhan memakai kolom yang sama).
     idsls: Mapped[str] = mapped_column(String(20))
