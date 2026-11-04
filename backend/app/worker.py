@@ -170,6 +170,11 @@ PESAN_ANGGARAN_MEMORI = (
     "worker melewati anggaran memori; job dihentikan agar server tidak OOM"
 )
 
+#: Kolom internal basis data yang tidak pernah berasal dari berkas; bila
+#: galat 1364 menyebutnya, penyebabnya galat sistem (mis. tidak ada baris
+#: hasil untuk disimpan), bukan kolom berkas yang hilang.
+_KOLOM_INTERNAL_DB = frozenset({"run_id"})
+
 #: Pola galat MySQL yang sering muncul saat menyimpan hasil proses.
 _POLA_KOLOM_WAJIB = re.compile(
     r"\(1364, \"Field '([^']+)' doesn't have a default value\"\)"
@@ -194,6 +199,13 @@ def _jelaskan_galat(mentah: str, run: Run | None = None) -> str | None:
     cocok = _POLA_KOLOM_WAJIB.search(mentah)
     if cocok:
         kolom = cocok.group(1)
+        if kolom in _KOLOM_INTERNAL_DB:
+            return (
+                f"Kolom internal '{kolom}' tidak terisi saat menyimpan hasil — "
+                "ini kolom basis data, bukan kolom pada berkas, jadi berkas "
+                "tidak bersalah. Kemungkinan tidak ada baris hasil untuk "
+                "disimpan (galat sistem). Catat ID run dan hubungi admin."
+            )
         return (
             f"Kolom wajib '{kolom}' tidak terisi saat menyimpan hasil, jadi basis "
             f"data menolak barisnya. Penyebab paling sering: {berkas} tidak memuat "
@@ -991,7 +1003,11 @@ def proses_validasi_v(sesi: Session, run: Run) -> tuple[int, str, bool]:
         for satu in (*hasil.konsistensi.temuan, *hasil.matching.temuan)
     ]
     sesi.execute(delete(ValidasiSlsUnmatch).where(ValidasiSlsUnmatch.run_id == run.id))
-    sesi.execute(insert(ValidasiSlsUnmatch), unmatch)
+    # Daftar kosong (berkas bersih total) tidak boleh di-insert: SQLAlchemy
+    # me-render INSERT berisi nilai default saja sehingga MariaDB menolak
+    # dengan 1364 "Field 'run_id' doesn't have a default value".
+    if unmatch:
+        sesi.execute(insert(ValidasiSlsUnmatch), unmatch)
     return len(unmatch), hasil.pesan, hasil.lolos
 
 

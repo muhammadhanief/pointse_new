@@ -480,3 +480,60 @@ def test_ringkasan_validasi_menunggu_tetap_bukan_final(sesi) -> None:
     assert len(baris) == 1
     assert baris[0]["selesai"] is None
     assert baris[0]["sisa"] is None
+
+
+def _peta_bersih(path) -> object:
+    """Berkas peta 1 pasangan yang susunan kodenya konsisten (3312)."""
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    from app.validasi_sls import KOLOM_PETA_V
+
+    baris = {kolom: "x" for kolom in KOLOM_PETA_V}
+    baris.update(
+        kdprov="33", kdkab="12", kdkec="010", kddesa="001",
+        kdsls="0001", kdsubsls="00", idsls="33120100010001",
+        idsubsls="3312010001000100", nmsls="SLS", tingkat=1,
+    )
+    gdf = gpd.GeoDataFrame([baris], geometry=[Point(110.0, -7.0)], crs="EPSG:4326")
+    gdf.to_file(str(path), driver="GeoJSON")
+    return path
+
+
+def test_proses_validasi_v_bersih_total_tanpa_crash(sesi, tmp_path) -> None:
+    """Berkas bersih total (nol temuan): insert kosong dilewati, status sukses.
+
+    Regresi kasus 3373: ``insert(unmatch), []`` me-render INSERT berisi nilai
+    default saja sehingga MariaDB menolak dengan 1364 "
+    "Field 'run_id' doesn't have a default value".
+    """
+    from app import worker as modul_worker
+
+    _isi_master(sesi, "3312", ["3312010001000100"])
+    run = _run_v_baru(sesi)
+    run.berkas_peta = str(_peta_bersih(tmp_path / "bersih.geojson"))
+    run.layer_peta = None
+    sesi.commit()
+
+    jumlah, pesan, lolos = modul_worker.proses_validasi_v(sesi, run)
+    assert (jumlah, lolos) == (0, True)
+    assert "LOLOS" in pesan
+    modul_worker.simpan_fase_akhir_v(sesi, run, (jumlah, pesan, lolos))
+    assert run.status == STATUS_SUKSES
+    assert (
+        sesi.query(ValidasiSlsUnmatch).filter_by(run_id=run.id).count() == 0
+    )
+
+
+def test_jelaskan_galat_run_id_bukan_kolom_berkas() -> None:
+    """Galat 1364 untuk kolom internal tidak boleh menyalahkan berkas."""
+    from app import worker as modul_worker
+    from app.models import Run as ModelRun
+
+    run = ModelRun(tipe="V", nama_file_input="3373_sls.geojson")
+    pesan = modul_worker._jelaskan_galat(
+        "(1364, \"Field 'run_id' doesn't have a default value\")", run
+    )
+    assert pesan is not None
+    assert "internal" in pesan and "tidak bersalah" in pesan
+    assert "tidak memuat kolom" not in pesan
