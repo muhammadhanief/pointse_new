@@ -153,6 +153,7 @@ export function ProgresValidasi({
         tanggal_data: "",
         semester: null,
         selesai_pada: null,
+        petugas: null,
         total: 0,
         per_jenis: {},
         target: null,
@@ -250,7 +251,7 @@ export function ProgresValidasi({
 
       {tampil.length > 0 ? (
         <div className="relative mt-3 max-h-[70vh] overflow-auto overscroll-contain">
-          <table className="w-full min-w-[62rem] border-collapse text-[13px]">
+          <table className="w-full min-w-[68rem] border-collapse text-[13px]">
             <caption className="sr-only">
               Progres validasi SLS 2026 Semester 1 per kabupaten/kota
             </caption>
@@ -279,6 +280,12 @@ export function ProgresValidasi({
                   className="sticky top-0 z-10 bg-paper px-3 py-2 font-semibold"
                 >
                   Run terakhir
+                </th>
+                <th
+                  scope="col"
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 font-semibold"
+                >
+                  Petugas
                 </th>
                 <th
                   scope="col"
@@ -350,6 +357,9 @@ export function ProgresValidasi({
                       <span className="block text-xs">
                         {satu.semester ?? "-"}
                       </span>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-muted">
+                      {satu.petugas ?? "—"}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold">
                       {belumUnggah ? (

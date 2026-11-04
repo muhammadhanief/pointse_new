@@ -162,6 +162,8 @@ class ValidasiRingkasanBarisOut(BaseModel):
     semester: str | None = None
     #: Kapan run terakhir selesai diproses (jam:menit:detik); None bila masih antre/jalan.
     selesai_pada: datetime | None = None
+    #: Pengunggah run terakhir (None bila tak tercatat/belum ada run).
+    petugas: str | None = None
     total: int
     per_jenis: dict[str, int] = Field(default_factory=dict)
     #: Target = jumlah pasangan master kab ini (None bila master belum ada).
