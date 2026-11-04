@@ -202,12 +202,18 @@ export function ProgresValidasi() {
 
       {tampil.length > 0 ? (
         <div className="relative mt-3 max-h-[70vh] overflow-auto overscroll-contain">
-          <table className="w-full min-w-[56rem] border-collapse text-[13px]">
+          <table className="w-full min-w-[62rem] border-collapse text-[13px]">
             <caption className="sr-only">
               Progres validasi SLS 2026 Semester 1 per kabupaten/kota
             </caption>
             <thead>
               <tr className="text-left text-xs uppercase tracking-wide text-muted">
+                <th
+                  scope="col"
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 font-semibold"
+                >
+                  Kode
+                </th>
                 <th
                   scope="col"
                   className="sticky top-0 z-10 bg-paper px-3 py-2 font-semibold"
@@ -275,20 +281,21 @@ export function ProgresValidasi() {
                     key={`${satu.kdprov}-${satu.kdkab}`}
                     className="border-b border-line/70 last:border-0 hover:bg-brand-soft/20"
                   >
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums text-ink">
+                      {kode}
+                    </td>
                     <td className="px-3 py-2">
                       <p className="font-medium text-ink">
                         {namaKabupaten(satu.kdprov, satu.kdkab) ?? "-"}
                       </p>
-                      <p className="text-xs text-muted">{kode}</p>
                     </td>
                     <td className="px-3 py-2">
                       <BadgeStatus status={satu.status} rata="start" />
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-muted">
-                      {formatTanggal(satu.tanggal_data)}
-                      <span className="text-xs">
-                        {" "}
-                        · {satu.semester ?? "-"}
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted">
+                      {satu.selesai_pada ? formatWaktu(satu.selesai_pada) : formatTanggal(satu.tanggal_data)}
+                      <span className="block text-xs">
+                        {satu.semester ?? "-"}
                       </span>
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold">

@@ -42,6 +42,7 @@ export type ValidasiRingkasanBaris = {
   status: StatusRun;
   tanggal_data: string;
   semester: string | null;
+  selesai_pada: string | null;
   total: number;
   per_jenis: Record<string, number>;
   target: number | null;

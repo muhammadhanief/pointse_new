@@ -221,6 +221,7 @@ def test_ringkasan_validasi_target_selesai_sisa(tmp_path, sesi) -> None:
     assert baris[0]["target"] == 3
     assert baris[0]["selesai"] == 2
     assert baris[0]["sisa"] == 1
+    assert baris[0]["selesai_pada"] is None
 
 
 def test_unggah_v_tolak_ekstensi_tidak_dikenal(sesi_pabrik, sesi, tmp_path) -> None:

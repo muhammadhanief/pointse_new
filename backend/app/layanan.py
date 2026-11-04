@@ -988,6 +988,7 @@ def ringkasan_validasi(
             "status": satu.status,
             "tanggal_data": satu.tanggal_data,
             "semester": satu.semester,
+            "selesai_pada": satu.finished_at,
             "total": sum(per_jenis.values()),
             "per_jenis": per_jenis,
             "target": tgt,
