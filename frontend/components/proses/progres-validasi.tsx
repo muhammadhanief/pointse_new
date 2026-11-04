@@ -10,9 +10,9 @@ import {
   unduhBerkas,
 } from "@/lib/api/klien";
 import type { Run, ValidasiRingkasan, ValidasiRingkasanBaris } from "@/lib/api/types";
-import { kodeWilayah } from "@/lib/auth/peran";
+import { PERAN_ADMIN_PROVINSI, kodeWilayah } from "@/lib/auth/peran";
 import { formatAngka, formatTanggal, formatWaktu } from "@/lib/format";
-import { namaKabupaten } from "@/lib/wilayah/kabupaten";
+import { daftarKabupaten, namaKabupaten } from "@/lib/wilayah/kabupaten";
 
 import { BadgeStatus } from "./badge-status";
 import { DetailJob } from "./detail-job";
@@ -36,7 +36,15 @@ function labelJenis(jenis: string): string {
   }
 }
 
-export function ProgresValidasi() {
+export function ProgresValidasi({
+  kdprov,
+  kdkab,
+  peran,
+}: {
+  kdprov: string;
+  kdkab: string | null;
+  peran: string;
+}) {
   const [baris, setBaris] = useState<ValidasiRingkasanBaris[]>([]);
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState<string | null>(null);
@@ -124,14 +132,51 @@ export function ProgresValidasi() {
     }
   }
 
+  const tampilSemua = (() => {
+    const peta = new Map(baris.map((satu) => [satu.kdkab, satu]));
+    // Kabupaten/kota yang belum pernah mengunggah tetap dibuatkan baris
+    // (status "Belum unggah") supaya terpantau.
+    const daftar =
+      peran === PERAN_ADMIN_PROVINSI
+        ? daftarKabupaten(kdprov)
+        : [{ kode: kodeWilayah(kdprov, kdkab), nama: "" }];
+    const gabung = daftar.map((wilayah) => {
+      const ada = peta.get(wilayah.kode);
+      if (ada) {
+        return ada;
+      }
+      const kosong: ValidasiRingkasanBaris = {
+        kdprov,
+        kdkab: wilayah.kode,
+        run_id: null,
+        status: "belum_unggah",
+        tanggal_data: "",
+        semester: null,
+        selesai_pada: null,
+        total: 0,
+        per_jenis: {},
+        target: null,
+        selesai: null,
+        sisa: null,
+      };
+      return kosong;
+    });
+    // Provinsi di luar Jateng tidak punya daftar statis: tampilkan apa adanya.
+    if (gabung.length === 0) {
+      return baris;
+    }
+    return gabung;
+  })();
+
   const tampil =
     filterStatus === "semua"
-      ? baris
+      ? tampilSemua
       : filterStatus === "berjalan"
-        ? baris.filter(
+        ? tampilSemua.filter(
             (satu) => satu.status === "menunggu" || satu.status === "jalan",
           )
-        : baris.filter((satu) => satu.status === filterStatus);
+        : tampilSemua.filter((satu) => satu.status === filterStatus);
+  const sudahUnggah = tampilSemua.filter((satu) => satu.run_id !== null).length;
 
   return (
     <Panel
@@ -141,7 +186,9 @@ export function ProgresValidasi() {
       <div className="mt-3 flex flex-col gap-field sm:flex-row sm:items-end sm:justify-between">
         <p className="text-sm text-muted" aria-live="polite">
           {tampil.length} kabupaten/kota
-          {filterStatus !== "semua" ? " sesuai filter" : " sudah mengunggah"}
+          {filterStatus !== "semua"
+            ? " sesuai filter"
+            : ` (${sudahUnggah} sudah mengunggah)`}
           {diperbarui ? `. Diperbarui ${diperbarui}` : ""}.
         </p>
         <div className="flex flex-wrap items-center gap-field">
@@ -156,6 +203,7 @@ export function ProgresValidasi() {
               <option value="sukses">Lolos</option>
               <option value="belum_clean">Belum clean</option>
               <option value="gagal">Gagal</option>
+              <option value="belum_unggah">Belum unggah</option>
               <option value="berjalan">Diproses</option>
             </select>
           </label>
@@ -273,9 +321,11 @@ export function ProgresValidasi() {
             <tbody>
               {tampil.map((satu) => {
                 const kode = kodeWilayah(satu.kdprov, satu.kdkab);
+                const runId = satu.run_id;
                 const rincian = Object.entries(satu.per_jenis)
                   .map(([jenis, jumlah]) => `${labelJenis(jenis)} ${jumlah}`)
                   .join(", ");
+                const belumUnggah = runId === null;
                 return (
                   <tr
                     key={`${satu.kdprov}-${satu.kdkab}`}
@@ -302,12 +352,18 @@ export function ProgresValidasi() {
                       </span>
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold">
-                      <span className={satu.total > 0 ? "text-danger" : "text-success"}>
-                        {formatAngka(satu.total)}
-                      </span>{" "}
-                      <span className="block text-[11px] font-normal text-muted">
-                        {satu.total > 0 ? "Perlu tindakan" : "Beres"}
-                      </span>
+                      {belumUnggah ? (
+                        <span className="text-muted">—</span>
+                      ) : (
+                        <>
+                          <span className={satu.total > 0 ? "text-danger" : "text-success"}>
+                            {formatAngka(satu.total)}
+                          </span>{" "}
+                          <span className="block text-[11px] font-normal text-muted">
+                            {satu.total > 0 ? "Perlu tindakan" : "Beres"}
+                          </span>
+                        </>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-muted">
                       {satu.target ?? "-"}
@@ -319,20 +375,24 @@ export function ProgresValidasi() {
                       {satu.sisa ?? "-"}
                     </td>
                     <td className="max-w-[22rem] px-3 py-2 text-xs leading-5 text-muted">
-                      {rincian || "Tidak ada temuan"}
+                      {belumUnggah ? "Belum ada unggahan" : rincian || "Tidak ada temuan"}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right">
+                      {belumUnggah ? (
+                        <span className="text-xs text-muted">—</span>
+                      ) : (
+                        <>
                       <TombolAksi
                         varian="sekunder"
                         className="min-h-8 px-3 text-xs"
-                        onClick={() => void bukaDetail(satu.run_id)}
+                        onClick={() => void bukaDetail(runId)}
                       >
                         Detail
                       </TombolAksi>{" "}
                       <TombolAksi
                         varian="sekunder"
                         className="min-h-8 px-3 text-xs"
-                        onClick={() => void unduh(satu.run_id, kode)}
+                        onClick={() => void unduh(runId, kode)}
                         disabled={sibuk !== null || satu.total === 0}
                         title={
                           satu.total === 0
@@ -340,10 +400,12 @@ export function ProgresValidasi() {
                             : "Unduh daftar temuan sebagai Excel"
                         }
                       >
-                        {sibuk === satu.run_id
+                        {sibuk === runId
                           ? "Menyiapkan..."
                           : "Unduh Excel"}
                       </TombolAksi>
+                        </>
+                      )}
                     </td>
                   </tr>
                 );

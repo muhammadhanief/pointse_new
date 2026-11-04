@@ -1,5 +1,5 @@
 export type TipeRun = "A" | "B" | "V";
-export type StatusRun = "menunggu" | "jalan" | "sukses" | "belum_clean" | "gagal";
+export type StatusRun = "menunggu" | "jalan" | "sukses" | "belum_clean" | "gagal" | "belum_unggah";
 
 export type Run = {
   id: number;
@@ -38,7 +38,7 @@ export type DaftarRun = {
 export type ValidasiRingkasanBaris = {
   kdprov: string;
   kdkab: string;
-  run_id: number;
+  run_id: number | null;
   status: StatusRun;
   tanggal_data: string;
   semester: string | null;

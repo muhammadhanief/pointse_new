@@ -6,6 +6,7 @@ const LABEL: Record<StatusRun, string> = {
   sukses: "Sukses",
   belum_clean: "Belum clean",
   gagal: "Gagal",
+  belum_unggah: "Belum unggah",
 };
 
 const GAYA: Record<StatusRun, string> = {
@@ -14,6 +15,7 @@ const GAYA: Record<StatusRun, string> = {
   sukses: "border-success/30 bg-success-soft text-success",
   belum_clean: "border-warning/40 bg-warning/10 text-warning",
   gagal: "border-danger/25 bg-danger-soft text-danger",
+  belum_unggah: "border-line-strong bg-surface text-muted",
 };
 
 export function BadgeStatus({

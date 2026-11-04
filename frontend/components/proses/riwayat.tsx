@@ -68,6 +68,9 @@ const URUT_STATUS: Record<Run["status"], number> = {
   sukses: 2,
   belum_clean: 3,
   gagal: 4,
+  // Tidak pernah muncul di riwayat (hanya baris placeholder progres
+  // validasi); ditaruh paling akhir supaya tidak mengganggu urutan.
+  belum_unggah: 5,
 };
 
 function nilaiSort(run: Run, kolom: KolomSort): string | number {
