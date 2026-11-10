@@ -651,21 +651,20 @@ export function RuangKomunitas({
             </EmptyState>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-line">
-              <table className="w-full min-w-[64rem] border-collapse text-left text-xs">
+              <table className="w-full border-collapse text-left text-xs">
                 <thead className="border-b border-line bg-paper text-[11px] font-semibold uppercase tracking-wide text-muted">
                   <tr>
-                    <th className="w-28 px-3 py-2.5">No. Tiket</th>
+                    <th className="w-40 px-3 py-2.5">No. Tiket &amp; Aksi</th>
                     <th className="w-36 px-3 py-2.5">Kategori</th>
                     <th className="px-3 py-2.5">
                       Judul Masalah &amp; Cuplikan Error{" "}
                       <code className="font-mono">.txt</code>
                     </th>
-                    <th className="w-44 px-3 py-2.5">Pelapor (Wilayah)</th>
-                    <th className="w-44 px-3 py-2.5">Status &amp; Rule</th>
+                    <th className="w-40 px-3 py-2.5">Pelapor (Wilayah)</th>
+                    <th className="w-40 px-3 py-2.5">Status &amp; Rule</th>
                     <th className="w-32 px-3 py-2.5 text-center">
-                      Serupa &amp; Diskusi
+                      Serupa &amp; Balasan
                     </th>
-                    <th className="w-36 px-3 py-2.5 text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line bg-surface">
@@ -677,26 +676,51 @@ export function RuangKomunitas({
                         key={topik.id}
                         className="align-top transition-colors hover:bg-paper/60"
                       >
-                        <td className="px-3 py-2.5 font-mono">
-                          <div className="flex flex-col items-start gap-1">
-                            <button
-                              type="button"
-                              onClick={() => void bukaDetailTopik(topik.id)}
-                              className="rounded border border-brand/40 bg-brand-soft/60 px-2 py-0.5 text-xs font-bold text-brand-strong hover:bg-brand-soft"
-                              title="Klik untuk membuka detail bahasan"
-                            >
-                              {nomorTiket}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void salinRujukanWa(topik)}
-                              className="text-[11px] font-sans text-muted hover:text-brand-strong hover:underline"
-                              title="Salin nomor tiket & judul untuk ditempel di WhatsApp"
-                            >
-                              {tiketDisalinId === topik.id
-                                ? "Disalin ke WA"
-                                : "Salin rujukan WA"}
-                            </button>
+                        <td className="px-3 py-2.5">
+                          <div className="flex flex-col items-start gap-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => void bukaDetailTopik(topik.id)}
+                                className="rounded border border-brand/40 bg-brand-soft/60 px-2 py-0.5 font-mono text-xs font-bold text-brand-strong hover:bg-brand-soft"
+                                title="Klik untuk membuka detail bahasan"
+                              >
+                                {nomorTiket}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void salinRujukanWa(topik)}
+                                className="rounded border border-line bg-paper px-1.5 py-0.5 text-[11px] font-medium text-muted hover:border-brand hover:text-brand-strong"
+                                title="Salin nomor tiket & judul untuk ditempel di WhatsApp"
+                              >
+                                {tiketDisalinId === topik.id
+                                  ? "Disalin"
+                                  : "Salin WA"}
+                              </button>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => void bukaDetailTopik(topik.id)}
+                                className="inline-flex min-h-7 items-center justify-center rounded-md border border-line-strong bg-surface px-2.5 text-xs font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong"
+                              >
+                                {memuatDetail && detail?.id === topik.id
+                                  ? "Memuat..."
+                                  : "Diskusi"}
+                              </button>
+                              {adalahAdminProvinsi ? (
+                                <button
+                                  type="button"
+                                  disabled={menghapusId === topik.id}
+                                  onClick={() => void hapusTopik(topik)}
+                                  className="inline-flex min-h-7 items-center justify-center rounded-md border border-danger/40 bg-danger-soft/50 px-2 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white disabled:opacity-50"
+                                  title="Hapus topik bahasan ini (Khusus Admin Provinsi)"
+                                >
+                                  {menghapusId === topik.id ? "..." : "Hapus"}
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
                         </td>
 
@@ -775,31 +799,6 @@ export function RuangKomunitas({
                             <span className="text-[11px] text-muted tabular-nums">
                               {formatAngka(topik.jumlah_komentar)} balasan
                             </span>
-                          </div>
-                        </td>
-
-                        <td className="px-3 py-2.5 text-right">
-                          <div className="flex flex-wrap items-center justify-end gap-1.5">
-                            <TombolAksi
-                              varian="sekunder"
-                              className="min-h-8 px-2.5 text-xs"
-                              onClick={() => void bukaDetailTopik(topik.id)}
-                            >
-                              {memuatDetail && detail?.id === topik.id
-                                ? "Memuat..."
-                                : "Diskusi"}
-                            </TombolAksi>
-                            {adalahAdminProvinsi ? (
-                              <button
-                                type="button"
-                                disabled={menghapusId === topik.id}
-                                onClick={() => void hapusTopik(topik)}
-                                className="inline-flex min-h-8 items-center justify-center rounded-lg border border-danger/40 bg-danger-soft/50 px-2.5 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white disabled:opacity-50"
-                                title="Hapus topik bahasan ini (Khusus Admin Provinsi)"
-                              >
-                                {menghapusId === topik.id ? "..." : "Hapus"}
-                              </button>
-                            ) : null}
                           </div>
                         </td>
                       </tr>
