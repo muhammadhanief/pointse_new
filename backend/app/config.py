@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     """Setelan aplikasi pointse."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "/etc/pointse/pointse.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
