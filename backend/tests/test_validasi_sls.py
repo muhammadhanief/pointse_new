@@ -525,3 +525,26 @@ def test_topologi_empat_aturan_qgis() -> None:
         validasi_sls.JENIS_GEOM_OVERLAP,
         validasi_sls.JENIS_GEOM_GAP,
     }
+
+
+def test_topologi_tangkap_poligon_kosong_atau_null() -> None:
+    """Baris beratribut dengan geometri NULL / POLYGON EMPTY terdeteksi sebagai geom_invalid."""
+    from shapely.geometry import Polygon
+
+    p_valid = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    p_kosong = Polygon()  # POLYGON EMPTY
+    hasil = validasi_sls.periksa_topologi(
+        [p_valid, None, p_kosong],
+        [
+            {"kode": "33250500101001", "sub": "3325050010100100", "nama": "SLS 1"},
+            {"kode": "33250500101004", "sub": "3325050010100400", "nama": "SLS 4"},
+            {"kode": "33250500101005", "sub": "3325050010100500", "nama": "SLS 5"},
+        ],
+    )
+    assert not hasil.lolos
+    assert hasil.jumlah_invalid == 2
+    assert len(hasil.temuan) == 2
+    assert hasil.temuan[0].jenis == validasi_sls.JENIS_GEOM_INVALID
+    assert hasil.temuan[0].idsls_peta == "33250500101004"
+    assert "Coordinates polygon kosong" in (hasil.temuan[0].catatan or "")
+    assert hasil.temuan[1].idsls_peta == "33250500101005"

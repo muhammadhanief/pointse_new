@@ -519,20 +519,42 @@ def periksa_topologi(
         return None, None, None
 
     poligon_indeks: list[int] = []
+    temuan: list[BarisUnmatch] = []
+    jumlah_invalid = 0
     for urut, geom in enumerate(geometri):
         if geom is None or geom.is_empty:
+            idsls, idsubsls, nama = _info_baris(urut)
+            # Hanya laporkan bila baris memiliki identitas atribut (bukan baris kosong murni)
+            # atau bila terdapat atribut yang dikirimkan.
+            if idsls or idsubsls or nama or not baris_atribut:
+                jumlah_invalid += 1
+                temuan.append(
+                    BarisUnmatch(
+                        jenis=JENIS_GEOM_INVALID,
+                        idsls_peta=idsls,
+                        idsubsls_peta=idsubsls,
+                        idsls_master=None,
+                        idsubsls_master=None,
+                        nmsls=nama,
+                        catatan=(
+                            f"baris {urut + 1}: Geometri poligon kosong / NULL "
+                            "(Coordinates polygon kosong)"
+                        )[:255],
+                    )
+                )
             continue
         if geom.geom_type in ("Polygon", "MultiPolygon"):
             poligon_indeks.append(urut)
 
     if not poligon_indeks:
-        return HasilTopologi(lolos=True)
-
-    temuan: list[BarisUnmatch] = []
+        return HasilTopologi(
+            lolos=jumlah_invalid == 0,
+            jumlah_invalid=jumlah_invalid,
+            temuan=temuan,
+        )
 
     # 1. must not have invalid geometries (checkValid)
     valid_map: dict[int, bool] = {}
-    jumlah_invalid = 0
     for urut in poligon_indeks:
         geom = geometri[urut]
         valid = bool(shapely.is_valid(geom))
