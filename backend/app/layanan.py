@@ -535,16 +535,67 @@ def jumlah_tersimpan(sesi: Session, run_id: int) -> int:
     )
 
 
+#: Kamus statis nama kabupaten/kota Jawa Tengah (33) agar pencarian nama
+#: wilayah di riwayat tetap berfungsi walau tabel ``wilayah`` belum terisi
+#: (mis. untuk run tipe V yang steril dari tabel ``wilayah``).
+NAMA_KABUPATEN_33: dict[str, str] = {
+    "3301": "Kabupaten Cilacap",
+    "3302": "Kabupaten Banyumas",
+    "3303": "Kabupaten Purbalingga",
+    "3304": "Kabupaten Banjarnegara",
+    "3305": "Kabupaten Kebumen",
+    "3306": "Kabupaten Purworejo",
+    "3307": "Kabupaten Wonosobo",
+    "3308": "Kabupaten Magelang",
+    "3309": "Kabupaten Boyolali",
+    "3310": "Kabupaten Klaten",
+    "3311": "Kabupaten Sukoharjo",
+    "3312": "Kabupaten Wonogiri",
+    "3313": "Kabupaten Karanganyar",
+    "3314": "Kabupaten Sragen",
+    "3315": "Kabupaten Grobogan",
+    "3316": "Kabupaten Blora",
+    "3317": "Kabupaten Rembang",
+    "3318": "Kabupaten Pati",
+    "3319": "Kabupaten Kudus",
+    "3320": "Kabupaten Jepara",
+    "3321": "Kabupaten Demak",
+    "3322": "Kabupaten Semarang",
+    "3323": "Kabupaten Temanggung",
+    "3324": "Kabupaten Kendal",
+    "3325": "Kabupaten Batang",
+    "3326": "Kabupaten Pekalongan",
+    "3327": "Kabupaten Pemalang",
+    "3328": "Kabupaten Tegal",
+    "3329": "Kabupaten Brebes",
+    "3371": "Kota Magelang",
+    "3372": "Kota Surakarta",
+    "3373": "Kota Salatiga",
+    "3374": "Kota Semarang",
+    "3375": "Kota Pekalongan",
+    "3376": "Kota Tegal",
+}
+
+#: Pemetaan teks pencarian status tampilan (UI) ke nilai kolom ``runs.status``.
+ALIAS_STATUS_CARI: tuple[tuple[str, str], ...] = (
+    ("belum clean", "belum_clean"),
+    ("diproses", "jalan"),
+    ("lolos", "sukses"),
+    ("sukses", "sukses"),
+    ("menunggu", "menunggu"),
+    ("gagal", "gagal"),
+)
+
+
 def saring_pencarian_run(teks: str) -> Any:
     """Penyaring pencarian teks di semua kolom riwayat yang ditampilkan.
 
-    Nama wilayah diambil dari tabel ``wilayah`` karena ``runs`` hanya menyimpan
-    kode. Kode kabupaten bisa tersimpan 2 digit atau 4 digit, jadi keduanya
-    dicocokkan: ilike menangani kode pendek ke semua bentuk, sedangkan
-    kode panjang/numerik (mis. 3312 atau 33/12) dicocokkan juga ke
-    bentuk pendeknya.
+    Nama wilayah diambil dari kamus statis Jawa Tengah (``NAMA_KABUPATEN_33``)
+    serta tabel ``wilayah`` karena ``runs`` hanya menyimpan kode. Kode
+    kabupaten bisa tersimpan 2 digit atau 4 digit, jadi keduanya dicocokkan.
     """
     pola = f"%{teks}%"
+    teks_kecil = teks.strip().lower()
     angka = "".join(ch for ch in teks if ch.isdigit())
     alternatif_kode: list[str] = []
     if angka:
@@ -552,6 +603,20 @@ def saring_pencarian_run(teks: str) -> Any:
         if len(angka) > 2:
             # "3312" harus ketemu baris berkode pendek "12".
             alternatif_kode.append(angka[-2:])
+
+    # Cocokkan nama kabupaten/kota dari kamus statis (mis. "wonosobo", "blora").
+    for kode_empat, nama_kab in NAMA_KABUPATEN_33.items():
+        if teks_kecil and teks_kecil in nama_kab.lower():
+            for kandidat in (kode_empat, kode_empat[-2:]):
+                if kandidat not in alternatif_kode:
+                    alternatif_kode.append(kandidat)
+
+    # Cocokkan label status UI (mis. "belum clean", "diproses", "lolos").
+    status_cocok: list[str] = []
+    for label_ui, kode_db in ALIAS_STATUS_CARI:
+        if teks_kecil and (teks_kecil in label_ui or label_ui in teks_kecil):
+            if kode_db not in status_cocok:
+                status_cocok.append(kode_db)
     dalam = aliased(Run)
     nomor = (
         select(func.count())
@@ -593,9 +658,10 @@ def saring_pencarian_run(teks: str) -> Any:
         Run.tipe.ilike(pola),
         Run.kdprov.ilike(pola),
         Run.kdkab.ilike(pola),
-        *([Run.kdkab == kode for kode in alternatif_kode] if angka else []),
+        *([Run.kdkab == kode for kode in alternatif_kode] if alternatif_kode else []),
         Run.user.ilike(pola),
         Run.status.ilike(pola),
+        *([Run.status == st for st in status_cocok] if status_cocok else []),
         Run.nama_file_input.ilike(pola),
         Run.nama_file_peta.ilike(pola),
         Run.layer_input.ilike(pola),

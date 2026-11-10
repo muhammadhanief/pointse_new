@@ -73,6 +73,40 @@ const URUT_STATUS: Record<Run["status"], number> = {
   belum_unggah: 5,
 };
 
+function cocokPencarianLokal(run: Run, kueri: string): boolean {
+  const q = kueri.trim().toLowerCase();
+  if (!q) {
+    return true;
+  }
+  const namaWilayah = namaKabupaten(run.kdprov, run.kdkab) ?? "";
+  const kode = kodeWilayah(run.kdprov, run.kdkab);
+  const labelStatus =
+    run.status === "belum_clean"
+      ? "belum clean"
+      : run.status === "jalan"
+        ? "diproses"
+        : run.status;
+  const gabungan = [
+    String(run.id),
+    run.nomor_urut ? `ke-${run.nomor_urut} ${run.nomor_urut}` : "",
+    kode,
+    run.kdprov,
+    run.kdkab ?? "",
+    namaWilayah,
+    run.user ?? "",
+    run.status,
+    labelStatus,
+    run.nama_file_input ?? "",
+    run.nama_file_peta ?? "",
+    run.pesan ?? "",
+    run.tanggal_data ?? "",
+    formatWaktu(run.created_at),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return gabungan.includes(q);
+}
+
 function nilaiSort(run: Run, kolom: KolomSort): string | number {
   switch (kolom) {
     case "job":
@@ -317,11 +351,14 @@ export function RiwayatWorkspace({ tabAwal = "A" }: { tabAwal?: TipeRun }) {
   }
 
   const urut = useMemo(() => {
+    const tersaring = cari.trim()
+      ? runs.filter((satu) => cocokPencarianLokal(satu, cari))
+      : runs;
     if (!sort) {
-      return runs;
+      return tersaring;
     }
 
-    return [...runs].sort((kiri, kanan) => {
+    return [...tersaring].sort((kiri, kanan) => {
       const a = nilaiSort(kiri, sort.kolom);
       const b = nilaiSort(kanan, sort.kolom);
       let hasil =
@@ -334,7 +371,7 @@ export function RiwayatWorkspace({ tabAwal = "A" }: { tabAwal?: TipeRun }) {
       }
       return sort.arah === "asc" ? hasil : -hasil;
     });
-  }, [runs, sort]);
+  }, [runs, sort, cari]);
 
   const aktifDiDaftar = runs.filter(
     (run) => run.status === "menunggu" || run.status === "jalan",
@@ -445,9 +482,9 @@ export function RiwayatWorkspace({ tabAwal = "A" }: { tabAwal?: TipeRun }) {
             </p>
           ) : null}
 
-          {!memuat && !galat && runs.length === 0 ? (
-            cariAktif ? (
-              <EmptyState judul={`Tidak ada hasil untuk "${cariAktif}"`}>
+          {!memuat && !galat && urut.length === 0 ? (
+            cari.trim() || cariAktif ? (
+              <EmptyState judul={`Tidak ada hasil untuk "${cari.trim() || cariAktif}"`}>
                 Coba kata kunci lain, atau hapus pencarian untuk melihat semua job.
               </EmptyState>
             ) : (
