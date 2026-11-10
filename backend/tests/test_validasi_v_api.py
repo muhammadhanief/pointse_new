@@ -728,44 +728,64 @@ def test_konfirmasi_validasi_sls_endpoint_kewenangan_dan_alasan_wajib(
         r_tanpa_alasan = klien.post(
             f"/runs/{run.id}/validasi-sls/konfirmasi",
             json={
-                "unmatch_ids": semua_ids,
+                "unmatch_ids": [semua_ids[0]],
                 "status": "sesuai_kenyataan",
                 "catatan": "   ",
             },
         )
         assert r_tanpa_alasan.status_code == 422
 
-        # Sesuai kenyataan dengan alasan diterima
-        r_ok = klien.post(
+        # Bulk (lebih dari 1 temuan sekaligus) ditolak 422
+        r_bulk = klien.post(
             f"/runs/{run.id}/validasi-sls/konfirmasi",
             json={
                 "unmatch_ids": semua_ids,
                 "status": "sesuai_kenyataan",
-                "catatan": "Enclave dan batas wilayah sesuai kondisi riil lapangan",
+                "catatan": "Alasan massal tidak boleh",
             },
         )
-        assert r_ok.status_code == 200
-        assert r_ok.json()["jumlah"] == 4
+        assert r_bulk.status_code == 422
+
+        # Konfirmasi satu per satu diterima
+        for idx, uid in enumerate(semua_ids, start=1):
+            r_ok = klien.post(
+                f"/runs/{run.id}/validasi-sls/konfirmasi",
+                json={
+                    "unmatch_ids": [uid],
+                    "status": "sesuai_kenyataan",
+                    "catatan": f"Alasan spesifik temuan ke-{idx} sesuai kondisi lapangan",
+                },
+            )
+            assert r_ok.status_code == 200
+            assert r_ok.json()["jumlah"] == 1
 
         # Petugas kab/kota mencoba menyetujui -> ditolak 403
         r_kab_setuju = klien.post(
             f"/runs/{run.id}/validasi-sls/persetujuan",
-            json={"unmatch_ids": semua_ids, "keputusan": "disetujui"},
+            json={"unmatch_ids": [semua_ids[0]], "keputusan": "disetujui"},
         )
         assert r_kab_setuju.status_code == 403
 
-        # Admin provinsi menyetujui -> 200 & status di ringkasan menjadi sukses_catatan
+        # Admin provinsi menyetujui satu per satu -> 200 & status di ringkasan menjadi sukses_catatan
         app.dependency_overrides[auth.pengguna_saat_ini] = lambda: admin_prov
-        r_prov_setuju = klien.post(
+        # Persetujuan bulk juga ditolak 422
+        r_prov_bulk = klien.post(
             f"/runs/{run.id}/validasi-sls/persetujuan",
-            json={
-                "unmatch_ids": semua_ids,
-                "keputusan": "disetujui",
-                "catatan": "Disetujui provinsi",
-            },
+            json={"unmatch_ids": semua_ids, "keputusan": "disetujui"},
         )
-        assert r_prov_setuju.status_code == 200
-        assert r_prov_setuju.json()["jumlah"] == 4
+        assert r_prov_bulk.status_code == 422
+
+        for uid in semua_ids:
+            r_prov_setuju = klien.post(
+                f"/runs/{run.id}/validasi-sls/persetujuan",
+                json={
+                    "unmatch_ids": [uid],
+                    "keputusan": "disetujui",
+                    "catatan": "Disetujui provinsi",
+                },
+            )
+            assert r_prov_setuju.status_code == 200
+            assert r_prov_setuju.json()["jumlah"] == 1
 
         r_ringkasan = klien.get("/validasi-sls/ringkasan")
         assert r_ringkasan.status_code == 200

@@ -910,12 +910,18 @@ def simpan_konfirmasi_validasi_sls(
             detail="alasan/catatan wajib diisi untuk pilihan 'Sesuai Kondisi Kenyataan'",
         )
     if not permintaan.unmatch_ids:
-        raise HTTPException(status_code=422, detail="pilih minimal satu temuan")
+        raise HTTPException(status_code=422, detail="pilih satu temuan")
+    unik_ids = list(dict.fromkeys(int(x) for x in permintaan.unmatch_ids))
+    if len(unik_ids) != 1:
+        raise HTTPException(
+            status_code=422,
+            detail="konfirmasi temuan wajib diisi satu per satu (tidak boleh bulk)",
+        )
     jumlah = layanan.simpan_konfirmasi_validasi(
         sesi,
         pengguna,
         run,
-        unmatch_ids=permintaan.unmatch_ids,
+        unmatch_ids=unik_ids,
         status=status,
         catatan=catatan,
     )
@@ -953,12 +959,18 @@ def simpan_persetujuan_validasi_sls(
         )
     catatan = (permintaan.catatan or "").strip() or None
     if not permintaan.unmatch_ids:
-        raise HTTPException(status_code=422, detail="pilih minimal satu temuan")
+        raise HTTPException(status_code=422, detail="pilih satu temuan")
+    unik_ids = list(dict.fromkeys(int(x) for x in permintaan.unmatch_ids))
+    if len(unik_ids) != 1:
+        raise HTTPException(
+            status_code=422,
+            detail="persetujuan temuan dilakukan satu per satu",
+        )
     jumlah = layanan.simpan_persetujuan_validasi(
         sesi,
         pengguna,
         run,
-        unmatch_ids=permintaan.unmatch_ids,
+        unmatch_ids=unik_ids,
         keputusan=keputusan,
         catatan=catatan,
     )

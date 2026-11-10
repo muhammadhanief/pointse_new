@@ -91,7 +91,8 @@ export function DialogKonfirmasiValidasi({
   const [galat, setGalat] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  const [terpilih, setTerpilih] = useState<number[]>([]);
+  // Satu temuan aktif yang sedang dikonfirmasi/ditinjau (tidak boleh bulk)
+  const [aktifId, setAktifId] = useState<number | null>(null);
   const [statusKonfirmasi, setStatusKonfirmasi] = useState<
     "akan_diperbaiki" | "sesuai_kenyataan"
   >("akan_diperbaiki");
@@ -106,7 +107,7 @@ export function DialogKonfirmasiValidasi({
     setJenis(jenisAwal);
     setStatusFilter("");
     setHalaman(0);
-    setTerpilih([]);
+    setAktifId(null);
     setCatatanKonfirmasi("");
     setCatatanProvinsi("");
     setGalat(null);
@@ -149,8 +150,10 @@ export function DialogKonfirmasiValidasi({
       );
       setBaris(hasil.baris);
       setTotal(hasil.total);
-      setTerpilih((lama) =>
-        lama.filter((id) => hasil.baris.some((satu) => satu.id === id)),
+      setAktifId((lama) =>
+        lama !== null && hasil.baris.some((satu) => satu.id === lama)
+          ? lama
+          : null,
       );
     } catch (err) {
       setGalat(pesanKesalahan(err));
@@ -165,28 +168,15 @@ export function DialogKonfirmasiValidasi({
     }
   }, [runId, muatDaftar]);
 
-  function toggleSatu(id: number) {
-    setTerpilih((lama) =>
-      lama.includes(id) ? lama.filter((x) => x !== id) : [...lama, id],
-    );
-  }
+  const itemAktif =
+    aktifId !== null
+      ? (baris.find((satu) => satu.id === aktifId) ?? null)
+      : null;
 
-  function toggleSemuaHalaman() {
-    const idsHalaman = baris
-      .map((satu) => satu.id)
-      .filter((id): id is number => typeof id === "number");
-    const semuaTerpilih =
-      idsHalaman.length > 0 &&
-      idsHalaman.every((id) => terpilih.includes(id));
-    if (semuaTerpilih) {
-      setTerpilih((lama) => lama.filter((id) => !idsHalaman.includes(id)));
-    } else {
-      setTerpilih((lama) => Array.from(new Set([...lama, ...idsHalaman])));
-    }
-  }
-
-  function pilihBarisUntukIsi(item: ValidasiUnmatchBaris) {
-    setTerpilih([item.id]);
+  function bukaFormBaris(item: ValidasiUnmatchBaris) {
+    setAktifId(item.id);
+    setGalat(null);
+    setInfo(null);
     if (item.konfirmasi) {
       setStatusKonfirmasi(
         item.konfirmasi.status === "sesuai_kenyataan"
@@ -194,24 +184,25 @@ export function DialogKonfirmasiValidasi({
           : "akan_diperbaiki",
       );
       setCatatanKonfirmasi(item.konfirmasi.catatan ?? "");
+      setCatatanProvinsi(item.konfirmasi.persetujuan_catatan ?? "");
+    } else {
+      setStatusKonfirmasi("akan_diperbaiki");
+      setCatatanKonfirmasi("");
+      setCatatanProvinsi("");
     }
     setTimeout(() => {
       inputCatatanRef.current?.focus();
     }, 50);
   }
 
-  async function simpanKonfirmasi(statusTarget: string) {
-    if (runId === null) {
-      return;
-    }
-    if (terpilih.length === 0) {
-      setGalat("Pilih minimal satu baris temuan pada tabel terlebih dahulu.");
+  async function simpanKonfirmasiSatu(statusTarget: string) {
+    if (runId === null || itemAktif === null) {
       return;
     }
     const alasan = catatanKonfirmasi.trim();
     if (statusTarget === "sesuai_kenyataan" && !alasan) {
       setGalat(
-        "Alasan wajib diisi untuk konfirmasi 'Sesuai Kondisi Kenyataan'.",
+        "Alasan spesifik wajib diisi untuk konfirmasi 'Sesuai Kondisi Kenyataan'.",
       );
       inputCatatanRef.current?.focus();
       return;
@@ -220,13 +211,13 @@ export function DialogKonfirmasiValidasi({
     setGalat(null);
     setInfo(null);
     try {
-      const hasil = await ambilJson<{ jumlah: number }>(
+      await ambilJson<{ jumlah: number }>(
         `/runs/${runId}/validasi-sls/konfirmasi`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            unmatch_ids: terpilih,
+            unmatch_ids: [itemAktif.id],
             status: statusTarget,
             catatan: alasan || null,
           }),
@@ -234,10 +225,11 @@ export function DialogKonfirmasiValidasi({
       );
       setInfo(
         statusTarget === "batal"
-          ? `Konfirmasi pada ${hasil.jumlah} temuan dibatalkan.`
-          : `Berhasil menyimpan konfirmasi untuk ${hasil.jumlah} temuan.`,
+          ? "Konfirmasi temuan berhasil dibatalkan."
+          : "Konfirmasi temuan berhasil disimpan.",
       );
-      setTerpilih([]);
+      setAktifId(null);
+      setCatatanKonfirmasi("");
       await muatDaftar();
       onBerubah();
     } catch (err) {
@@ -247,43 +239,37 @@ export function DialogKonfirmasiValidasi({
     }
   }
 
-  async function simpanPersetujuan(
+  async function simpanPersetujuanSatu(
+    idTarget: number,
     keputusan: "disetujui" | "ditolak",
-    idsTarget?: number[],
+    catatanOpsional?: string,
   ) {
     if (runId === null) {
-      return;
-    }
-    const daftarId = idsTarget ?? terpilih;
-    if (daftarId.length === 0) {
-      setGalat(
-        "Pilih minimal satu temuan berstatus 'Sesuai Kondisi Kenyataan'.",
-      );
       return;
     }
     setMenyimpan(true);
     setGalat(null);
     setInfo(null);
     try {
-      const hasil = await ambilJson<{ jumlah: number }>(
+      await ambilJson<{ jumlah: number }>(
         `/runs/${runId}/validasi-sls/persetujuan`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            unmatch_ids: daftarId,
+            unmatch_ids: [idTarget],
             keputusan,
-            catatan: catatanProvinsi.trim() || null,
+            catatan: (catatanOpsional ?? catatanProvinsi).trim() || null,
           }),
         },
       );
       setInfo(
         keputusan === "disetujui"
-          ? `Disetujui Provinsi untuk ${hasil.jumlah} temuan.`
-          : `Ditolak Provinsi untuk ${hasil.jumlah} temuan.`,
+          ? "Alasan temuan disetujui oleh Provinsi."
+          : "Alasan temuan ditolak oleh Provinsi.",
       );
-      if (!idsTarget) {
-        setTerpilih([]);
+      if (aktifId === idTarget) {
+        setAktifId(null);
       }
       await muatDaftar();
       onBerubah();
@@ -295,11 +281,6 @@ export function DialogKonfirmasiValidasi({
   }
 
   const totalHalaman = Math.max(1, Math.ceil(total / UKURAN_HALAMAN));
-  const terpilihSesuaiKenyataan = baris.filter(
-    (satu) =>
-      terpilih.includes(satu.id) &&
-      satu.konfirmasi?.status === "sesuai_kenyataan",
-  ).length;
 
   return (
     <dialog
@@ -319,7 +300,7 @@ export function DialogKonfirmasiValidasi({
           <div className="sticky top-0 z-20 flex flex-wrap items-start justify-between gap-field border-b border-line bg-surface px-4 py-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                Konfirmasi Temuan Validasi Peta SLS 2026 Semester 1
+                Konfirmasi Temuan Validasi Peta SLS 2026 Semester 1 (Per Temuan)
               </p>
               <h2
                 id="judul-konfirmasi-validasi"
@@ -391,145 +372,14 @@ export function DialogKonfirmasiValidasi({
 
           {/* Body */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {/* Panel Form Konfirmasi & Persetujuan */}
-            <div className="grid gap-3 lg:grid-cols-12">
-              <div
-                className={`rounded-xl border border-line bg-paper p-3 ${
-                  adalahAdminProvinsi ? "lg:col-span-7" : "lg:col-span-12"
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                    Form Konfirmasi Temuan (Kabupaten/Kota & Provinsi)
-                  </p>
-                  <span className="text-xs font-medium text-brand-strong">
-                    {terpilih.length} baris dipilih
-                  </span>
-                </div>
-
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <label
-                    className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                      statusKonfirmasi === "akan_diperbaiki"
-                        ? "border-brand bg-brand-soft text-brand-strong"
-                        : "border-line-strong bg-surface text-ink"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="status_konfirmasi_validasi"
-                      value="akan_diperbaiki"
-                      checked={statusKonfirmasi === "akan_diperbaiki"}
-                      onChange={() => setStatusKonfirmasi("akan_diperbaiki")}
-                      className="accent-brand"
-                    />
-                    Akan Diperbaiki
-                  </label>
-                  <label
-                    className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                      statusKonfirmasi === "sesuai_kenyataan"
-                        ? "border-brand bg-brand-soft text-brand-strong"
-                        : "border-line-strong bg-surface text-ink"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="status_konfirmasi_validasi"
-                      value="sesuai_kenyataan"
-                      checked={statusKonfirmasi === "sesuai_kenyataan"}
-                      onChange={() => setStatusKonfirmasi("sesuai_kenyataan")}
-                      className="accent-brand"
-                    />
-                    Sesuai Kondisi Kenyataan (Wajib alasan)
-                  </label>
-                </div>
-
-                <div className="mt-2">
-                  <textarea
-                    ref={inputCatatanRef}
-                    rows={2}
-                    value={catatanKonfirmasi}
-                    onChange={(e) => setCatatanKonfirmasi(e.target.value)}
-                    placeholder={
-                      statusKonfirmasi === "sesuai_kenyataan"
-                        ? "Tuliskan alasan sesuai kondisi kenyataan lapangan (wajib diisi)..."
-                        : "Catatan perbaikan (opsional)..."
-                    }
-                    className="w-full rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-xs text-ink placeholder:text-muted focus:border-brand focus:outline-none"
-                  />
-                </div>
-
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <TombolAksi
-                    onClick={() => void simpanKonfirmasi(statusKonfirmasi)}
-                    disabled={menyimpan || terpilih.length === 0}
-                    className="min-h-8 px-3 text-xs"
-                  >
-                    {menyimpan
-                      ? "Menyimpan..."
-                      : `Simpan Konfirmasi (${terpilih.length})`}
-                  </TombolAksi>
-                  <TombolAksi
-                    varian="sekunder"
-                    onClick={() => void simpanKonfirmasi("batal")}
-                    disabled={menyimpan || terpilih.length === 0}
-                    className="min-h-8 px-3 text-xs"
-                  >
-                    Batalkan Konfirmasi
-                  </TombolAksi>
-                </div>
-              </div>
-
-              {adalahAdminProvinsi ? (
-                <div className="rounded-xl border border-brand/30 bg-brand-soft/20 p-3 lg:col-span-5">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-brand-strong">
-                      Persetujuan Admin Provinsi
-                    </p>
-                    <span className="text-xs text-muted">
-                      {terpilihSesuaiKenyataan} terpilih &ldquo;Sesuai
-                      Kondisi&rdquo;
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-muted">
-                    Tinjau alasan &ldquo;Sesuai Kondisi Kenyataan&rdquo;. Bila
-                    seluruh temuan kab/kota berstatus Sesuai Kondisi dan
-                    disetujui, status progres menjadi{" "}
-                    <strong className="text-success">
-                      Sukses dengan catatan
-                    </strong>
-                    .
-                  </p>
-                  <div className="mt-2">
-                    <input
-                      type="text"
-                      value={catatanProvinsi}
-                      onChange={(e) => setCatatanProvinsi(e.target.value)}
-                      placeholder="Catatan persetujuan / alasan penolakan provinsi (opsional)..."
-                      className="w-full rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-xs text-ink placeholder:text-muted focus:border-brand focus:outline-none"
-                    />
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={menyimpan || terpilihSesuaiKenyataan === 0}
-                      onClick={() => void simpanPersetujuan("disetujui")}
-                      className="min-h-8 rounded-lg border border-success/40 bg-success-soft px-3 text-xs font-semibold text-success transition-colors hover:bg-success/20 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Setujui ({terpilihSesuaiKenyataan})
-                    </button>
-                    <button
-                      type="button"
-                      disabled={menyimpan || terpilihSesuaiKenyataan === 0}
-                      onClick={() => void simpanPersetujuan("ditolak")}
-                      className="min-h-8 rounded-lg border border-danger/40 bg-danger-soft px-3 text-xs font-semibold text-danger transition-colors hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Tolak ({terpilihSesuaiKenyataan})
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
+            <p className="text-xs text-muted">
+              Setiap temuan wajib dikonfirmasi <strong>satu per satu</strong>{" "}
+              dengan menekan tombol <strong>Konfirmasi / Ubah</strong> pada
+              baris temuan yang bersangkutan. Apabila seluruh temuan berstatus{" "}
+              <em>Sesuai Kondisi Kenyataan</em> dan telah disetujui Provinsi,
+              status progres menjadi{" "}
+              <strong className="text-success">Sukses dengan catatan</strong>.
+            </p>
 
             {galat ? (
               <div
@@ -546,6 +396,188 @@ export function DialogKonfirmasiValidasi({
                 className="rounded-lg border border-success/30 bg-success-soft/60 px-3 py-2 text-xs text-success"
               >
                 {info}
+              </div>
+            ) : null}
+
+            {/* Panel Form Satu Temuan Terpilih */}
+            {itemAktif ? (
+              <div className="rounded-xl border-2 border-brand/50 bg-paper p-3.5 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line pb-2">
+                  <div>
+                    <span className="inline-block rounded border border-line-strong bg-surface px-1.5 py-0.5 text-[11px] font-semibold text-ink">
+                      {labelJenisSingkat(itemAktif.jenis)}
+                    </span>
+                    <span className="ml-2 font-mono text-xs font-semibold text-ink">
+                      Peta:{" "}
+                      {itemAktif.idsubsls_peta ?? itemAktif.idsls_peta ?? "—"}
+                    </span>
+                    <span className="mx-1.5 text-muted">|</span>
+                    <span className="font-mono text-xs font-semibold text-ink">
+                      Master:{" "}
+                      {itemAktif.idsubsls_master ??
+                        itemAktif.idsls_master ??
+                        "—"}
+                    </span>
+                    {itemAktif.nmsls ? (
+                      <span className="ml-2 text-xs text-muted">
+                        ({itemAktif.nmsls})
+                      </span>
+                    ) : null}
+                    {itemAktif.catatan ? (
+                      <p className="mt-0.5 text-xs text-muted">
+                        Keterangan temuan: {itemAktif.catatan}
+                      </p>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAktifId(null)}
+                    className="rounded border border-line-strong bg-surface px-2 py-1 text-xs text-muted hover:text-ink"
+                  >
+                    Tutup Form
+                  </button>
+                </div>
+
+                <div className="mt-3 grid gap-3 lg:grid-cols-12">
+                  <div
+                    className={
+                      adalahAdminProvinsi &&
+                      itemAktif.konfirmasi?.status === "sesuai_kenyataan"
+                        ? "lg:col-span-7"
+                        : "lg:col-span-12"
+                    }
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                      Isi Konfirmasi Temuan Ini
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <label
+                        className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                          statusKonfirmasi === "akan_diperbaiki"
+                            ? "border-brand bg-brand-soft text-brand-strong"
+                            : "border-line-strong bg-surface text-ink"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="status_konfirmasi_validasi_satu"
+                          value="akan_diperbaiki"
+                          checked={statusKonfirmasi === "akan_diperbaiki"}
+                          onChange={() =>
+                            setStatusKonfirmasi("akan_diperbaiki")
+                          }
+                          className="accent-brand"
+                        />
+                        Akan Diperbaiki
+                      </label>
+                      <label
+                        className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                          statusKonfirmasi === "sesuai_kenyataan"
+                            ? "border-brand bg-brand-soft text-brand-strong"
+                            : "border-line-strong bg-surface text-ink"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="status_konfirmasi_validasi_satu"
+                          value="sesuai_kenyataan"
+                          checked={statusKonfirmasi === "sesuai_kenyataan"}
+                          onChange={() =>
+                            setStatusKonfirmasi("sesuai_kenyataan")
+                          }
+                          className="accent-brand"
+                        />
+                        Sesuai Kondisi Kenyataan (Wajib alasan)
+                      </label>
+                    </div>
+
+                    <div className="mt-2">
+                      <textarea
+                        ref={inputCatatanRef}
+                        rows={2}
+                        value={catatanKonfirmasi}
+                        onChange={(e) => setCatatanKonfirmasi(e.target.value)}
+                        placeholder={
+                          statusKonfirmasi === "sesuai_kenyataan"
+                            ? "Tuliskan alasan spesifik untuk SLS/temuan ini sesuai kondisi lapangan (wajib diisi)..."
+                            : "Catatan rencana perbaikan (opsional)..."
+                        }
+                        className="w-full rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-xs text-ink placeholder:text-muted focus:border-brand focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <TombolAksi
+                        onClick={() =>
+                          void simpanKonfirmasiSatu(statusKonfirmasi)
+                        }
+                        disabled={menyimpan}
+                        className="min-h-8 px-3 text-xs"
+                      >
+                        {menyimpan ? "Menyimpan..." : "Simpan Konfirmasi"}
+                      </TombolAksi>
+                      {itemAktif.konfirmasi ? (
+                        <TombolAksi
+                          varian="sekunder"
+                          onClick={() => void simpanKonfirmasiSatu("batal")}
+                          disabled={menyimpan}
+                          className="min-h-8 px-3 text-xs"
+                        >
+                          Batalkan Konfirmasi
+                        </TombolAksi>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {adalahAdminProvinsi &&
+                  itemAktif.konfirmasi?.status === "sesuai_kenyataan" ? (
+                    <div className="rounded-xl border border-brand/30 bg-brand-soft/20 p-3 lg:col-span-5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-brand-strong">
+                        Keputusan Persetujuan Provinsi (Temuan Ini)
+                      </p>
+                      <p className="mt-1 text-xs text-muted">
+                        Alasan Kab/Kota:{" "}
+                        <strong className="text-ink">
+                          {itemAktif.konfirmasi.catatan ?? "—"}
+                        </strong>
+                      </p>
+                      <div className="mt-2">
+                        <input
+                          type="text"
+                          value={catatanProvinsi}
+                          onChange={(e) => setCatatanProvinsi(e.target.value)}
+                          placeholder="Catatan persetujuan / alasan penolakan provinsi (opsional)..."
+                          className="w-full rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-xs text-ink placeholder:text-muted focus:border-brand focus:outline-none"
+                        />
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={menyimpan}
+                          onClick={() =>
+                            void simpanPersetujuanSatu(
+                              itemAktif.id,
+                              "disetujui",
+                            )
+                          }
+                          className="min-h-8 rounded-lg border border-success/40 bg-success-soft px-3 text-xs font-semibold text-success transition-colors hover:bg-success/20 disabled:opacity-50"
+                        >
+                          Setujui Alasan Ini
+                        </button>
+                        <button
+                          type="button"
+                          disabled={menyimpan}
+                          onClick={() =>
+                            void simpanPersetujuanSatu(itemAktif.id, "ditolak")
+                          }
+                          className="min-h-8 rounded-lg border border-danger/40 bg-danger-soft px-3 text-xs font-semibold text-danger transition-colors hover:bg-danger/20 disabled:opacity-50"
+                        >
+                          Tolak Alasan Ini
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : null}
 
@@ -616,21 +648,9 @@ export function DialogKonfirmasiValidasi({
 
             {/* Tabel Rincian Temuan */}
             <div className="overflow-x-auto rounded-lg border border-line">
-              <table className="w-full min-w-[68rem] border-collapse text-xs">
+              <table className="w-full min-w-[66rem] border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-line bg-paper text-left text-[11px] uppercase tracking-wide text-muted">
-                    <th className="w-9 px-2.5 py-2 text-center">
-                      <input
-                        type="checkbox"
-                        aria-label="Pilih semua di halaman ini"
-                        checked={
-                          baris.length > 0 &&
-                          baris.every((satu) => terpilih.includes(satu.id))
-                        }
-                        onChange={toggleSemuaHalaman}
-                        className="accent-brand"
-                      />
-                    </th>
                     <th className="px-2.5 py-2 font-semibold">Jenis</th>
                     <th className="px-2.5 py-2 font-semibold">
                       idsls / idsubsls Peta
@@ -648,7 +668,7 @@ export function DialogKonfirmasiValidasi({
                       Persetujuan Provinsi
                     </th>
                     <th className="px-2.5 py-2 text-right font-semibold">
-                      Aksi
+                      Aksi (Per Baris)
                     </th>
                   </tr>
                 </thead>
@@ -656,7 +676,7 @@ export function DialogKonfirmasiValidasi({
                   {memuat && baris.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={7}
                         className="px-4 py-6 text-center text-muted"
                       >
                         Memuat daftar temuan...
@@ -665,7 +685,7 @@ export function DialogKonfirmasiValidasi({
                   ) : baris.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={7}
                         className="px-4 py-6 text-center text-muted"
                       >
                         Tidak ada temuan untuk saringan ini.
@@ -673,25 +693,17 @@ export function DialogKonfirmasiValidasi({
                     </tr>
                   ) : (
                     baris.map((item) => {
-                      const dicentang = terpilih.includes(item.id);
+                      const sedangDibuka = aktifId === item.id;
                       const konf = item.konfirmasi;
                       return (
                         <tr
                           key={item.id}
                           className={`border-b border-line/60 last:border-0 ${
-                            dicentang
+                            sedangDibuka
                               ? "bg-brand-soft/30"
                               : "hover:bg-paper/70"
                           }`}
                         >
-                          <td className="px-2.5 py-2 text-center align-top">
-                            <input
-                              type="checkbox"
-                              checked={dicentang}
-                              onChange={() => toggleSatu(item.id)}
-                              className="accent-brand"
-                            />
-                          </td>
                           <td className="whitespace-nowrap px-2.5 py-2 align-top">
                             <span className="inline-block rounded border border-line-strong bg-paper px-1.5 py-0.5 text-[11px] font-medium text-ink">
                               {labelJenisSingkat(item.jenis)}
@@ -796,8 +808,12 @@ export function DialogKonfirmasiValidasi({
                             <div className="inline-flex flex-wrap justify-end gap-1">
                               <button
                                 type="button"
-                                onClick={() => pilihBarisUntukIsi(item)}
-                                className="rounded border border-line-strong bg-surface px-2 py-1 text-[11px] font-semibold text-ink hover:border-brand hover:text-brand-strong"
+                                onClick={() => bukaFormBaris(item)}
+                                className={`rounded border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                                  sedangDibuka
+                                    ? "border-brand bg-brand text-white"
+                                    : "border-line-strong bg-surface text-ink hover:border-brand hover:text-brand-strong"
+                                }`}
                               >
                                 {konf ? "Ubah" : "Konfirmasi"}
                               </button>
@@ -811,9 +827,11 @@ export function DialogKonfirmasiValidasi({
                                       konf.persetujuan_status === "disetujui"
                                     }
                                     onClick={() =>
-                                      void simpanPersetujuan("disetujui", [
+                                      void simpanPersetujuanSatu(
                                         item.id,
-                                      ])
+                                        "disetujui",
+                                        "",
+                                      )
                                     }
                                     className="rounded border border-success/40 bg-success-soft px-2 py-1 text-[11px] font-semibold text-success hover:bg-success/20 disabled:opacity-40"
                                   >
@@ -826,9 +844,11 @@ export function DialogKonfirmasiValidasi({
                                       konf.persetujuan_status === "ditolak"
                                     }
                                     onClick={() =>
-                                      void simpanPersetujuan("ditolak", [
+                                      void simpanPersetujuanSatu(
                                         item.id,
-                                      ])
+                                        "ditolak",
+                                        "",
+                                      )
                                     }
                                     className="rounded border border-danger/40 bg-danger-soft px-2 py-1 text-[11px] font-semibold text-danger hover:bg-danger/20 disabled:opacity-40"
                                   >
