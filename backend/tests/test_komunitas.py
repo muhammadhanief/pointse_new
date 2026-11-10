@@ -115,5 +115,34 @@ def test_alur_komunitas_error_gs_solusi_dan_rule(klien) -> None:
         assert r_filter_rule.status_code == 200
         assert r_filter_rule.json()["total"] == 1
         assert r_filter_rule.json()["jadi_rule"] == 1
+
+        # 6. Pencarian berdasarkan nomor tiket (#0001 / #1)
+        r_cari_tiket = klien.get(f"/komunitas/topik?q=%23{topik_id:04d}")
+        assert r_cari_tiket.status_code == 200
+        assert r_cari_tiket.json()["total"] == 1
+        assert r_cari_tiket.json()["baris"][0]["id"] == topik_id
+
+        # 7. Petugas kab/kota tidak boleh menghapus komentar maupun topik (403)
+        app.dependency_overrides[auth.pengguna_saat_ini] = lambda: kab_banyumas
+        assert (
+            klien.delete(
+                f"/komunitas/topik/{topik_id}/komentar/{komentar_id}"
+            ).status_code
+            == 403
+        )
+        assert klien.delete(f"/komunitas/topik/{topik_id}").status_code == 403
+
+        # 8. Admin Provinsi dapat menghapus komentar dan menghapus topik
+        app.dependency_overrides[auth.pengguna_saat_ini] = lambda: admin_prov
+        r_hapus_kom = klien.delete(
+            f"/komunitas/topik/{topik_id}/komentar/{komentar_id}"
+        )
+        assert r_hapus_kom.status_code == 200
+        assert r_hapus_kom.json()["jumlah_komentar"] == 0
+
+        r_hapus_topik = klien.delete(f"/komunitas/topik/{topik_id}")
+        assert r_hapus_topik.status_code == 200
+        assert r_hapus_topik.json()["dihapus"] is True
+        assert klien.get(f"/komunitas/topik/{topik_id}").status_code == 404
     finally:
         app.dependency_overrides.pop(auth.pengguna_saat_ini, None)

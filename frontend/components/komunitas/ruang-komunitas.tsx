@@ -19,11 +19,23 @@ import { PERAN_ADMIN_PROVINSI, kodeWilayah } from "@/lib/auth/peran";
 import { formatAngka, formatWaktu } from "@/lib/format";
 import { namaKabupaten } from "@/lib/wilayah/kabupaten";
 
-const PILIHAN_KATEGORI: { kode: KategoriKomunitas; label: string }[] = [
-  { kode: "peta_2026_s1", label: "Peta SLS 2026 S1 (Validasi)" },
-  { kode: "peta_2025_s2", label: "Peta SLS 2025 S2 (Identifikasi)" },
-  { kode: "geotagging", label: "Titik Geotagging (Pengecekan)" },
-  { kode: "lainnya", label: "Lainnya" },
+const PILIHAN_KATEGORI: { kode: KategoriKomunitas; label: string; singkat: string }[] = [
+  {
+    kode: "peta_2026_s1",
+    label: "Peta SLS 2026 S1 (Validasi)",
+    singkat: "Peta SLS 2026 S1",
+  },
+  {
+    kode: "peta_2025_s2",
+    label: "Peta SLS 2025 S2 (Identifikasi)",
+    singkat: "Peta SLS 2025 S2",
+  },
+  {
+    kode: "geotagging",
+    label: "Titik Geotagging (Pengecekan)",
+    singkat: "Titik Geotagging",
+  },
+  { kode: "lainnya", label: "Lainnya", singkat: "Lainnya" },
 ];
 
 const PILIHAN_STATUS: { kode: StatusKomunitas; label: string }[] = [
@@ -35,29 +47,39 @@ const PILIHAN_STATUS: { kode: StatusKomunitas; label: string }[] = [
 const PILIHAN_RULE_TARGET: {
   kode: RuleTargetKomunitas;
   label: string;
+  singkat: string;
   href: string;
 }[] = [
   {
     kode: "identifikasi",
     label: "Rule Identifikasi (Proses A - Peta 2025 S2)",
+    singkat: "Rule Identifikasi",
     href: "/proses/identifikasi",
   },
   {
     kode: "pengecekan",
     label: "Rule Pengecekan (Proses B - Titik Geotagging)",
+    singkat: "Rule Pengecekan",
     href: "/proses/pengecekan",
   },
   {
     kode: "validasi",
     label: "Rule Validasi (Proses V - Peta SLS 2026 S1)",
+    singkat: "Rule Validasi",
     href: "/proses/validasi",
   },
 ];
 
-function labelKategori(kode: string): string {
-  return (
-    PILIHAN_KATEGORI.find((item) => item.kode === kode)?.label ?? kode
-  );
+function formatNomorTiket(id: number): string {
+  return `#${String(id).padStart(4, "0")}`;
+}
+
+function labelKategori(kode: string, singkat = false): string {
+  const temuan = PILIHAN_KATEGORI.find((item) => item.kode === kode);
+  if (!temuan) {
+    return kode;
+  }
+  return singkat ? temuan.singkat : temuan.label;
 }
 
 function infoRuleTarget(kode: string | null) {
@@ -122,7 +144,10 @@ export function RuangKomunitas({
   const [filterRuleTarget, setFilterRuleTarget] = useState<string>("");
   const [kataKunci, setKataKunci] = useState<string>("");
 
-  // State form buat topik baru
+  const [tiketDisalinId, setTiketDisalinId] = useState<number | null>(null);
+  const [menghapusId, setMenghapusId] = useState<number | null>(null);
+
+  // State modal form buat topik baru
   const [bukaFormBaru, setBukaFormBaru] = useState(false);
   const [kategoriBaru, setKategoriBaru] =
     useState<KategoriKomunitas>("peta_2026_s1");
@@ -148,6 +173,7 @@ export function RuangKomunitas({
   const [ruleCatatanAdmin, setRuleCatatanAdmin] = useState<string>("");
   const [menyimpanRule, setMenyimpanRule] = useState(false);
 
+  const dialogBuatRef = useRef<HTMLDialogElement | null>(null);
   const dialogDetailRef = useRef<HTMLDialogElement | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -203,6 +229,20 @@ export function RuangKomunitas({
   }, [muatDaftar]);
 
   useEffect(() => {
+    const el = dialogBuatRef.current;
+    if (!el) {
+      return;
+    }
+    if (bukaFormBaru) {
+      if (!el.open) {
+        el.showModal();
+      }
+    } else if (el.open) {
+      el.close();
+    }
+  }, [bukaFormBaru]);
+
+  useEffect(() => {
     const el = dialogDetailRef.current;
     if (!el) {
       return;
@@ -216,6 +256,21 @@ export function RuangKomunitas({
     }
   }, [detail]);
 
+  async function salinRujukanWa(topik: Pick<KomunitasTopik, "id" | "judul">) {
+    const teks = `${formatNomorTiket(topik.id)} — ${topik.judul}`;
+    try {
+      await navigator.clipboard.writeText(teks);
+      setTiketDisalinId(topik.id);
+      window.setTimeout(() => {
+        setTiketDisalinId((sebelumnya) =>
+          sebelumnya === topik.id ? null : sebelumnya,
+        );
+      }, 1800);
+    } catch {
+      // Abaikan bila clipboard tidak diizinkan browser
+    }
+  }
+
   async function bukaDetailTopik(topikId: number) {
     setMemuatDetail(true);
     setGalatDetail(null);
@@ -224,9 +279,7 @@ export function RuangKomunitas({
         `/komunitas/topik/${topikId}`,
       );
       setDetail(hasil);
-      setStatusAdmin(
-        (hasil.status as StatusKomunitas) || "terbuka",
-      );
+      setStatusAdmin((hasil.status as StatusKomunitas) || "terbuka");
       setRuleTargetAdmin(hasil.rule_target ?? "");
       setRuleCatatanAdmin(hasil.rule_catatan ?? "");
       setIsiKomentar("");
@@ -299,6 +352,54 @@ export function RuangKomunitas({
       setGalatBaru(pesanKesalahan(err));
     } finally {
       setMenyimpanBaru(false);
+    }
+  }
+
+  async function hapusTopik(topik: Pick<KomunitasTopik, "id" | "judul">) {
+    const nomor = formatNomorTiket(topik.id);
+    if (
+      !window.confirm(
+        `Hapus bahasan ${nomor} "${topik.judul}" beserta seluruh komentarnya?`,
+      )
+    ) {
+      return;
+    }
+    setMenghapusId(topik.id);
+    setGalat(null);
+    try {
+      await ambilJson<{ dihapus: boolean; id: number }>(
+        `/komunitas/topik/${topik.id}`,
+        { method: "DELETE" },
+      );
+      if (detail?.id === topik.id) {
+        setDetail(null);
+      }
+      await muatDaftar();
+    } catch (err) {
+      setGalat(pesanKesalahan(err));
+    } finally {
+      setMenghapusId(null);
+    }
+  }
+
+  async function hapusKomentar(komentarId: number) {
+    if (!detail) {
+      return;
+    }
+    if (!window.confirm("Hapus balasan/komentar ini?")) {
+      return;
+    }
+    setGalatDetail(null);
+    try {
+      const hasil = await ambilJson<KomunitasTopikDetail>(
+        `/komunitas/topik/${detail.id}/komentar/${komentarId}`,
+        { method: "DELETE" },
+      );
+      setDetail(hasil);
+      setStatusAdmin((hasil.status as StatusKomunitas) || "terbuka");
+      await muatDaftar();
+    } catch (err) {
+      setGalatDetail(pesanKesalahan(err));
     }
   }
 
@@ -403,227 +504,426 @@ export function RuangKomunitas({
     }
   }
 
+  const totalSeluruh = data.terbuka + data.terpecahkan + data.jadi_rule;
+
   return (
     <div className="space-y-field">
-      {/* Kartu Ringkasan Status */}
-      <div className="grid gap-3 sm:grid-cols-3">
-        <button
-          type="button"
-          onClick={() =>
-            setFilterStatus((s) => (s === "terbuka" ? "" : "terbuka"))
-          }
-          className={`rounded-xl border p-3.5 text-left transition-colors ${
-            filterStatus === "terbuka"
-              ? "border-warning bg-warning/10"
-              : "border-line bg-surface hover:border-line-strong"
-          }`}
-        >
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-            Belum Ada Solusi
-          </p>
-          <p className="mt-1 text-2xl font-bold tabular-nums text-warning">
-            {formatAngka(data.terbuka)}
-          </p>
-          <p className="mt-0.5 text-xs text-muted">
-            Error GS Pusat yang sedang dicari solusinya bersama
-          </p>
-        </button>
-
-        <button
-          type="button"
-          onClick={() =>
-            setFilterStatus((s) => (s === "terpecahkan" ? "" : "terpecahkan"))
-          }
-          className={`rounded-xl border p-3.5 text-left transition-colors ${
-            filterStatus === "terpecahkan"
-              ? "border-success bg-success-soft/60"
-              : "border-line bg-surface hover:border-line-strong"
-          }`}
-        >
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-            Sudah Ada Solusi
-          </p>
-          <p className="mt-1 text-2xl font-bold tabular-nums text-success">
-            {formatAngka(data.terpecahkan)}
-          </p>
-          <p className="mt-0.5 text-xs text-muted">
-            Masalah yang sudah ditemukan cara perbaikannya
-          </p>
-        </button>
-
-        <button
-          type="button"
-          onClick={() =>
-            setFilterStatus((s) => (s === "jadi_rule" ? "" : "jadi_rule"))
-          }
-          className={`rounded-xl border p-3.5 text-left transition-colors ${
-            filterStatus === "jadi_rule"
-              ? "border-brand bg-brand-soft/60"
-              : "border-line bg-surface hover:border-line-strong"
-          }`}
-        >
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-            Dijadikan Rule PointSE
-          </p>
-          <p className="mt-1 text-2xl font-bold tabular-nums text-brand-strong">
-            {formatAngka(data.jadi_rule)}
-          </p>
-          <p className="mt-0.5 text-xs text-muted">
-            Diangkat ke rule Identifikasi, Pengecekan, atau Validasi
-          </p>
-        </button>
-      </div>
-
       <Panel
-        judul="Ruang Diskusi Error Web GS Pusat (dataspasial.bps.go.id/gs)"
-        deskripsi="Karena output error .txt dari web GS Pusat hanya muncul di akun kabupaten/kota masing-masing, bagikan isi error .txt atau solusinya di sini agar kabupaten/kota lain terbantu dan Provinsi dapat menambahkan rule pencegahan otomatis di PointSE."
+        judul="Daftar Bahasan Error Web GS Pusat (dataspasial.bps.go.id/gs)"
+        deskripsi="Gunakan nomor tiket (mis. #0001) untuk merujuk bahasan saat berdiskusi di grup WhatsApp. Klik tombol '+ Bagikan Error GS / Solusi Baru' untuk membuka form laporan."
       >
-        {/* Baris Kontrol Pencarian & Tombol Bagikan */}
-        <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-1 flex-wrap items-center gap-2">
-            <input
-              type="search"
-              value={kataKunci}
-              onChange={(e) => setKataKunci(e.target.value)}
-              placeholder="Cari potongan pesan error .txt, judul, atau kab/kota..."
-              className="min-h-9 min-w-[16rem] flex-1 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:border-brand focus:outline-none"
-            />
-            <select
-              value={filterKategori}
-              onChange={(e) => setFilterKategori(e.target.value)}
-              className="min-h-9 rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-xs text-ink"
+        {/* Baris Ringkas Status (Chip Filter) + Tombol Modal Buat Bahasan */}
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-b border-line pb-3">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setFilterStatus("")}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-semibold transition-colors ${
+                filterStatus === ""
+                  ? "border-brand bg-brand-soft text-brand-strong"
+                  : "border-line bg-paper text-muted hover:border-line-strong hover:text-ink"
+              }`}
             >
-              <option value="">Semua Kategori</option>
-              {PILIHAN_KATEGORI.map((k) => (
-                <option key={k.kode} value={k.kode}>
-                  {k.label}
-                </option>
-              ))}
-            </select>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="min-h-9 rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-xs text-ink"
+              <span>Semua</span>
+              <span className="rounded bg-surface px-1.5 py-0.2 tabular-nums text-ink">
+                {formatAngka(totalSeluruh)}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setFilterStatus((s) => (s === "terbuka" ? "" : "terbuka"))
+              }
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-semibold transition-colors ${
+                filterStatus === "terbuka"
+                  ? "border-warning bg-warning/15 text-warning"
+                  : "border-line bg-paper text-muted hover:border-warning/50 hover:text-ink"
+              }`}
             >
-              <option value="">Semua Status</option>
-              {PILIHAN_STATUS.map((s) => (
-                <option key={s.kode} value={s.kode}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-            <select
-              value={filterRuleTarget}
-              onChange={(e) => setFilterRuleTarget(e.target.value)}
-              className="min-h-9 rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-xs text-ink"
+              <span>Belum Ada Solusi</span>
+              <span className="rounded bg-surface px-1.5 py-0.2 tabular-nums text-warning">
+                {formatAngka(data.terbuka)}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setFilterStatus((s) =>
+                  s === "terpecahkan" ? "" : "terpecahkan",
+                )
+              }
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-semibold transition-colors ${
+                filterStatus === "terpecahkan"
+                  ? "border-success bg-success-soft text-success"
+                  : "border-line bg-paper text-muted hover:border-success/50 hover:text-ink"
+              }`}
             >
-              <option value="">Semua Target Rule</option>
-              {PILIHAN_RULE_TARGET.map((r) => (
-                <option key={r.kode} value={r.kode}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
+              <span>Sudah Ada Solusi</span>
+              <span className="rounded bg-surface px-1.5 py-0.2 tabular-nums text-success">
+                {formatAngka(data.terpecahkan)}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setFilterStatus((s) => (s === "jadi_rule" ? "" : "jadi_rule"))
+              }
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-semibold transition-colors ${
+                filterStatus === "jadi_rule"
+                  ? "border-brand bg-brand-soft text-brand-strong"
+                  : "border-line bg-paper text-muted hover:border-brand/50 hover:text-ink"
+              }`}
+            >
+              <span>Dijadikan Rule PointSE</span>
+              <span className="rounded bg-surface px-1.5 py-0.2 tabular-nums text-brand-strong">
+                {formatAngka(data.jadi_rule)}
+              </span>
+            </button>
           </div>
 
-          <div className="flex items-center gap-2">
-            <TombolAksi
-              onClick={() => setBukaFormBaru((b) => !b)}
-              varian={bukaFormBaru ? "sekunder" : "utama"}
-            >
-              {bukaFormBaru
-                ? "Tutup Form"
-                : "+ Bagikan Error GS / Solusi Baru"}
-            </TombolAksi>
-          </div>
+          <TombolAksi
+            onClick={() => {
+              setGalatBaru(null);
+              setBukaFormBaru(true);
+            }}
+          >
+            + Bagikan Error GS / Solusi Baru
+          </TombolAksi>
         </div>
 
-        {/* Form Buat Topik Baru */}
+        {/* Baris Kontrol Pencarian & Filter */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            value={kataKunci}
+            onChange={(e) => setKataKunci(e.target.value)}
+            placeholder="Cari no. tiket (#0001), potongan error .txt, judul, atau kab/kota..."
+            className="min-h-9 min-w-[16rem] flex-1 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-sm text-ink placeholder:text-muted focus:border-brand focus:outline-none"
+          />
+          <select
+            value={filterKategori}
+            onChange={(e) => setFilterKategori(e.target.value)}
+            className="min-h-9 rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-xs text-ink"
+          >
+            <option value="">Semua Kategori</option>
+            {PILIHAN_KATEGORI.map((k) => (
+              <option key={k.kode} value={k.kode}>
+                {k.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filterRuleTarget}
+            onChange={(e) => setFilterRuleTarget(e.target.value)}
+            className="min-h-9 rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-xs text-ink"
+          >
+            <option value="">Semua Target Rule</option>
+            {PILIHAN_RULE_TARGET.map((r) => (
+              <option key={r.kode} value={r.kode}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {galat ? (
+          <div
+            role="alert"
+            className="mt-3 rounded-lg border border-danger/30 bg-danger-soft/60 px-3 py-2 text-xs text-danger"
+          >
+            {galat}
+          </div>
+        ) : null}
+
+        {/* Tabel Daftar Bahasan Komunitas */}
+        <div className="mt-3">
+          {memuat && data.baris.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted">
+              Memuat tabel bahasan komunitas...
+            </p>
+          ) : data.baris.length === 0 ? (
+            <EmptyState judul="Belum ada bahasan yang cocok">
+              Klik tombol <strong>+ Bagikan Error GS / Solusi Baru</strong> di
+              kanan atas untuk menambahkan bahasan pertama.
+            </EmptyState>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-line">
+              <table className="w-full min-w-[64rem] border-collapse text-left text-xs">
+                <thead className="border-b border-line bg-paper text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  <tr>
+                    <th className="w-28 px-3 py-2.5">No. Tiket</th>
+                    <th className="w-36 px-3 py-2.5">Kategori</th>
+                    <th className="px-3 py-2.5">
+                      Judul Masalah &amp; Cuplikan Error{" "}
+                      <code className="font-mono">.txt</code>
+                    </th>
+                    <th className="w-44 px-3 py-2.5">Pelapor (Wilayah)</th>
+                    <th className="w-44 px-3 py-2.5">Status &amp; Rule</th>
+                    <th className="w-32 px-3 py-2.5 text-center">
+                      Serupa &amp; Diskusi
+                    </th>
+                    <th className="w-36 px-3 py-2.5 text-right">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line bg-surface">
+                  {data.baris.map((topik) => {
+                    const nomorTiket = formatNomorTiket(topik.id);
+                    const infoRule = infoRuleTarget(topik.rule_target);
+                    return (
+                      <tr
+                        key={topik.id}
+                        className="align-top transition-colors hover:bg-paper/60"
+                      >
+                        <td className="px-3 py-2.5 font-mono">
+                          <div className="flex flex-col items-start gap-1">
+                            <button
+                              type="button"
+                              onClick={() => void bukaDetailTopik(topik.id)}
+                              className="rounded border border-brand/40 bg-brand-soft/60 px-2 py-0.5 text-xs font-bold text-brand-strong hover:bg-brand-soft"
+                              title="Klik untuk membuka detail bahasan"
+                            >
+                              {nomorTiket}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void salinRujukanWa(topik)}
+                              className="text-[11px] font-sans text-muted hover:text-brand-strong hover:underline"
+                              title="Salin nomor tiket & judul untuk ditempel di WhatsApp"
+                            >
+                              {tiketDisalinId === topik.id
+                                ? "Disalin ke WA"
+                                : "Salin rujukan WA"}
+                            </button>
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2.5">
+                          <span className="inline-flex items-center rounded-md border border-line-strong bg-paper px-2 py-0.5 text-xs font-medium text-ink">
+                            {labelKategori(topik.kategori, true)}
+                          </span>
+                        </td>
+
+                        <td className="px-3 py-2.5">
+                          <button
+                            type="button"
+                            onClick={() => void bukaDetailTopik(topik.id)}
+                            className="text-left text-sm font-semibold text-ink hover:text-brand-strong hover:underline"
+                          >
+                            {topik.judul}
+                          </button>
+                          <p className="mt-0.5 line-clamp-2 text-xs text-muted">
+                            {topik.deskripsi}
+                          </p>
+                          {topik.error_txt ? (
+                            <pre className="mt-1.5 line-clamp-2 max-w-xl overflow-hidden rounded border border-line bg-paper px-2 py-1 font-mono text-[11px] text-ink">
+                              {topik.error_txt}
+                            </pre>
+                          ) : null}
+                          {topik.solusi_awal ? (
+                            <p className="mt-1 line-clamp-1 text-[11px] font-medium text-success">
+                              Solusi awal: {topik.solusi_awal}
+                            </p>
+                          ) : null}
+                        </td>
+
+                        <td className="px-3 py-2.5">
+                          <p className="font-semibold text-ink">{topik.oleh}</p>
+                          <p className="text-[11px] text-muted">
+                            {labelAsalWilayah(
+                              topik.kdprov,
+                              topik.kdkab,
+                              topik.peran,
+                            )}
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-muted">
+                            {formatWaktu(topik.created_at)}
+                          </p>
+                        </td>
+
+                        <td className="px-3 py-2.5">
+                          <div className="flex flex-col items-start gap-1">
+                            <BadgeStatusKomunitas status={topik.status} />
+                            {infoRule ? (
+                              <Link
+                                href={infoRule.href}
+                                className="inline-flex items-center rounded border border-brand/40 bg-brand-soft/60 px-1.5 py-0.5 text-[11px] font-semibold text-brand-strong hover:underline"
+                              >
+                                {infoRule.singkat}
+                              </Link>
+                            ) : null}
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2.5 text-center">
+                          <div className="flex flex-col items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => void toggleDukungan(topik)}
+                              title="Tandai bahwa kabupaten/kota Anda juga mengalami error serupa"
+                              className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-semibold tabular-nums transition-colors ${
+                                topik.didukung_saya
+                                  ? "border-brand bg-brand-soft text-brand-strong"
+                                  : "border-line-strong bg-paper text-ink hover:border-brand"
+                              }`}
+                            >
+                              <span>+1 Serupa</span>
+                              <span>({formatAngka(topik.jumlah_dukungan)})</span>
+                            </button>
+                            <span className="text-[11px] text-muted tabular-nums">
+                              {formatAngka(topik.jumlah_komentar)} balasan
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="px-3 py-2.5 text-right">
+                          <div className="flex flex-wrap items-center justify-end gap-1.5">
+                            <TombolAksi
+                              varian="sekunder"
+                              className="min-h-8 px-2.5 text-xs"
+                              onClick={() => void bukaDetailTopik(topik.id)}
+                            >
+                              {memuatDetail && detail?.id === topik.id
+                                ? "Memuat..."
+                                : "Diskusi"}
+                            </TombolAksi>
+                            {adalahAdminProvinsi ? (
+                              <button
+                                type="button"
+                                disabled={menghapusId === topik.id}
+                                onClick={() => void hapusTopik(topik)}
+                                className="inline-flex min-h-8 items-center justify-center rounded-lg border border-danger/40 bg-danger-soft/50 px-2.5 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white disabled:opacity-50"
+                                title="Hapus topik bahasan ini (Khusus Admin Provinsi)"
+                              >
+                                {menghapusId === topik.id ? "..." : "Hapus"}
+                              </button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </Panel>
+
+      {/* Modal Popup: Form Bagikan Error GS / Solusi Baru */}
+      <dialog
+        ref={dialogBuatRef}
+        aria-labelledby="judul-modal-buat-komunitas"
+        onClose={() => setBukaFormBaru(false)}
+        onClick={(event) => {
+          if (event.target === event.currentTarget && !menyimpanBaru) {
+            setBukaFormBaru(false);
+          }
+        }}
+        className="m-auto w-[min(48rem,calc(100vw-1.5rem))] max-h-[90vh] overflow-hidden rounded-xl border border-line bg-surface p-0 text-ink shadow-2xl backdrop:bg-ink/40"
+      >
         {bukaFormBaru ? (
-          <div className="mt-4 rounded-xl border-2 border-brand/40 bg-paper p-4 space-y-3">
-            <div className="flex items-center justify-between border-b border-line pb-2">
-              <h3 className="text-sm font-semibold text-ink">
-                Bagikan Temuan Error dari Web GS Pusat (dataspasial.bps.go.id/gs)
-              </h3>
-              <span className="text-xs text-muted">
-                Tanpa perlu menautkan job/run PointSE
-              </span>
+          <div className="flex max-h-[90vh] flex-col">
+            <div className="sticky top-0 z-20 flex items-start justify-between gap-3 border-b border-line bg-surface px-4 py-3">
+              <div>
+                <h2
+                  id="judul-modal-buat-komunitas"
+                  className="text-base font-semibold text-ink"
+                >
+                  Bagikan Error GS Pusat / Solusi Baru
+                </h2>
+                <p className="text-xs text-muted">
+                  Setiap bahasan otomatis mendapat nomor tiket (mis. #0001) agar
+                  mudah dirujuk di WhatsApp.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBukaFormBaru(false)}
+                disabled={menyimpanBaru}
+                aria-label="Tutup form"
+                className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-paper hover:text-ink"
+              >
+                <IkonTutup className="h-4 w-4" />
+              </button>
             </div>
 
-            {galatBaru ? (
-              <div
-                role="alert"
-                className="rounded-lg border border-danger/30 bg-danger-soft/60 px-3 py-2 text-xs text-danger"
-              >
-                {galatBaru}
-              </div>
-            ) : null}
-
-            <div className="grid gap-3 sm:grid-cols-12">
-              <div className="sm:col-span-4">
-                <label className="block text-xs font-semibold text-ink">
-                  Kategori Peta / Data
-                </label>
-                <select
-                  value={kategoriBaru}
-                  onChange={(e) =>
-                    setKategoriBaru(e.target.value as KategoriKomunitas)
-                  }
-                  className="mt-1 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-xs text-ink"
+            <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
+              {galatBaru ? (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-danger/30 bg-danger-soft/60 px-3 py-2 text-xs text-danger"
                 >
-                  {PILIHAN_KATEGORI.map((k) => (
-                    <option key={k.kode} value={k.kode}>
-                      {k.label}
-                    </option>
-                  ))}
-                </select>
+                  {galatBaru}
+                </div>
+              ) : null}
+
+              <div className="grid gap-3 sm:grid-cols-12">
+                <div className="sm:col-span-4">
+                  <label className="block text-xs font-semibold text-ink">
+                    Kategori Peta / Data
+                  </label>
+                  <select
+                    value={kategoriBaru}
+                    onChange={(e) =>
+                      setKategoriBaru(e.target.value as KategoriKomunitas)
+                    }
+                    className="mt-1 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-xs text-ink"
+                  >
+                    {PILIHAN_KATEGORI.map((k) => (
+                      <option key={k.kode} value={k.kode}>
+                        {k.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="sm:col-span-8">
+                  <label className="block text-xs font-semibold text-ink">
+                    Judul Masalah / Ringkasan Error *
+                  </label>
+                  <input
+                    type="text"
+                    value={judulBaru}
+                    onChange={(e) => setJudulBaru(e.target.value)}
+                    placeholder="Contoh: Ditolak GS Pusat karena Poligon Self-Intersection pada kode SubSLS..."
+                    className="mt-1 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-xs text-ink placeholder:text-muted focus:border-brand focus:outline-none"
+                  />
+                </div>
               </div>
 
-              <div className="sm:col-span-8">
-                <label className="block text-xs font-semibold text-ink">
-                  Judul Masalah / Ringkasan Error *
-                </label>
-                <input
-                  type="text"
-                  value={judulBaru}
-                  onChange={(e) => setJudulBaru(e.target.value)}
-                  placeholder="Contoh: Ditolak GS Pusat karena Poligon Self-Intersection pada kode SubSLS..."
-                  className="mt-1 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-xs text-ink placeholder:text-muted focus:border-brand focus:outline-none"
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-xs font-semibold text-ink">
+                    Isi Pesan Error <code className="font-mono">.txt</code> dari
+                    Web GS Pusat (Opsional, memudahkan pencarian)
+                  </label>
+                  <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-paper px-2.5 py-1 text-xs font-medium text-ink hover:border-brand">
+                    <span>Pilih Berkas .txt</span>
+                    <input
+                      type="file"
+                      accept=".txt,text/plain"
+                      onChange={saatPilihBerkasTxt}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+                {namaFileTxt ? (
+                  <p className="mt-0.5 text-[11px] text-brand-strong">
+                    Dimuat dari berkas: {namaFileTxt}
+                  </p>
+                ) : null}
+                <textarea
+                  rows={4}
+                  value={errorTxtBaru}
+                  onChange={(e) => setErrorTxtBaru(e.target.value)}
+                  placeholder="Tempel (paste) isi file .txt error yang diunduh dari http://dataspasial.bps.go.id/gs di sini..."
+                  className="mt-1 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 font-mono text-xs text-ink placeholder:font-sans placeholder:text-muted focus:border-brand focus:outline-none"
                 />
               </div>
-            </div>
 
-            <div>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <label className="block text-xs font-semibold text-ink">
-                  Isi Pesan Error <code className="font-mono">.txt</code> dari
-                  Web GS Pusat (Opsional, sangat membantu pencarian)
-                </label>
-                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-2.5 py-1 text-xs font-medium text-ink hover:border-brand">
-                  <span>Pilih Berkas .txt</span>
-                  <input
-                    type="file"
-                    accept=".txt,text/plain"
-                    onChange={saatPilihBerkasTxt}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-              {namaFileTxt ? (
-                <p className="mt-0.5 text-[11px] text-brand-strong">
-                  Dimuat dari berkas: {namaFileTxt}
-                </p>
-              ) : null}
-              <textarea
-                rows={4}
-                value={errorTxtBaru}
-                onChange={(e) => setErrorTxtBaru(e.target.value)}
-                placeholder="Tempel (paste) isi file .txt error yang diunduh dari http://dataspasial.bps.go.id/gs di sini..."
-                className="mt-1 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 font-mono text-xs text-ink placeholder:font-sans placeholder:text-muted focus:border-brand focus:outline-none"
-              />
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="block text-xs font-semibold text-ink">
                   Kronologi / Deskripsi Masalah *
@@ -639,20 +939,20 @@ export function RuangKomunitas({
 
               <div>
                 <label className="block text-xs font-semibold text-ink">
-                  Solusi / Cara Mengatasi (Isi bila Anda sudah menemukan
+                  Solusi / Cara Mengatasi (Opsional — isi bila sudah menemukan
                   solusinya)
                 </label>
                 <textarea
                   rows={3}
                   value={solusiAwalBaru}
                   onChange={(e) => setSolusiAwalBaru(e.target.value)}
-                  placeholder="Opsional: Jika sudah berhasil diatasi (misal langkah perbaikan di QGIS), bagikan di sini agar otomatis berstatus 'Sudah Ada Solusi'..."
+                  placeholder="Jika sudah berhasil diatasi (misal langkah perbaikan di QGIS), bagikan di sini agar otomatis berstatus 'Sudah Ada Solusi'..."
                   className="mt-1 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-xs text-ink placeholder:text-muted focus:border-brand focus:outline-none"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-1">
+            <div className="flex items-center justify-end gap-2 border-t border-line bg-paper px-4 py-3">
               <TombolAksi
                 varian="sekunder"
                 onClick={() => setBukaFormBaru(false)}
@@ -664,130 +964,14 @@ export function RuangKomunitas({
                 onClick={() => void kirimTopikBaru()}
                 disabled={menyimpanBaru}
               >
-                {menyimpanBaru ? "Menyimpan..." : "Terbitkan ke Komunitas"}
+                {menyimpanBaru ? "Menyimpan..." : "Terbitkan Bahasan"}
               </TombolAksi>
             </div>
           </div>
         ) : null}
+      </dialog>
 
-        {galat ? (
-          <div
-            role="alert"
-            className="mt-3 rounded-lg border border-danger/30 bg-danger-soft/60 px-3 py-2 text-xs text-danger"
-          >
-            {galat}
-          </div>
-        ) : null}
-
-        {/* Daftar Topik */}
-        <div className="mt-4 space-y-2.5">
-          {memuat && data.baris.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted">
-              Memuat diskusi komunitas...
-            </p>
-          ) : data.baris.length === 0 ? (
-            <EmptyState judul="Belum ada topik diskusi yang cocok">
-              Jadilah yang pertama membagikan temuan error dari
-              dataspasial.bps.go.id/gs beserta solusinya.
-            </EmptyState>
-          ) : (
-            data.baris.map((topik) => {
-              const infoRule = infoRuleTarget(topik.rule_target);
-              return (
-                <article
-                  key={topik.id}
-                  className="rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <BadgeStatusKomunitas status={topik.status} />
-                      <span className="inline-flex items-center rounded-md border border-line-strong bg-paper px-2 py-0.5 text-xs font-medium text-ink">
-                        {labelKategori(topik.kategori)}
-                      </span>
-                      {infoRule ? (
-                        <Link
-                          href={infoRule.href}
-                          className="inline-flex items-center rounded-md border border-brand/40 bg-brand-soft/60 px-2 py-0.5 text-xs font-semibold text-brand-strong hover:underline"
-                        >
-                          Target: {infoRule.label}
-                        </Link>
-                      ) : null}
-                    </div>
-                    <span className="text-xs text-muted">
-                      {labelAsalWilayah(
-                        topik.kdprov,
-                        topik.kdkab,
-                        topik.peran,
-                      )}{" "}
-                      · {topik.oleh} · {formatWaktu(topik.created_at)}
-                    </span>
-                  </div>
-
-                  <div className="mt-2">
-                    <button
-                      type="button"
-                      onClick={() => void bukaDetailTopik(topik.id)}
-                      className="text-left text-base font-semibold text-ink hover:text-brand-strong"
-                    >
-                      {topik.judul}
-                    </button>
-                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">
-                      {topik.deskripsi}
-                    </p>
-                  </div>
-
-                  {topik.error_txt ? (
-                    <pre className="mt-2 max-h-24 overflow-hidden rounded-lg border border-line bg-paper p-2.5 font-mono text-[11px] leading-4 text-ink">
-                      {topik.error_txt}
-                    </pre>
-                  ) : null}
-
-                  {topik.solusi_awal ? (
-                    <div className="mt-2 rounded-lg border border-success/30 bg-success-soft/40 px-3 py-1.5 text-xs text-ink">
-                      <strong className="text-success">Solusi Awal:</strong>{" "}
-                      {topik.solusi_awal}
-                    </div>
-                  ) : null}
-
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line/60 pt-2.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void toggleDukungan(topik)}
-                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
-                          topik.didukung_saya
-                            ? "border-brand bg-brand-soft text-brand-strong"
-                            : "border-line-strong bg-paper text-ink hover:border-brand"
-                        }`}
-                      >
-                        <span>
-                          +1 Mengalami Masalah Serupa (
-                          {formatAngka(topik.jumlah_dukungan)})
-                        </span>
-                      </button>
-                      <span className="text-xs text-muted">
-                        {formatAngka(topik.jumlah_komentar)} balasan / solusi
-                      </span>
-                    </div>
-
-                    <TombolAksi
-                      varian="sekunder"
-                      className="min-h-8 px-3 text-xs"
-                      onClick={() => void bukaDetailTopik(topik.id)}
-                    >
-                      {memuatDetail && detail?.id === topik.id
-                        ? "Memuat..."
-                        : "Lihat Diskusi & Solusi"}
-                    </TombolAksi>
-                  </div>
-                </article>
-              );
-            })
-          )}
-        </div>
-      </Panel>
-
-      {/* Dialog Detail Topik, Diskusi, dan Pengaturan Rule */}
+      {/* Modal Popup: Detail Topik, Diskusi, dan Pengaturan Rule */}
       <dialog
         ref={dialogDetailRef}
         aria-labelledby="judul-detail-komunitas"
@@ -804,6 +988,18 @@ export function RuangKomunitas({
             <div className="sticky top-0 z-20 flex items-start justify-between gap-3 border-b border-line bg-surface px-4 py-3">
               <div>
                 <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="rounded border border-brand/40 bg-brand-soft px-2 py-0.5 font-mono text-xs font-bold text-brand-strong">
+                    {formatNomorTiket(detail.id)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void salinRujukanWa(detail)}
+                    className="rounded border border-line-strong bg-paper px-2 py-0.5 text-[11px] font-semibold text-ink hover:border-brand hover:text-brand-strong"
+                  >
+                    {tiketDisalinId === detail.id
+                      ? "Tersalin untuk WA"
+                      : "Salin Rujukan WA"}
+                  </button>
                   <BadgeStatusKomunitas status={detail.status} />
                   <span className="inline-flex items-center rounded-md border border-line-strong bg-paper px-2 py-0.5 text-xs font-medium text-ink">
                     {labelKategori(detail.kategori)}
@@ -827,14 +1023,26 @@ export function RuangKomunitas({
                 </h2>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setDetail(null)}
-                aria-label="Tutup diskusi"
-                className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-paper hover:text-ink"
-              >
-                <IkonTutup className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                {adalahAdminProvinsi ? (
+                  <button
+                    type="button"
+                    disabled={menghapusId === detail.id}
+                    onClick={() => void hapusTopik(detail)}
+                    className="inline-flex min-h-8 items-center justify-center rounded-lg border border-danger/40 bg-danger-soft/50 px-2.5 text-xs font-semibold text-danger transition-colors hover:bg-danger hover:text-white disabled:opacity-50"
+                  >
+                    {menghapusId === detail.id ? "Menghapus..." : "Hapus Topik"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setDetail(null)}
+                  aria-label="Tutup diskusi"
+                  className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-paper hover:text-ink"
+                >
+                  <IkonTutup className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -909,7 +1117,8 @@ export function RuangKomunitas({
               {adalahAdminProvinsi ? (
                 <div className="rounded-xl border border-brand/40 bg-brand-soft/20 p-3.5 space-y-2.5">
                   <p className="text-xs font-semibold uppercase tracking-wide text-brand-strong">
-                    Panel Admin Provinsi: Status Masalah & Tambahan Rule PointSE
+                    Panel Admin Provinsi: Status Masalah &amp; Tambahan Rule
+                    PointSE
                   </p>
                   <p className="text-xs text-muted">
                     Apabila pola error dari GS Pusat ini dapat dicegah otomatis
@@ -1005,7 +1214,7 @@ export function RuangKomunitas({
               {/* Daftar Balasan / Solusi */}
               <div className="space-y-2.5">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  Diskusi & Solusi ({formatAngka(detail.komentar.length)})
+                  Diskusi &amp; Solusi ({formatAngka(detail.komentar.length)})
                 </h3>
 
                 {detail.komentar.length === 0 ? (
@@ -1038,15 +1247,24 @@ export function RuangKomunitas({
                         </div>
 
                         {adalahAdminProvinsi ? (
-                          <button
-                            type="button"
-                            onClick={() => void toggleSolusi(k.id)}
-                            className="rounded border border-line-strong bg-paper px-2 py-0.5 text-[11px] font-semibold text-ink hover:border-success hover:text-success"
-                          >
-                            {k.adalah_solusi
-                              ? "Batalkan Tanda Solusi"
-                              : "Tandai sebagai Solusi"}
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void toggleSolusi(k.id)}
+                              className="rounded border border-line-strong bg-paper px-2 py-0.5 text-[11px] font-semibold text-ink hover:border-success hover:text-success"
+                            >
+                              {k.adalah_solusi
+                                ? "Batalkan Tanda Solusi"
+                                : "Tandai sebagai Solusi"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void hapusKomentar(k.id)}
+                              className="rounded border border-danger/40 bg-danger-soft/50 px-2 py-0.5 text-[11px] font-semibold text-danger hover:bg-danger hover:text-white"
+                            >
+                              Hapus
+                            </button>
+                          </div>
                         ) : null}
                       </div>
                       <p className="mt-1.5 whitespace-pre-wrap text-xs leading-5 text-ink">

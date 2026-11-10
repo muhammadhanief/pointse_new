@@ -177,17 +177,22 @@ def daftar_topik_komunitas(
             )
         saring.append(KomunitasTopik.rule_target == rt)
     if q and q.strip():
-        pola = f"%{q.strip()}%"
-        saring.append(
-            or_(
-                KomunitasTopik.judul.ilike(pola),
-                KomunitasTopik.error_txt.ilike(pola),
-                KomunitasTopik.deskripsi.ilike(pola),
-                KomunitasTopik.solusi_awal.ilike(pola),
-                KomunitasTopik.nama.ilike(pola),
-                KomunitasTopik.kdkab.ilike(pola),
-            )
-        )
+        kata = q.strip()
+        pola = f"%{kata}%"
+        kondisi_q = [
+            KomunitasTopik.judul.ilike(pola),
+            KomunitasTopik.error_txt.ilike(pola),
+            KomunitasTopik.deskripsi.ilike(pola),
+            KomunitasTopik.solusi_awal.ilike(pola),
+            KomunitasTopik.nama.ilike(pola),
+            KomunitasTopik.kdkab.ilike(pola),
+        ]
+        # Dukung pencarian nomor tiket/bahasan seperti "#0012", "#12", atau "12"
+        kandidat_id = kata.lstrip("#").lstrip("0")
+        if kata.lstrip("#").isdigit():
+            id_cari = int(kandidat_id) if kandidat_id else 0
+            kondisi_q.append(KomunitasTopik.id == id_cari)
+        saring.append(or_(*kondisi_q))
 
     total = int(
         sesi.scalar(select(func.count()).select_from(KomunitasTopik).where(*saring)) or 0
@@ -540,5 +545,87 @@ def atur_rule_komunitas(
         objek="komunitas",
         objek_id=topik.id,
         detail=f"status={status} rule_target={rule_target or '-'}",
+    )
+    return detail_topik_komunitas(topik_id, sesi=sesi, pengguna=pengguna)
+
+
+@router.delete("/topik/{topik_id}")
+def hapus_topik_komunitas(
+    topik_id: int,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> dict[str, int | bool]:
+    """Khusus Admin Provinsi: hapus topik bahasan beserta komentar & dukungannya."""
+    auth.pastikan_peran(pengguna, PERAN_ADMIN_PROVINSI)
+    topik = sesi.get(KomunitasTopik, topik_id)
+    if topik is None or topik.kdprov != _kdprov_pengguna(pengguna):
+        raise HTTPException(status_code=404, detail="topik tidak ditemukan")
+
+    judul_ringkas = topik.judul[:80]
+    sesi.query(KomunitasKomentar).filter(
+        KomunitasKomentar.topik_id == topik.id
+    ).delete(synchronize_session=False)
+    sesi.query(KomunitasDukungan).filter(
+        KomunitasDukungan.topik_id == topik.id
+    ).delete(synchronize_session=False)
+    sesi.delete(topik)
+    sesi.commit()
+
+    aktivitas.catat(
+        sesi,
+        pengguna,
+        aksi="hapus_topik_komunitas",
+        objek="komunitas",
+        objek_id=topik_id,
+        detail=f"#{topik_id:04d} {judul_ringkas}",
+    )
+    return {"dihapus": True, "id": topik_id}
+
+
+@router.delete(
+    "/topik/{topik_id}/komentar/{komentar_id}",
+    response_model=KomunitasTopikDetailOut,
+)
+def hapus_komentar_komunitas(
+    topik_id: int,
+    komentar_id: int,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> KomunitasTopikDetailOut:
+    """Khusus Admin Provinsi: hapus satu komentar pada topik bahasan."""
+    auth.pastikan_peran(pengguna, PERAN_ADMIN_PROVINSI)
+    topik = sesi.get(KomunitasTopik, topik_id)
+    if topik is None or topik.kdprov != _kdprov_pengguna(pengguna):
+        raise HTTPException(status_code=404, detail="topik tidak ditemukan")
+    komentar = sesi.get(KomunitasKomentar, komentar_id)
+    if komentar is None or komentar.topik_id != topik.id:
+        raise HTTPException(status_code=404, detail="komentar tidak ditemukan")
+
+    adalah_solusi = bool(komentar.adalah_solusi)
+    sesi.delete(komentar)
+    sesi.flush()
+
+    topik.jumlah_komentar = int(
+        sesi.scalar(
+            select(func.count())
+            .select_from(KomunitasKomentar)
+            .where(KomunitasKomentar.topik_id == topik.id)
+        )
+        or 0
+    )
+    if adalah_solusi or topik.solusi_komentar_id == komentar_id:
+        topik.solusi_komentar_id = None
+        if topik.status == KOMUNITAS_STATUS_TERPECAHKAN and not topik.solusi_awal:
+            topik.status = KOMUNITAS_STATUS_TERBUKA
+    topik.updated_at = sekarang()
+    sesi.commit()
+
+    aktivitas.catat(
+        sesi,
+        pengguna,
+        aksi="hapus_komentar_komunitas",
+        objek="komunitas",
+        objek_id=topik.id,
+        detail=f"komentar_id={komentar_id}",
     )
     return detail_topik_komunitas(topik_id, sesi=sesi, pengguna=pengguna)
