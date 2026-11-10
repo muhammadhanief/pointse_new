@@ -340,20 +340,23 @@ export function ProgresValidasi({
                 <th
                   scope="col"
                   className="sticky top-7 z-10 border-l border-line/60 bg-paper px-2.5 py-1.5 text-right font-semibold"
+                  title="Jumlah pasangan SLS/SubSLS pada Master MFD 2026 S1"
                 >
-                  Target
+                  Master
                 </th>
                 <th
                   scope="col"
                   className="sticky top-7 z-10 bg-paper px-2.5 py-1.5 text-right font-semibold"
+                  title="Jumlah baris poligon SLS/SubSLS pada berkas peta yang diunggah"
                 >
-                  Cocok
+                  Peta
                 </th>
                 <th
                   scope="col"
                   className="sticky top-7 z-10 border-r border-line/60 bg-paper px-2.5 py-1.5 text-right font-semibold"
+                  title="Jumlah pasangan Master MFD yang cocok bersih di peta"
                 >
-                  Selisih
+                  Cocok
                 </th>
               </tr>
             </thead>
@@ -376,6 +379,24 @@ export function ProgresValidasi({
                   (akum, [, jumlah]) => akum + jumlah,
                   0,
                 );
+                const jumlahPeta =
+                  satu.target !== null && satu.selesai !== null
+                    ? satu.target -
+                      (satu.per_jenis.tidak_di_peta ?? 0) +
+                      (satu.per_jenis.tidak_di_master ?? 0) +
+                      (satu.per_jenis.ganda ?? 0) +
+                      (satu.per_jenis.tidak_konsisten ?? 0)
+                    : null;
+                const petaKlop =
+                  jumlahPeta !== null &&
+                  satu.target !== null &&
+                  jumlahPeta === satu.target &&
+                  totalAtribut === 0;
+                const cocokKlop =
+                  satu.selesai !== null &&
+                  satu.target !== null &&
+                  satu.selesai === satu.target &&
+                  totalAtribut === 0;
                 return (
                   <tr
                     key={`${satu.kdprov}-${satu.kdkab}`}
@@ -415,18 +436,30 @@ export function ProgresValidasi({
                     <td className="border-l border-line/50 px-2.5 py-2 text-right tabular-nums text-muted">
                       {satu.target !== null ? formatAngka(satu.target) : "—"}
                     </td>
-                    <td className="px-2.5 py-2 text-right tabular-nums text-success">
-                      {satu.selesai !== null ? formatAngka(satu.selesai) : "—"}
-                    </td>
-                    <td className="border-r border-line/50 px-2.5 py-2 text-right tabular-nums font-semibold">
-                      {satu.sisa === null ? (
+                    <td className="px-2.5 py-2 text-right tabular-nums font-medium">
+                      {jumlahPeta === null ? (
                         <span className="font-normal text-muted">—</span>
-                      ) : satu.sisa > 0 ? (
-                        <span className="text-danger">
-                          {formatAngka(satu.sisa)}
+                      ) : petaKlop ? (
+                        <span className="text-success">
+                          {formatAngka(jumlahPeta)}
                         </span>
                       ) : (
-                        <span className="text-success">0</span>
+                        <span className="text-danger">
+                          {formatAngka(jumlahPeta)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="border-r border-line/50 px-2.5 py-2 text-right tabular-nums font-semibold">
+                      {satu.selesai === null ? (
+                        <span className="font-normal text-muted">—</span>
+                      ) : cocokKlop ? (
+                        <span className="text-success">
+                          {formatAngka(satu.selesai)}
+                        </span>
+                      ) : (
+                        <span className="text-warning">
+                          {formatAngka(satu.selesai)}
+                        </span>
                       )}
                     </td>
                     <td className="max-w-[16rem] px-3 py-2 text-xs leading-5">
