@@ -540,3 +540,63 @@ export type PermintaanKonfirmasi = {
 export type HasilKonfirmasi = {
   jumlah: number;
 };
+
+export type KategoriKomunitas =
+  | "peta_2026_s1"
+  | "peta_2025_s2"
+  | "geotagging"
+  | "lainnya";
+
+export type StatusKomunitas = "terbuka" | "terpecahkan" | "jadi_rule";
+
+export type RuleTargetKomunitas = "identifikasi" | "pengecekan" | "validasi";
+
+export type KomunitasKomentar = {
+  id: number;
+  topik_id: number;
+  kdprov: string;
+  kdkab: string | null;
+  isi: string;
+  adalah_solusi: boolean;
+  oleh: string;
+  username: string;
+  peran: string;
+  created_at: string;
+};
+
+export type KomunitasTopik = {
+  id: number;
+  kdprov: string;
+  kdkab: string | null;
+  kategori: KategoriKomunitas | string;
+  judul: string;
+  error_txt: string | null;
+  deskripsi: string;
+  solusi_awal: string | null;
+  status: StatusKomunitas | string;
+  solusi_komentar_id: number | null;
+  rule_target: RuleTargetKomunitas | string | null;
+  rule_catatan: string | null;
+  rule_oleh: string | null;
+  rule_pada: string | null;
+  jumlah_komentar: number;
+  jumlah_dukungan: number;
+  didukung_saya: boolean;
+  oleh: string;
+  username: string;
+  peran: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KomunitasTopikDetail = KomunitasTopik & {
+  komentar: KomunitasKomentar[];
+};
+
+export type DaftarKomunitasTopik = {
+  total: number;
+  terbuka: number;
+  terpecahkan: number;
+  jadi_rule: number;
+  baris: KomunitasTopik[];
+};

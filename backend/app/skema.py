@@ -906,3 +906,86 @@ class HasilKonfirmasiOut(BaseModel):
     """Hasil aksi konfirmasi/batal: jumlah baris yang terpengaruh."""
 
     jumlah: int
+
+
+class KomunitasKomentarOut(BaseModel):
+    """Satu balasan/solusi pada topik Komunitas."""
+
+    id: int
+    topik_id: int
+    kdprov: str
+    kdkab: str | None = None
+    isi: str
+    adalah_solusi: bool = False
+    oleh: str
+    username: str
+    peran: str
+    created_at: datetime
+
+
+class KomunitasTopikOut(BaseModel):
+    """Satu topik diskusi Komunitas (ringkasan maupun detail)."""
+
+    id: int
+    kdprov: str
+    kdkab: str | None = None
+    kategori: str
+    judul: str
+    error_txt: str | None = None
+    deskripsi: str
+    solusi_awal: str | None = None
+    status: str
+    solusi_komentar_id: int | None = None
+    rule_target: str | None = None
+    rule_catatan: str | None = None
+    rule_oleh: str | None = None
+    rule_pada: datetime | None = None
+    jumlah_komentar: int = 0
+    jumlah_dukungan: int = 1
+    didukung_saya: bool = False
+    oleh: str
+    username: str
+    peran: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class KomunitasTopikDetailOut(KomunitasTopikOut):
+    """Detail satu topik Komunitas beserta daftar komentarnya."""
+
+    komentar: list[KomunitasKomentarOut] = Field(default_factory=list)
+
+
+class DaftarKomunitasTopikOut(BaseModel):
+    """Daftar topik Komunitas beserta hitungan per status."""
+
+    total: int
+    terbuka: int = 0
+    terpecahkan: int = 0
+    jadi_rule: int = 0
+    baris: list[KomunitasTopikOut] = Field(default_factory=list)
+
+
+class KomunitasTopikMasuk(BaseModel):
+    """Permintaan pembuatan topik masalah baru di Komunitas."""
+
+    kategori: str = Field(..., max_length=24)
+    judul: str = Field(..., min_length=5, max_length=200)
+    error_txt: str | None = Field(None, max_length=15000)
+    deskripsi: str = Field(..., min_length=5, max_length=8000)
+    solusi_awal: str | None = Field(None, max_length=8000)
+
+
+class KomunitasKomentarMasuk(BaseModel):
+    """Permintaan tambah balasan/solusi pada topik Komunitas."""
+
+    isi: str = Field(..., min_length=2, max_length=8000)
+    tandai_sebagai_solusi: bool = False
+
+
+class KomunitasRuleMasuk(BaseModel):
+    """Permintaan Admin Provinsi untuk mengatur status & target rule baru."""
+
+    status: str = Field(..., max_length=24)
+    rule_target: str | None = Field(None, max_length=24)
+    rule_catatan: str | None = Field(None, max_length=4000)

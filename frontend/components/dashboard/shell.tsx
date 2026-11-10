@@ -26,6 +26,7 @@ import {
   IkonBeranda,
   IkonGeser,
   IkonKeluar,
+  IkonKomunitas,
   IkonMaster,
   IkonMenu,
   IkonPengecekan,
@@ -86,6 +87,7 @@ const MENU: GrupMenu[] = [
     label: "Pemantauan",
     item: [
       { href: "/riwayat", label: "Riwayat upload", ikon: IkonRiwayat },
+      { href: "/komunitas", label: "Komunitas", ikon: IkonKomunitas },
     ],
   },
   {

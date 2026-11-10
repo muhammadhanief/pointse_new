@@ -844,3 +844,105 @@ class Aktivitas(Base):
     objek_id: Mapped[int | None] = mapped_column(Integer)
     detail: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+
+
+# Nilai kategori dan status untuk modul Komunitas (sharing error GS Pusat & solusi)
+KOMUNITAS_KATEGORI_V = "peta_2026_s1"
+KOMUNITAS_KATEGORI_A = "peta_2025_s2"
+KOMUNITAS_KATEGORI_B = "geotagging"
+KOMUNITAS_KATEGORI_LAIN = "lainnya"
+
+KOMUNITAS_STATUS_TERBUKA = "terbuka"
+KOMUNITAS_STATUS_TERPECAHKAN = "terpecahkan"
+KOMUNITAS_STATUS_JADI_RULE = "jadi_rule"
+
+
+class KomunitasTopik(Base):
+    """Satu topik diskusi komunitas untuk berbagi error `dataspasial.bps.go.id/gs` & solusinya.
+
+    Tanpa kaitan ke run PointSE. Petugas kab/kota maupun provinsi dapat membuat
+    topik beserta cuplikan isi ``.txt`` error dari GS Pusat, mencari masalah
+    serupa, berdiskusi, serta menandai solusi maupun menjadikannya rule baru di
+    Identifikasi (A), Pengecekan (B), atau Validasi (V).
+    """
+
+    __tablename__ = "komunitas_topik"
+    __table_args__ = (
+        Index("ix_komunitas_topik_prov_status_created", "kdprov", "status", "created_at"),
+        Index("ix_komunitas_topik_kategori_created", "kategori", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(IdBesar, primary_key=True, autoincrement=True)
+    kdprov: Mapped[str] = mapped_column(String(4))
+    kdkab: Mapped[str | None] = mapped_column(String(4))
+    #: Kategori objek: ``peta_2026_s1``, ``peta_2025_s2``, ``geotagging``, ``lainnya``.
+    kategori: Mapped[str] = mapped_column(String(24), default=KOMUNITAS_KATEGORI_V)
+    judul: Mapped[str] = mapped_column(String(200))
+    #: Cuplikan atau isi utuh berkas ``.txt`` error dari ``dataspasial.bps.go.id/gs``.
+    error_txt: Mapped[str | None] = mapped_column(Text)
+    deskripsi: Mapped[str] = mapped_column(Text)
+    #: Solusi awal bila pembuat topik sudah menemukan cara perbaikannya sendiri.
+    solusi_awal: Mapped[str | None] = mapped_column(Text)
+    #: Status topik: ``terbuka``, ``terpecahkan``, ``jadi_rule``.
+    status: Mapped[str] = mapped_column(String(24), default=KOMUNITAS_STATUS_TERBUKA)
+    #: ID komentar yang ditandai sebagai solusi terverifikasi (bila ada).
+    solusi_komentar_id: Mapped[int | None] = mapped_column(IdBesar)
+    #: Target modul PointSE bila masalah ini diangkat menjadi rule baru:
+    #: ``identifikasi`` (A) / ``pengecekan`` (B) / ``validasi`` (V) / ``None``.
+    rule_target: Mapped[str | None] = mapped_column(String(24))
+    rule_catatan: Mapped[str | None] = mapped_column(Text)
+    rule_oleh: Mapped[str | None] = mapped_column(String(128))
+    rule_pada: Mapped[datetime | None] = mapped_column(DateTime)
+    jumlah_komentar: Mapped[int] = mapped_column(Integer, default=0)
+    jumlah_dukungan: Mapped[int] = mapped_column(Integer, default=1)
+    # Identitas pembuat topik.
+    sub: Mapped[str] = mapped_column(String(128))
+    username: Mapped[str] = mapped_column(String(64))
+    nama: Mapped[str] = mapped_column(String(128))
+    nip: Mapped[str | None] = mapped_column(String(32))
+    peran: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+
+
+class KomunitasKomentar(Base):
+    """Balasan atau solusi pada satu topik komunitas."""
+
+    __tablename__ = "komunitas_komentar"
+    __table_args__ = (
+        Index("ix_komunitas_komentar_topik_created", "topik_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(IdBesar, primary_key=True, autoincrement=True)
+    topik_id: Mapped[int] = mapped_column(
+        IdBesar, ForeignKey("komunitas_topik.id", ondelete="CASCADE")
+    )
+    kdprov: Mapped[str] = mapped_column(String(4))
+    kdkab: Mapped[str | None] = mapped_column(String(4))
+    isi: Mapped[str] = mapped_column(Text)
+    adalah_solusi: Mapped[int] = mapped_column(AngkaKecil, default=0)
+    sub: Mapped[str] = mapped_column(String(128))
+    username: Mapped[str] = mapped_column(String(64))
+    nama: Mapped[str] = mapped_column(String(128))
+    nip: Mapped[str | None] = mapped_column(String(32))
+    peran: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+
+
+class KomunitasDukungan(Base):
+    """Penanda 'Saya mengalami masalah serupa (+1)' per pengguna per topik."""
+
+    __tablename__ = "komunitas_dukungan"
+    __table_args__ = (
+        UniqueConstraint("topik_id", "sub", name="uq_komunitas_dukungan_topik_sub"),
+        Index("ix_komunitas_dukungan_topik", "topik_id"),
+    )
+
+    id: Mapped[int] = mapped_column(IdBesar, primary_key=True, autoincrement=True)
+    topik_id: Mapped[int] = mapped_column(
+        IdBesar, ForeignKey("komunitas_topik.id", ondelete="CASCADE")
+    )
+    sub: Mapped[str] = mapped_column(String(128))
+    nama: Mapped[str] = mapped_column(String(128))
+    kdkab: Mapped[str | None] = mapped_column(String(4))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
