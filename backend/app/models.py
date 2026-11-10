@@ -88,6 +88,11 @@ STATUS_JALAN = "jalan"
 STATUS_SUKSES = "sukses"
 STATUS_GAGAL = "gagal"
 STATUS_BELUM_CLEAN = "belum_clean"
+STATUS_SUKSES_CATATAN = "sukses_catatan"
+
+# Nilai kolom ``konfirmasi_validasi_sls.persetujuan_status``
+PERSETUJUAN_DISETUJUI = "disetujui"
+PERSETUJUAN_DITOLAK = "ditolak"
 
 # Nilai kolom ``rekap_desa.dasar``/``rekap_kabupaten.dasar``:
 # - tugas : wilayah penugasan titik, dari ``titik_hasil.level_6_full_code``
@@ -574,6 +579,59 @@ class ValidasiSlsUnmatch(Base):
     #: Keterangan tambahan (mis. ganda di peta (3 baris)).
     catatan: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+
+
+class KonfirmasiValidasiSls(Base):
+    """Konfirmasi temuan validasi peta SLS 2026 Semester 1 beserta persetujuan provinsi.
+
+    Dikunci dengan ``kunci`` stabil per (``kdprov``, ``kdkab``, ``kunci``) sehingga
+    konfirmasi dan persetujuan tetap berlaku ketika kabupaten/kota mengunggah ulang
+    peta (run V berikutnya) selama temuan tersebut masih ada.
+    """
+
+    __tablename__ = "konfirmasi_validasi_sls"
+    __table_args__ = (
+        UniqueConstraint(
+            "kdprov", "kdkab", "kunci", name="uq_konfirmasi_validasi_sls_kunci"
+        ),
+        Index("ix_konfirmasi_validasi_sls_kab", "kdprov", "kdkab"),
+        Index("ix_konfirmasi_validasi_sls_run", "run_v_id"),
+    )
+
+    id: Mapped[int] = mapped_column(IdBesar, primary_key=True, autoincrement=True)
+    kdprov: Mapped[str] = mapped_column(String(4))
+    kdkab: Mapped[str] = mapped_column(String(4))
+    #: Identitas stabil temuan: ``jenis|idsls_peta|idsubsls_peta|idsls_master|idsubsls_master|catatan``.
+    kunci: Mapped[str] = mapped_column(String(191))
+    jenis: Mapped[str] = mapped_column(String(24))
+    idsls_peta: Mapped[str | None] = mapped_column(String(20))
+    idsubsls_peta: Mapped[str | None] = mapped_column(String(20))
+    idsls_master: Mapped[str | None] = mapped_column(String(20))
+    idsubsls_master: Mapped[str | None] = mapped_column(String(20))
+    #: Status konfirmasi: ``akan_diperbaiki`` atau ``sesuai_kenyataan``.
+    status: Mapped[str] = mapped_column(String(24))
+    #: Alasan/catatan konfirmasi (wajib bila ``sesuai_kenyataan``).
+    catatan: Mapped[str | None] = mapped_column(Text)
+    #: Run V saat konfirmasi terakhir diubah.
+    run_v_id: Mapped[int | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL")
+    )
+    # Pelaku konfirmasi terakhir (kabupaten/kota maupun provinsi).
+    sub: Mapped[str] = mapped_column(String(128))
+    username: Mapped[str] = mapped_column(String(64))
+    nama: Mapped[str] = mapped_column(String(128))
+    nip: Mapped[str | None] = mapped_column(String(32))
+    peran: Mapped[str] = mapped_column(String(32))
+    # Persetujuan Admin Provinsi atas alasan ``sesuai_kenyataan``:
+    # ``disetujui`` / ``ditolak`` / ``None`` (belum diputuskan).
+    persetujuan_status: Mapped[str | None] = mapped_column(String(24))
+    persetujuan_catatan: Mapped[str | None] = mapped_column(Text)
+    persetujuan_sub: Mapped[str | None] = mapped_column(String(128))
+    persetujuan_username: Mapped[str | None] = mapped_column(String(64))
+    persetujuan_oleh: Mapped[str | None] = mapped_column(String(128))
+    persetujuan_pada: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
 
 
 class KonfirmasiAnomali(Base):

@@ -1088,6 +1088,9 @@ def simpan_fase_akhir_v(sesi: Session, run: Run, hasil: tuple[int, str, bool]) -
     run.pesan = pesan
     run.semester = run.semester or SEMESTER_SLS_2026_1
     run.status = status_akhir_v(sesi, run, lolos)
+    from app import layanan
+
+    layanan.sinkron_status_validasi_run(sesi, run)
     run.heartbeat_at = sekarang()
     run.finished_at = sekarang()
     run.detail_tersedia = 0

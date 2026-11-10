@@ -139,9 +139,28 @@ class DaftarRunOut(BaseModel):
     baris: list[RunOut]
 
 
-class ValidasiUnmatchBarisOut(BaseModel):
-    """Satu temuan unmatch run V: pasangan sisi peta vs sisi master."""
+class KonfirmasiValidasiSlsOut(BaseModel):
+    """Konfirmasi satu temuan validasi SLS beserta keputusan persetujuan provinsi."""
 
+    status: str
+    label: str
+    catatan: str | None = None
+    oleh: str | None = None
+    username: str | None = None
+    peran: str | None = None
+    pada: datetime | None = None
+    kunci: str | None = None
+    #: Status persetujuan provinsi: ``disetujui`` / ``ditolak`` / ``None`` (menunggu).
+    persetujuan_status: str | None = None
+    persetujuan_catatan: str | None = None
+    persetujuan_oleh: str | None = None
+    persetujuan_pada: datetime | None = None
+
+
+class ValidasiUnmatchBarisOut(BaseModel):
+    """Satu temuan unmatch run V: pasangan sisi peta vs sisi master + konfirmasi."""
+
+    id: int | None = None
     jenis: str
     idsls_peta: str | None = None
     idsubsls_peta: str | None = None
@@ -149,6 +168,8 @@ class ValidasiUnmatchBarisOut(BaseModel):
     idsubsls_master: str | None = None
     nmsls: str | None = None
     catatan: str | None = None
+    kunci: str | None = None
+    konfirmasi: KonfirmasiValidasiSlsOut | None = None
 
 
 class ValidasiRingkasanBarisOut(BaseModel):
@@ -172,6 +193,29 @@ class ValidasiRingkasanBarisOut(BaseModel):
     selesai: int | None = None
     #: Sisa = target - selesai (None bila salah satunya belum diketahui).
     sisa: int | None = None
+    #: Ringkasan progres konfirmasi temuan pada run V terakhir ini.
+    terkonfirmasi: int = 0
+    akan_diperbaiki: int = 0
+    sesuai_kenyataan: int = 0
+    disetujui: int = 0
+    ditolak: int = 0
+    menunggu_persetujuan: int = 0
+
+
+class KonfirmasiValidasiSlsMasuk(BaseModel):
+    """Permintaan simpan konfirmasi temuan validasi SLS (kabupaten/kota maupun provinsi)."""
+
+    unmatch_ids: list[int] = Field(default_factory=list)
+    status: str
+    catatan: str | None = Field(None, max_length=2000)
+
+
+class PersetujuanValidasiSlsMasuk(BaseModel):
+    """Permintaan persetujuan/penolakan Admin Provinsi atas alasan 'Sesuai Kondisi Kenyataan'."""
+
+    unmatch_ids: list[int] = Field(default_factory=list)
+    keputusan: str
+    catatan: str | None = Field(None, max_length=2000)
 
 
 class ValidasiRingkasanOut(BaseModel):

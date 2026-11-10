@@ -66,11 +66,12 @@ const URUT_STATUS: Record<Run["status"], number> = {
   menunggu: 0,
   jalan: 1,
   sukses: 2,
-  belum_clean: 3,
-  gagal: 4,
+  sukses_catatan: 3,
+  belum_clean: 4,
+  gagal: 5,
   // Tidak pernah muncul di riwayat (hanya baris placeholder progres
   // validasi); ditaruh paling akhir supaya tidak mengganggu urutan.
-  belum_unggah: 5,
+  belum_unggah: 6,
 };
 
 function cocokPencarianLokal(run: Run, kueri: string): boolean {
@@ -83,9 +84,11 @@ function cocokPencarianLokal(run: Run, kueri: string): boolean {
   const labelStatus =
     run.status === "belum_clean"
       ? "belum clean"
-      : run.status === "jalan"
-        ? "diproses"
-        : run.status;
+      : run.status === "sukses_catatan"
+        ? "sukses dengan catatan"
+        : run.status === "jalan"
+          ? "diproses"
+          : run.status;
   const gabungan = [
     String(run.id),
     run.nomor_urut ? `ke-${run.nomor_urut} ${run.nomor_urut}` : "",

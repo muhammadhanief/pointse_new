@@ -83,7 +83,9 @@ export function DetailJob({
       ? run.detail_tersedia
         ? "Tersimpan"
         : "Sudah dipangkas"
-      : run?.status === "gagal" || run?.status === "belum_clean"
+      : run?.status === "gagal" ||
+          run?.status === "belum_clean" ||
+          run?.status === "sukses_catatan"
         ? "Tidak tersedia"
         : "Belum ada";
 

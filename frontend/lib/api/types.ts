@@ -1,5 +1,12 @@
 export type TipeRun = "A" | "B" | "V";
-export type StatusRun = "menunggu" | "jalan" | "sukses" | "belum_clean" | "gagal" | "belum_unggah";
+export type StatusRun =
+  | "menunggu"
+  | "jalan"
+  | "sukses"
+  | "sukses_catatan"
+  | "belum_clean"
+  | "gagal"
+  | "belum_unggah";
 
 export type Run = {
   id: number;
@@ -49,10 +56,52 @@ export type ValidasiRingkasanBaris = {
   target: number | null;
   selesai: number | null;
   sisa: number | null;
+  terkonfirmasi?: number;
+  akan_diperbaiki?: number;
+  sesuai_kenyataan?: number;
+  disetujui?: number;
+  ditolak?: number;
+  menunggu_persetujuan?: number;
 };
 
 export type ValidasiRingkasan = {
   baris: ValidasiRingkasanBaris[];
+};
+
+export type KonfirmasiValidasiSls = {
+  status: "akan_diperbaiki" | "sesuai_kenyataan" | string;
+  label: string;
+  catatan: string | null;
+  oleh: string | null;
+  username: string | null;
+  peran: string | null;
+  pada: string | null;
+  kunci: string | null;
+  persetujuan_status: "disetujui" | "ditolak" | null;
+  persetujuan_catatan: string | null;
+  persetujuan_oleh: string | null;
+  persetujuan_pada: string | null;
+};
+
+export type ValidasiUnmatchBaris = {
+  id: number;
+  jenis: string;
+  idsls_peta: string | null;
+  idsubsls_peta: string | null;
+  idsls_master: string | null;
+  idsubsls_master: string | null;
+  nmsls: string | null;
+  catatan: string | null;
+  kunci: string | null;
+  konfirmasi: KonfirmasiValidasiSls | null;
+};
+
+export type ValidasiUnmatch = {
+  run_id: number;
+  total: number;
+  limit: number;
+  offset: number;
+  baris: ValidasiUnmatchBaris[];
 };
 
 export type MasterGeotag = {

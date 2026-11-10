@@ -833,6 +833,14 @@ KOLOM_UNMATCH_V: tuple[str, ...] = (
     "idsubsls_master",
     "nmsls",
     "catatan",
+    "status_konfirmasi",
+    "alasan_konfirmasi",
+    "dikonfirmasi_oleh",
+    "waktu_konfirmasi",
+    "persetujuan_provinsi",
+    "catatan_provinsi",
+    "disetujui_oleh",
+    "waktu_persetujuan",
 )
 
 #: Judul lembar per jenis temuan (urutan tampil di workbook).
@@ -862,7 +870,14 @@ def berkas_unmatch_v_xlsx(sesi: Session, run_id: int) -> io.BytesIO:
     """
     from openpyxl import Workbook
 
+    from app import layanan
+
     run = sesi.get(Run, run_id)
+    peta_konf = (
+        layanan._peta_konfirmasi_validasi_kab(sesi, run.kdprov, run.kdkab)
+        if run is not None
+        else {}
+    )
     baris_db = list(
         sesi.execute(
             select(ValidasiSlsUnmatch)
@@ -901,6 +916,15 @@ def berkas_unmatch_v_xlsx(sesi: Session, run_id: int) -> io.BytesIO:
         lembar.append(list(KOLOM_UNMATCH_V))
         daftar = per_jenis.get(jenis, [])
         for satu in daftar:
+            kunci = layanan.kunci_unmatch_validasi(
+                satu.jenis,
+                satu.idsls_peta,
+                satu.idsubsls_peta,
+                satu.idsls_master,
+                satu.idsubsls_master,
+                satu.catatan,
+            )
+            konf = peta_konf.get(kunci)
             lembar.append(
                 [
                     satu.idsls_peta,
@@ -909,6 +933,26 @@ def berkas_unmatch_v_xlsx(sesi: Session, run_id: int) -> io.BytesIO:
                     satu.idsubsls_master,
                     satu.nmsls,
                     satu.catatan,
+                    (
+                        layanan.LABEL_KONFIRMASI_VALIDASI.get(konf.status, konf.status)
+                        if konf is not None
+                        else "Belum dikonfirmasi"
+                    ),
+                    konf.catatan if konf is not None else None,
+                    konf.nama if konf is not None else None,
+                    (
+                        konf.updated_at.strftime("%Y-%m-%d %H:%M")
+                        if konf is not None and konf.updated_at
+                        else None
+                    ),
+                    konf.persetujuan_status if konf is not None else None,
+                    konf.persetujuan_catatan if konf is not None else None,
+                    konf.persetujuan_oleh if konf is not None else None,
+                    (
+                        konf.persetujuan_pada.strftime("%Y-%m-%d %H:%M")
+                        if konf is not None and konf.persetujuan_pada
+                        else None
+                    ),
                 ]
             )
         lembar.freeze_panes = "A2"

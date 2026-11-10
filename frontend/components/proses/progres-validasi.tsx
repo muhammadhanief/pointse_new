@@ -16,6 +16,7 @@ import { daftarKabupaten, namaKabupaten } from "@/lib/wilayah/kabupaten";
 
 import { BadgeStatus } from "./badge-status";
 import { DetailJob } from "./detail-job";
+import { DialogKonfirmasiValidasi } from "./dialog-konfirmasi-validasi";
 
 const INTERVAL_MUAT_ULANG = 15000;
 
@@ -67,6 +68,10 @@ export function ProgresValidasi({
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("semua");
   const [detail, setDetail] = useState<Run | null>(null);
+  const [sasaranKonfirmasi, setSasaranKonfirmasi] = useState<{
+    kdkab: string;
+    jenis: string;
+  } | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
 
   const muat = useCallback(async (senyap = false) => {
@@ -193,6 +198,10 @@ export function ProgresValidasi({
           )
         : tampilSemua.filter((satu) => satu.status === filterStatus);
   const sudahUnggah = tampilSemua.filter((satu) => satu.run_id !== null).length;
+  const barisKonfirmasi = sasaranKonfirmasi
+    ? (tampilSemua.find((satu) => satu.kdkab === sasaranKonfirmasi.kdkab) ??
+      null)
+    : null;
 
   return (
     <Panel
@@ -217,6 +226,7 @@ export function ProgresValidasi({
             >
               <option value="semua">Semua</option>
               <option value="sukses">Lolos</option>
+              <option value="sukses_catatan">Sukses dengan catatan</option>
               <option value="belum_clean">Belum clean</option>
               <option value="gagal">Gagal</option>
               <option value="belum_unggah">Belum unggah</option>
@@ -472,15 +482,23 @@ export function ProgresValidasi({
                       ) : (
                         <div className="flex flex-wrap gap-1">
                           {entriAtribut.map(([jenis, jumlah]) => (
-                            <span
+                            <button
                               key={jenis}
-                              className="inline-flex items-center rounded border border-danger/25 bg-danger-soft/50 px-1.5 py-0.5 text-[11px] font-medium text-ink tabular-nums"
+                              type="button"
+                              onClick={() =>
+                                setSasaranKonfirmasi({
+                                  kdkab: satu.kdkab,
+                                  jenis,
+                                })
+                              }
+                              title="Klik untuk lihat & konfirmasi temuan ini"
+                              className="inline-flex items-center rounded border border-danger/25 bg-danger-soft/50 px-1.5 py-0.5 text-[11px] font-medium text-ink tabular-nums transition-colors hover:border-danger/60 hover:bg-danger-soft"
                             >
                               {labelJenis(jenis)}:{" "}
                               <strong className="ml-1 text-danger">
                                 {formatAngka(jumlah)}
                               </strong>
-                            </span>
+                            </button>
                           ))}
                         </div>
                       )}
@@ -495,15 +513,23 @@ export function ProgresValidasi({
                       ) : (
                         <div className="flex flex-wrap gap-1">
                           {entriTopologi.map(([jenis, jumlah]) => (
-                            <span
+                            <button
                               key={jenis}
-                              className="inline-flex items-center rounded border border-warning/40 bg-warning-soft/50 px-1.5 py-0.5 text-[11px] font-medium text-ink tabular-nums"
+                              type="button"
+                              onClick={() =>
+                                setSasaranKonfirmasi({
+                                  kdkab: satu.kdkab,
+                                  jenis,
+                                })
+                              }
+                              title="Klik untuk lihat & konfirmasi temuan ini"
+                              className="inline-flex items-center rounded border border-warning/40 bg-warning-soft/50 px-1.5 py-0.5 text-[11px] font-medium text-ink tabular-nums transition-colors hover:border-warning hover:bg-warning/20"
                             >
                               {labelJenis(jenis)}:{" "}
                               <strong className="ml-1 text-ink">
                                 {formatAngka(jumlah)}
                               </strong>
-                            </span>
+                            </button>
                           ))}
                         </div>
                       )}
@@ -515,14 +541,44 @@ export function ProgresValidasi({
                         <>
                           <span
                             className={
-                              satu.total > 0 ? "text-danger" : "text-success"
+                              satu.total === 0 ||
+                              satu.status === "sukses_catatan"
+                                ? "text-success"
+                                : "text-danger"
                             }
                           >
                             {formatAngka(satu.total)}
                           </span>{" "}
-                          <span className="block text-[11px] font-normal text-muted">
-                            {satu.total > 0 ? "Perlu tindakan" : "Beres"}
-                          </span>
+                          {satu.total === 0 ? (
+                            <span className="block text-[11px] font-normal text-muted">
+                              Beres
+                            </span>
+                          ) : satu.status === "sukses_catatan" ||
+                            (satu.disetujui ?? 0) === satu.total ? (
+                            <span className="block text-[11px] font-medium text-success">
+                              Semua disetujui ({formatAngka(satu.disetujui ?? 0)})
+                            </span>
+                          ) : (satu.terkonfirmasi ?? 0) > 0 ? (
+                            <span className="block text-[11px] font-normal text-muted">
+                              Dikonfirmasi {formatAngka(satu.terkonfirmasi ?? 0)}/
+                              {formatAngka(satu.total)}
+                              {(satu.menunggu_persetujuan ?? 0) > 0 ? (
+                                <span className="block text-[10px] font-medium text-warning">
+                                  {formatAngka(satu.menunggu_persetujuan ?? 0)}{" "}
+                                  menunggu prov
+                                </span>
+                              ) : null}
+                              {(satu.disetujui ?? 0) > 0 ? (
+                                <span className="block text-[10px] font-medium text-success">
+                                  {formatAngka(satu.disetujui ?? 0)} disetujui
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : (
+                            <span className="block text-[11px] font-normal text-muted">
+                              Perlu tindakan
+                            </span>
+                          )}
                         </>
                       )}
                     </td>
@@ -530,14 +586,32 @@ export function ProgresValidasi({
                       {belumUnggah ? (
                         <span className="text-xs text-muted">—</span>
                       ) : (
-                        <>
+                        <div className="inline-flex flex-wrap justify-end gap-1.5">
+                          <TombolAksi
+                            varian={satu.total > 0 ? "utama" : "sekunder"}
+                            className="min-h-8 px-3 text-xs"
+                            disabled={satu.total === 0}
+                            onClick={() =>
+                              setSasaranKonfirmasi({
+                                kdkab: satu.kdkab,
+                                jenis: "",
+                              })
+                            }
+                            title={
+                              satu.total === 0
+                                ? "Tidak ada temuan yang perlu dikonfirmasi"
+                                : "Buka menu konfirmasi & persetujuan temuan"
+                            }
+                          >
+                            Konfirmasi
+                          </TombolAksi>
                           <TombolAksi
                             varian="sekunder"
                             className="min-h-8 px-3 text-xs"
                             onClick={() => void bukaDetail(runId)}
                           >
                             Detail
-                          </TombolAksi>{" "}
+                          </TombolAksi>
                           <TombolAksi
                             varian="sekunder"
                             className="min-h-8 px-3 text-xs"
@@ -553,7 +627,7 @@ export function ProgresValidasi({
                               ? "Menyiapkan..."
                               : "Unduh Excel"}
                           </TombolAksi>
-                        </>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -565,6 +639,13 @@ export function ProgresValidasi({
       ) : null}
 
       <DetailJob run={detail} onTutup={() => setDetail(null)} />
+      <DialogKonfirmasiValidasi
+        sasaran={barisKonfirmasi}
+        jenisAwal={sasaranKonfirmasi?.jenis ?? ""}
+        peran={peran}
+        onTutup={() => setSasaranKonfirmasi(null)}
+        onBerubah={() => void muat(true)}
+      />
     </Panel>
   );
 }

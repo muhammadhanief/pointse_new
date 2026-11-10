@@ -128,6 +128,18 @@ JENIS_GEOM_DUPLIKAT = "geom_duplikat"
 JENIS_GEOM_OVERLAP = "geom_overlap"
 JENIS_GEOM_GAP = "geom_gap"
 
+SEMUA_JENIS_UNMATCH: tuple[str, ...] = (
+    JENIS_TIDAK_DI_PETA,
+    JENIS_TIDAK_DI_MASTER,
+    JENIS_GANDA,
+    JENIS_NAMA_BEDA,
+    JENIS_TIDAK_KONSISTEN,
+    JENIS_GEOM_INVALID,
+    JENIS_GEOM_DUPLIKAT,
+    JENIS_GEOM_OVERLAP,
+    JENIS_GEOM_GAP,
+)
+
 
 @dataclass
 class BarisUnmatch:

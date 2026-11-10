@@ -25,13 +25,20 @@ from app import rekap as modul_rekap
 from app.models import (
     DASAR_TUGAS,
     KOLOM_HITUNGAN,
+    KONFIRMASI_AKAN_DIPERBAIKI,
+    KONFIRMASI_SESUAI_KENYATAAN,
+    PERSETUJUAN_DISETUJUI,
+    PERSETUJUAN_DITOLAK,
     STATUS_BELUM_CLEAN,
     STATUS_GAGAL,
+    STATUS_JALAN,
     STATUS_MENUNGGU,
     STATUS_SUKSES,
+    STATUS_SUKSES_CATATAN,
     TIPE_A,
     TIPE_B,
     GeotagMaster,
+    KonfirmasiValidasiSls,
     RekapDesa,
     RekapKabupaten,
     RekapSubsls,
@@ -41,6 +48,7 @@ from app.models import (
     ValidasiSlsUnmatch,
     Wilayah,
     hari_ini,
+    sekarang,
 )
 from app.proses_a import KOLOM_PETA, KOLOM_TITIK
 from app.proses_b import KOLOM_TITIK_B
@@ -579,6 +587,7 @@ NAMA_KABUPATEN_33: dict[str, str] = {
 #: Pemetaan teks pencarian status tampilan (UI) ke nilai kolom ``runs.status``.
 ALIAS_STATUS_CARI: tuple[tuple[str, str], ...] = (
     ("belum clean", "belum_clean"),
+    ("sukses dengan catatan", "sukses_catatan"),
     ("diproses", "jalan"),
     ("lolos", "sukses"),
     ("sukses", "sukses"),
@@ -909,47 +918,426 @@ def master_sls_tersedia(sesi: Session, kode_kab: str) -> bool:
     ) > 0
 
 
-def daftar_unmatch(
-    sesi: Session, run_id: int, *, jenis: str | None = None, limit: int = 100, offset: int = 0
-) -> tuple[int, list[dict[str, object]]]:
-    """Daftar temuan satu run V (paging, urut kode).
+LABEL_KONFIRMASI_VALIDASI: dict[str, str] = {
+    KONFIRMASI_AKAN_DIPERBAIKI: "Akan Diperbaiki",
+    KONFIRMASI_SESUAI_KENYATAAN: "Sesuai Kondisi Kenyataan",
+}
 
-    ``jenis`` menyaring satu sheet unduhan (``tidak_di_peta``/
-    ``tidak_di_master``/``ganda``); kosong berarti semua.
-    Run V gagal tetap tercatat, jadi daftar ini yang diunduh sebagai Excel
-    untuk diperbaiki di QGIS.
-    """
+
+def kunci_unmatch_validasi(
+    jenis: str | None,
+    idsls_peta: str | None,
+    idsubsls_peta: str | None,
+    idsls_master: str | None,
+    idsubsls_master: str | None,
+    catatan: str | None,
+) -> str:
+    """Susun kunci stabil (maks. 191 karakter) untuk satu temuan validasi SLS."""
+    bagian = (
+        (jenis or "").strip(),
+        (idsls_peta or "").strip(),
+        (idsubsls_peta or "").strip(),
+        (idsls_master or "").strip(),
+        (idsubsls_master or "").strip(),
+        (catatan or "").strip(),
+    )
+    return "|".join(bagian)[:191]
+
+
+def _format_konfirmasi_validasi(
+    konf: KonfirmasiValidasiSls | None,
+) -> dict[str, object] | None:
+    """Ubah baris ORM ``KonfirmasiValidasiSls`` menjadi kamus siap serialisasi."""
+    if konf is None:
+        return None
+    return {
+        "status": konf.status,
+        "label": LABEL_KONFIRMASI_VALIDASI.get(konf.status, konf.status),
+        "catatan": konf.catatan,
+        "oleh": konf.nama,
+        "username": konf.username,
+        "peran": konf.peran,
+        "pada": konf.updated_at,
+        "kunci": konf.kunci,
+        "persetujuan_status": konf.persetujuan_status,
+        "persetujuan_catatan": konf.persetujuan_catatan,
+        "persetujuan_oleh": konf.persetujuan_oleh,
+        "persetujuan_pada": konf.persetujuan_pada,
+    }
+
+
+def _peta_konfirmasi_validasi_kab(
+    sesi: Session, kdprov: str, kdkab: str
+) -> dict[str, KonfirmasiValidasiSls]:
+    """Ambil semua konfirmasi temuan validasi SLS untuk satu kabupaten/kota."""
+    kode = kode_kabupaten(kdprov, kdkab)
+    return {
+        satu.kunci: satu
+        for satu in sesi.scalars(
+            select(KonfirmasiValidasiSls).where(
+                KonfirmasiValidasiSls.kdprov == kdprov,
+                KonfirmasiValidasiSls.kdkab == kode,
+            )
+        )
+    }
+
+
+def _cocok_filter_konfirmasi_validasi(
+    konf: KonfirmasiValidasiSls | None, status_konfirmasi: str | None
+) -> bool:
+    """True bila konfirmasi baris memenuhi filter ``status_konfirmasi``."""
+    if not status_konfirmasi:
+        return True
+    s = status_konfirmasi.strip().lower()
+    if s == "belum":
+        return konf is None
+    if s == "sudah":
+        return konf is not None
+    if s in (KONFIRMASI_AKAN_DIPERBAIKI, KONFIRMASI_SESUAI_KENYATAAN):
+        return konf is not None and konf.status == s
+    if s == "menunggu_persetujuan":
+        return (
+            konf is not None
+            and konf.status == KONFIRMASI_SESUAI_KENYATAAN
+            and konf.persetujuan_status is None
+        )
+    if s == PERSETUJUAN_DISETUJUI:
+        return (
+            konf is not None
+            and konf.status == KONFIRMASI_SESUAI_KENYATAAN
+            and konf.persetujuan_status == PERSETUJUAN_DISETUJUI
+        )
+    if s == PERSETUJUAN_DITOLAK:
+        return (
+            konf is not None
+            and konf.status == KONFIRMASI_SESUAI_KENYATAAN
+            and konf.persetujuan_status == PERSETUJUAN_DITOLAK
+        )
+    return True
+
+
+def daftar_unmatch(
+    sesi: Session,
+    run_id: int,
+    *,
+    jenis: str | None = None,
+    status_konfirmasi: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> tuple[int, list[dict[str, object]]]:
+    """Daftar temuan satu run V (paging, urut kode) beserta konfirmasinya."""
+    run = sesi.get(Run, run_id)
+    peta_konf = (
+        _peta_konfirmasi_validasi_kab(sesi, run.kdprov, run.kdkab)
+        if run is not None
+        else {}
+    )
     saring: list[Any] = [ValidasiSlsUnmatch.run_id == run_id]
     if jenis is not None:
         saring.append(ValidasiSlsUnmatch.jenis == jenis)
+
+    kueri = (
+        select(ValidasiSlsUnmatch)
+        .where(*saring)
+        .order_by(
+            func.coalesce(ValidasiSlsUnmatch.idsls_peta, ValidasiSlsUnmatch.idsls_master),
+            func.coalesce(ValidasiSlsUnmatch.idsubsls_peta, ValidasiSlsUnmatch.idsubsls_master),
+            ValidasiSlsUnmatch.id,
+        )
+    )
+
+    if status_konfirmasi:
+        semua_baris = list(sesi.execute(kueri).scalars())
+        tersaring: list[tuple[ValidasiSlsUnmatch, str, KonfirmasiValidasiSls | None]] = []
+        for satu in semua_baris:
+            kunci = kunci_unmatch_validasi(
+                satu.jenis,
+                satu.idsls_peta,
+                satu.idsubsls_peta,
+                satu.idsls_master,
+                satu.idsubsls_master,
+                satu.catatan,
+            )
+            konf = peta_konf.get(kunci)
+            if _cocok_filter_konfirmasi_validasi(konf, status_konfirmasi):
+                tersaring.append((satu, kunci, konf))
+        total = len(tersaring)
+        potongan = tersaring[offset : offset + limit]
+        return total, [
+            {
+                "id": satu.id,
+                "jenis": str(satu.jenis),
+                "idsls_peta": satu.idsls_peta,
+                "idsubsls_peta": satu.idsubsls_peta,
+                "idsls_master": satu.idsls_master,
+                "idsubsls_master": satu.idsubsls_master,
+                "nmsls": satu.nmsls,
+                "catatan": satu.catatan,
+                "kunci": kunci,
+                "konfirmasi": _format_konfirmasi_validasi(konf),
+            }
+            for satu, kunci, konf in potongan
+        ]
+
     total = int(
         sesi.scalar(
             select(func.count()).select_from(ValidasiSlsUnmatch).where(*saring)
         )
         or 0
     )
-    baris = sesi.execute(
-        select(ValidasiSlsUnmatch)
-        .where(*saring)
-        .order_by(
-            func.coalesce(ValidasiSlsUnmatch.idsls_peta, ValidasiSlsUnmatch.idsls_master),
-            func.coalesce(ValidasiSlsUnmatch.idsubsls_peta, ValidasiSlsUnmatch.idsubsls_master),
+    baris = sesi.execute(kueri.limit(limit).offset(offset)).scalars()
+    keluaran: list[dict[str, object]] = []
+    for satu in baris:
+        kunci = kunci_unmatch_validasi(
+            satu.jenis,
+            satu.idsls_peta,
+            satu.idsubsls_peta,
+            satu.idsls_master,
+            satu.idsubsls_master,
+            satu.catatan,
         )
-        .limit(limit)
-        .offset(offset)
-    ).scalars()
-    return total, [
-        {
-            "jenis": str(satu.jenis),
-            "idsls_peta": satu.idsls_peta,
-            "idsubsls_peta": satu.idsubsls_peta,
-            "idsls_master": satu.idsls_master,
-            "idsubsls_master": satu.idsubsls_master,
-            "nmsls": satu.nmsls,
-            "catatan": satu.catatan,
-        }
-        for satu in baris
-    ]
+        keluaran.append(
+            {
+                "id": satu.id,
+                "jenis": str(satu.jenis),
+                "idsls_peta": satu.idsls_peta,
+                "idsubsls_peta": satu.idsubsls_peta,
+                "idsls_master": satu.idsls_master,
+                "idsubsls_master": satu.idsubsls_master,
+                "nmsls": satu.nmsls,
+                "catatan": satu.catatan,
+                "kunci": kunci,
+                "konfirmasi": _format_konfirmasi_validasi(peta_konf.get(kunci)),
+            }
+        )
+    return total, keluaran
+
+
+def sinkron_status_validasi_run(sesi: Session, run: Run) -> str:
+    """Segarkan ``run.status`` bila seluruh temuan sudah disetujui 'Sesuai Kondisi Kenyataan'.
+
+    Apabila seluruh baris ``validasi_sls_unmatch`` pada ``run`` berstatus
+    ``sesuai_kenyataan`` dan ``persetujuan_status == 'disetujui'``, maka status
+    run menjadi ``sukses_catatan`` ("Sukses dengan catatan"). Bila sebelumnya
+    ``sukses_catatan`` lalu ada temuan yang dibatalkan/ditolak/diubah ke
+    ``akan_diperbaiki``, status dikembalikan ke ``belum_clean`` atau ``gagal``.
+    """
+    if run.status in (STATUS_MENUNGGU, STATUS_JALAN):
+        return run.status
+    baris_unmatch = list(
+        sesi.scalars(
+            select(ValidasiSlsUnmatch).where(ValidasiSlsUnmatch.run_id == run.id)
+        )
+    )
+    if not baris_unmatch:
+        return run.status
+
+    peta_konf = _peta_konfirmasi_validasi_kab(sesi, run.kdprov, run.kdkab)
+    disetujui_semua = True
+    kotor: set[tuple[str, str]] = set()
+    for satu in baris_unmatch:
+        if str(satu.jenis) in ("tidak_di_peta", "nama_beda", "ganda") and (
+            satu.idsls_master or satu.idsubsls_master
+        ):
+            kotor.add((str(satu.idsls_master or ""), str(satu.idsubsls_master or "")))
+        kunci = kunci_unmatch_validasi(
+            satu.jenis,
+            satu.idsls_peta,
+            satu.idsubsls_peta,
+            satu.idsls_master,
+            satu.idsubsls_master,
+            satu.catatan,
+        )
+        konf = peta_konf.get(kunci)
+        if (
+            konf is None
+            or konf.status != KONFIRMASI_SESUAI_KENYATAAN
+            or konf.persetujuan_status != PERSETUJUAN_DISETUJUI
+        ):
+            disetujui_semua = False
+
+    if disetujui_semua:
+        run.status = STATUS_SUKSES_CATATAN
+        return run.status
+
+    if run.status == STATUS_SUKSES_CATATAN:
+        from app.models import MasterSls2026S1
+
+        kode = kode_kabupaten(run.kdprov, run.kdkab)
+        tgt = int(
+            sesi.scalar(
+                select(func.count())
+                .select_from(MasterSls2026S1)
+                .where(MasterSls2026S1.kdkab == kode)
+            )
+            or 0
+        )
+        selesai = max(0, tgt - len(kotor))
+        run.status = STATUS_BELUM_CLEAN if selesai > 0 else STATUS_GAGAL
+    return run.status
+
+
+def simpan_konfirmasi_validasi(
+    sesi: Session,
+    pengguna: Any,
+    run: Run,
+    *,
+    unmatch_ids: Sequence[int],
+    status: str,
+    catatan: str | None,
+) -> int:
+    """Simpan atau batalkan konfirmasi temuan validasi SLS pada suatu run V."""
+    unik_ids = list(dict.fromkeys(int(x) for x in unmatch_ids))
+    if not unik_ids:
+        return 0
+    baris_unmatch = list(
+        sesi.scalars(
+            select(ValidasiSlsUnmatch).where(
+                ValidasiSlsUnmatch.run_id == run.id,
+                ValidasiSlsUnmatch.id.in_(unik_ids),
+            )
+        )
+    )
+    if not baris_unmatch:
+        return 0
+
+    kode_kab = kode_kabupaten(run.kdprov, run.kdkab)
+    peta_konf = _peta_konfirmasi_validasi_kab(sesi, run.kdprov, run.kdkab)
+    waktu = sekarang()
+    terpengaruh = 0
+
+    if status == "batal":
+        for satu in baris_unmatch:
+            kunci = kunci_unmatch_validasi(
+                satu.jenis,
+                satu.idsls_peta,
+                satu.idsubsls_peta,
+                satu.idsls_master,
+                satu.idsubsls_master,
+                satu.catatan,
+            )
+            target = peta_konf.get(kunci)
+            if target is not None:
+                sesi.delete(target)
+                del peta_konf[kunci]
+                terpengaruh += 1
+        sesi.flush()
+        sinkron_status_validasi_run(sesi, run)
+        sesi.commit()
+        return terpengaruh
+
+    for satu in baris_unmatch:
+        kunci = kunci_unmatch_validasi(
+            satu.jenis,
+            satu.idsls_peta,
+            satu.idsubsls_peta,
+            satu.idsls_master,
+            satu.idsubsls_master,
+            satu.catatan,
+        )
+        target = peta_konf.get(kunci)
+        if target is None:
+            target = KonfirmasiValidasiSls(
+                kdprov=run.kdprov,
+                kdkab=kode_kab,
+                kunci=kunci,
+                jenis=satu.jenis,
+                idsls_peta=satu.idsls_peta,
+                idsubsls_peta=satu.idsubsls_peta,
+                idsls_master=satu.idsls_master,
+                idsubsls_master=satu.idsubsls_master,
+                created_at=waktu,
+            )
+            sesi.add(target)
+            peta_konf[kunci] = target
+        target.status = status
+        target.catatan = catatan
+        target.run_v_id = run.id
+        target.sub = pengguna.sub
+        target.username = pengguna.username
+        target.nama = pengguna.nama
+        target.nip = getattr(pengguna, "nip", None)
+        target.peran = (
+            pengguna.peran.nama
+            if hasattr(pengguna.peran, "nama")
+            else str(pengguna.peran)
+        )
+        target.updated_at = waktu
+        # Reset keputusan persetujuan saat alasan/status konfirmasi diperbarui.
+        target.persetujuan_status = None
+        target.persetujuan_catatan = None
+        target.persetujuan_sub = None
+        target.persetujuan_username = None
+        target.persetujuan_oleh = None
+        target.persetujuan_pada = None
+        terpengaruh += 1
+
+    sesi.flush()
+    sinkron_status_validasi_run(sesi, run)
+    sesi.commit()
+    return terpengaruh
+
+
+def simpan_persetujuan_validasi(
+    sesi: Session,
+    pengguna: Any,
+    run: Run,
+    *,
+    unmatch_ids: Sequence[int],
+    keputusan: str,
+    catatan: str | None,
+) -> int:
+    """Simpan keputusan persetujuan/penolakan Admin Provinsi atas alasan 'Sesuai Kondisi Kenyataan'."""
+    unik_ids = list(dict.fromkeys(int(x) for x in unmatch_ids))
+    if not unik_ids:
+        return 0
+    baris_unmatch = list(
+        sesi.scalars(
+            select(ValidasiSlsUnmatch).where(
+                ValidasiSlsUnmatch.run_id == run.id,
+                ValidasiSlsUnmatch.id.in_(unik_ids),
+            )
+        )
+    )
+    if not baris_unmatch:
+        return 0
+
+    peta_konf = _peta_konfirmasi_validasi_kab(sesi, run.kdprov, run.kdkab)
+    waktu = sekarang()
+    terpengaruh = 0
+
+    for satu in baris_unmatch:
+        kunci = kunci_unmatch_validasi(
+            satu.jenis,
+            satu.idsls_peta,
+            satu.idsubsls_peta,
+            satu.idsls_master,
+            satu.idsubsls_master,
+            satu.catatan,
+        )
+        target = peta_konf.get(kunci)
+        if target is None or target.status != KONFIRMASI_SESUAI_KENYATAAN:
+            continue
+        if keputusan == "batal":
+            target.persetujuan_status = None
+            target.persetujuan_catatan = None
+            target.persetujuan_sub = None
+            target.persetujuan_username = None
+            target.persetujuan_oleh = None
+            target.persetujuan_pada = None
+        else:
+            target.persetujuan_status = keputusan
+            target.persetujuan_catatan = catatan
+            target.persetujuan_sub = pengguna.sub
+            target.persetujuan_username = pengguna.username
+            target.persetujuan_oleh = pengguna.nama
+            target.persetujuan_pada = waktu
+        terpengaruh += 1
+
+    sesi.flush()
+    sinkron_status_validasi_run(sesi, run)
+    sesi.commit()
+    return terpengaruh
 
 
 def ringkasan_validasi(
@@ -958,14 +1346,15 @@ def ringkasan_validasi(
     kdprov: str | None = None,
     kdkab: str | None = None,
 ) -> list[dict[str, object]]:
-    """Satu baris per kabupaten/kota: run V terakhir + target/selesai/sisa.
+    """Satu baris per kabupaten/kota: run V terakhir + target/selesai/sisa + konfirmasi.
 
     ``target`` = jumlah pasangan ``(idsls, idsubsls)`` master kab tersebut
     di database. ``selesai`` = pasangan master yang cocok persis tanpa temuan
-    apa pun; hanya dihitung untuk run final (``sukses``/``belum_clean``/
-    ``gagal``), selebihnya ``None``. ``sisa`` = ``target`` - ``selesai``. Kabupaten/kota tanpa run V
-    tidak muncul; panggil dengan ``kdprov``/``kdkab`` sesuai kewenangan
-    pemanggil (lihat :func:`app.auth.saring_akses`). Steril dari rekap SE2026.
+    apa pun; hanya dihitung untuk run final (``sukses``/``sukses_catatan``/
+    ``belum_clean``/``gagal``), selebihnya ``None``. ``sisa`` = ``target`` - ``selesai``.
+    Apabila seluruh temuan pada run terakhir berstatus ``sesuai_kenyataan`` dan
+    telah disetujui provinsi (``disetujui == total``), status menjadi
+    ``sukses_catatan`` ("Sukses dengan catatan").
     """
     from app.models import TIPE_V
 
@@ -981,15 +1370,43 @@ def ringkasan_validasi(
         satu.id: satu
         for satu in sesi.scalars(select(Run).where(Run.id.in_(terakhir)))
     }
+    kode_kab: dict[int, str] = {}
+    for satu in runs.values():
+        kode_kab.setdefault(satu.id, kode_kabupaten(satu.kdprov, satu.kdkab))
+
+    peta_konf_kab: dict[tuple[str, str], dict[str, KonfirmasiValidasiSls]] = {}
+    if kode_kab:
+        daftar_prov = sorted({satu.kdprov for satu in runs.values()})
+        daftar_kab = sorted(set(kode_kab.values()))
+        for konf in sesi.scalars(
+            select(KonfirmasiValidasiSls).where(
+                KonfirmasiValidasiSls.kdprov.in_(daftar_prov),
+                KonfirmasiValidasiSls.kdkab.in_(daftar_kab),
+            )
+        ):
+            peta_konf_kab.setdefault((konf.kdprov, konf.kdkab), {})[konf.kunci] = konf
+
     hitung: dict[int, dict[str, int]] = {}
     kotor: dict[int, set[tuple[str, str]]] = {}
+    rekap_konf: dict[int, dict[str, int]] = {}
     if runs:
-        for run_id, jenis, idsls_m, idsubsls_m in sesi.execute(
+        for (
+            run_id,
+            jenis,
+            idsls_p,
+            idsubsls_p,
+            idsls_m,
+            idsubsls_m,
+            catatan,
+        ) in sesi.execute(
             select(
                 ValidasiSlsUnmatch.run_id,
                 ValidasiSlsUnmatch.jenis,
+                ValidasiSlsUnmatch.idsls_peta,
+                ValidasiSlsUnmatch.idsubsls_peta,
                 ValidasiSlsUnmatch.idsls_master,
                 ValidasiSlsUnmatch.idsubsls_master,
+                ValidasiSlsUnmatch.catatan,
             ).where(ValidasiSlsUnmatch.run_id.in_(runs))
         ):
             rid = int(run_id)
@@ -1001,9 +1418,43 @@ def ringkasan_validasi(
                 kotor.setdefault(rid, set()).add(
                     (str(idsls_m or ""), str(idsubsls_m or ""))
                 )
-    kode_kab: dict[int, str] = {}
-    for satu in runs.values():
-        kode_kab.setdefault(satu.id, kode_kabupaten(satu.kdprov, satu.kdkab))
+            run_obj = runs.get(rid)
+            if run_obj is not None:
+                kunci = kunci_unmatch_validasi(
+                    str(jenis),
+                    idsls_p,
+                    idsubsls_p,
+                    idsls_m,
+                    idsubsls_m,
+                    catatan,
+                )
+                konf = peta_konf_kab.get(
+                    (run_obj.kdprov, kode_kab[rid]), {}
+                ).get(kunci)
+                if konf is not None:
+                    rk = rekap_konf.setdefault(
+                        rid,
+                        {
+                            "terkonfirmasi": 0,
+                            "akan_diperbaiki": 0,
+                            "sesuai_kenyataan": 0,
+                            "disetujui": 0,
+                            "ditolak": 0,
+                            "menunggu_persetujuan": 0,
+                        },
+                    )
+                    rk["terkonfirmasi"] += 1
+                    if konf.status == KONFIRMASI_AKAN_DIPERBAIKI:
+                        rk["akan_diperbaiki"] += 1
+                    elif konf.status == KONFIRMASI_SESUAI_KENYATAAN:
+                        rk["sesuai_kenyataan"] += 1
+                        if konf.persetujuan_status == PERSETUJUAN_DISETUJUI:
+                            rk["disetujui"] += 1
+                        elif konf.persetujuan_status == PERSETUJUAN_DITOLAK:
+                            rk["ditolak"] += 1
+                        else:
+                            rk["menunggu_persetujuan"] += 1
+
     target: dict[str, int] = {}
     if kode_kab:
         from app.models import MasterSls2026S1
@@ -1018,26 +1469,58 @@ def ringkasan_validasi(
     for satu in sorted(runs.values(), key=lambda r: (r.kdprov, r.kdkab)):
         kode = kode_kabupaten(satu.kdprov, satu.kdkab)
         per_jenis = hitung.get(satu.id, {})
+        total_temuan = sum(per_jenis.values())
+        rk = rekap_konf.get(
+            satu.id,
+            {
+                "terkonfirmasi": 0,
+                "akan_diperbaiki": 0,
+                "sesuai_kenyataan": 0,
+                "disetujui": 0,
+                "ditolak": 0,
+                "menunggu_persetujuan": 0,
+            },
+        )
         tgt = target.get(kode)
         selesai: int | None = None
         sisa: int | None = None
-        if satu.status in (STATUS_SUKSES, STATUS_BELUM_CLEAN, STATUS_GAGAL) and tgt is not None:
+        status_final = satu.status in (
+            STATUS_SUKSES,
+            STATUS_SUKSES_CATATAN,
+            STATUS_BELUM_CLEAN,
+            STATUS_GAGAL,
+        )
+        if status_final and tgt is not None:
             selesai = max(0, tgt - len(kotor.get(satu.id, set())))
             sisa = tgt - selesai
+        status_tampil = satu.status
+        if status_final and total_temuan > 0:
+            if rk["disetujui"] == total_temuan:
+                status_tampil = STATUS_SUKSES_CATATAN
+            elif status_tampil == STATUS_SUKSES_CATATAN:
+                status_tampil = (
+                    STATUS_BELUM_CLEAN if (selesai is not None and selesai > 0) else STATUS_GAGAL
+                )
         baris = {
             "kdprov": satu.kdprov,
             "kdkab": kode,
             "run_id": satu.id,
-            "status": satu.status,
+            "status": status_tampil,
             "tanggal_data": satu.tanggal_data,
             "semester": satu.semester,
             "selesai_pada": satu.finished_at,
             "petugas": satu.user,
-            "total": sum(per_jenis.values()),
+            "total": total_temuan,
             "per_jenis": per_jenis,
             "target": tgt,
             "selesai": selesai,
             "sisa": sisa,
+            "terkonfirmasi": rk["terkonfirmasi"],
+            "akan_diperbaiki": rk["akan_diperbaiki"],
+            "sesuai_kenyataan": rk["sesuai_kenyataan"],
+            "disetujui": rk["disetujui"],
+            "ditolak": rk["ditolak"],
+            "menunggu_persetujuan": rk["menunggu_persetujuan"],
         }
         lama = keluaran.get(kode)
         if lama is None or int(lama["run_id"]) < satu.id:  # noqa: E731

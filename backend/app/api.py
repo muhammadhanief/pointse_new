@@ -46,6 +46,10 @@ from app.layanan import (
 )
 from app.models import (
     DASAR_TUGAS,
+    KONFIRMASI_AKAN_DIPERBAIKI,
+    KONFIRMASI_SESUAI_KENYATAAN,
+    PERSETUJUAN_DISETUJUI,
+    PERSETUJUAN_DITOLAK,
     SEMESTER_SLS_2026_1,
     STATUS_SUKSES,
     TIPE_A,
@@ -73,7 +77,9 @@ from app.skema import (
     HasilOut,
     KonfirmasiAnomaliOut,
     KonfirmasiMasuk,
+    KonfirmasiValidasiSlsMasuk,
     MasterGeotagOut,
+    PersetujuanValidasiSlsMasuk,
     PerubahanOut,
     ProgresBOut,
     RekapDetailOut,
@@ -820,12 +826,19 @@ def rekap_run(
 def daftar_unmatch_validasi(
     run_id: int,
     jenis: str | None = Query(None, description="saring satu jenis temuan; kosong = semua"),
+    status_konfirmasi: str | None = Query(
+        None,
+        description=(
+            "saring status konfirmasi: belum/sudah/akan_diperbaiki/"
+            "sesuai_kenyataan/menunggu_persetujuan/disetujui/ditolak"
+        ),
+    ),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     sesi: Session = Depends(get_session),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> ValidasiUnmatchOut:
-    """Daftar temuan satu run V (paging, urut kode peta/master).
+    """Daftar temuan satu run V (paging, urut kode peta/master) beserta konfirmasinya.
 
     Run V gagal tetap tercatat; unduhan Excel-nya untuk diperbaiki di QGIS.
     Bukan run V dibalas 404.
@@ -835,15 +848,29 @@ def daftar_unmatch_validasi(
     if run.tipe != TIPE_V:
         raise HTTPException(status_code=404, detail=f"job {run_id} bukan run validasi")
     jenis_bersih = jenis.strip() if jenis else None
-    if jenis_bersih is not None and jenis_bersih not in (
-        validasi_sls.JENIS_TIDAK_DI_PETA,
-        validasi_sls.JENIS_TIDAK_DI_MASTER,
-        validasi_sls.JENIS_GANDA,
-        validasi_sls.JENIS_NAMA_BEDA,
-    ):
+    if jenis_bersih is not None and jenis_bersih not in validasi_sls.SEMUA_JENIS_UNMATCH:
         raise HTTPException(status_code=422, detail=f"jenis tidak dikenal: {jenis}")
+    status_bersih = status_konfirmasi.strip().lower() if status_konfirmasi else None
+    if status_bersih is not None and status_bersih not in (
+        "belum",
+        "sudah",
+        KONFIRMASI_AKAN_DIPERBAIKI,
+        KONFIRMASI_SESUAI_KENYATAAN,
+        "menunggu_persetujuan",
+        PERSETUJUAN_DISETUJUI,
+        PERSETUJUAN_DITOLAK,
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=f"status_konfirmasi tidak dikenal: {status_konfirmasi}",
+        )
     total, baris = layanan.daftar_unmatch(
-        sesi, run_id, jenis=jenis_bersih, limit=limit, offset=offset
+        sesi,
+        run_id,
+        jenis=jenis_bersih,
+        status_konfirmasi=status_bersih,
+        limit=limit,
+        offset=offset,
     )
     return ValidasiUnmatchOut(
         run_id=run_id,
@@ -852,6 +879,103 @@ def daftar_unmatch_validasi(
         offset=offset,
         baris=[ValidasiUnmatchBarisOut.model_validate(satu) for satu in baris],
     )
+
+
+@router.post("/runs/{run_id}/validasi-sls/konfirmasi", response_model=HasilKonfirmasiOut)
+def simpan_konfirmasi_validasi_sls(
+    run_id: int,
+    permintaan: KonfirmasiValidasiSlsMasuk,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> HasilKonfirmasiOut:
+    """Simpan atau batalkan konfirmasi temuan validasi SLS (kabupaten/kota maupun provinsi).
+
+    Pilihan ``status``: ``akan_diperbaiki``, ``sesuai_kenyataan`` (wajib alasan),
+    atau ``batal``.
+    """
+    run = _ambil_run(sesi, run_id)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    if run.tipe != TIPE_V:
+        raise HTTPException(status_code=404, detail=f"job {run_id} bukan run validasi")
+    status = (permintaan.status or "").strip().lower()
+    if status not in (KONFIRMASI_AKAN_DIPERBAIKI, KONFIRMASI_SESUAI_KENYATAAN, "batal"):
+        raise HTTPException(
+            status_code=422,
+            detail="status harus 'akan_diperbaiki', 'sesuai_kenyataan', atau 'batal'",
+        )
+    catatan = (permintaan.catatan or "").strip() or None
+    if status == KONFIRMASI_SESUAI_KENYATAAN and not catatan:
+        raise HTTPException(
+            status_code=422,
+            detail="alasan/catatan wajib diisi untuk pilihan 'Sesuai Kondisi Kenyataan'",
+        )
+    if not permintaan.unmatch_ids:
+        raise HTTPException(status_code=422, detail="pilih minimal satu temuan")
+    jumlah = layanan.simpan_konfirmasi_validasi(
+        sesi,
+        pengguna,
+        run,
+        unmatch_ids=permintaan.unmatch_ids,
+        status=status,
+        catatan=catatan,
+    )
+    if jumlah == 0 and status != "batal":
+        raise HTTPException(status_code=404, detail="temuan validasi tidak ditemukan")
+    aktivitas.catat(
+        sesi,
+        pengguna,
+        aksi="konfirmasi_validasi_sls",
+        objek="run",
+        objek_id=run.id,
+        detail=f"{status} {jumlah} temuan ({run.kdprov}/{run.kdkab})",
+    )
+    return HasilKonfirmasiOut(jumlah=jumlah)
+
+
+@router.post("/runs/{run_id}/validasi-sls/persetujuan", response_model=HasilKonfirmasiOut)
+def simpan_persetujuan_validasi_sls(
+    run_id: int,
+    permintaan: PersetujuanValidasiSlsMasuk,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> HasilKonfirmasiOut:
+    """Keputusan Admin Provinsi (Setujui/Tolak) atas konfirmasi 'Sesuai Kondisi Kenyataan'."""
+    auth.pastikan_peran(pengguna, PERAN_ADMIN_PROVINSI)
+    run = _ambil_run(sesi, run_id)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    if run.tipe != TIPE_V:
+        raise HTTPException(status_code=404, detail=f"job {run_id} bukan run validasi")
+    keputusan = (permintaan.keputusan or "").strip().lower()
+    if keputusan not in (PERSETUJUAN_DISETUJUI, PERSETUJUAN_DITOLAK, "batal"):
+        raise HTTPException(
+            status_code=422,
+            detail="keputusan harus 'disetujui', 'ditolak', atau 'batal'",
+        )
+    catatan = (permintaan.catatan or "").strip() or None
+    if not permintaan.unmatch_ids:
+        raise HTTPException(status_code=422, detail="pilih minimal satu temuan")
+    jumlah = layanan.simpan_persetujuan_validasi(
+        sesi,
+        pengguna,
+        run,
+        unmatch_ids=permintaan.unmatch_ids,
+        keputusan=keputusan,
+        catatan=catatan,
+    )
+    if jumlah == 0:
+        raise HTTPException(
+            status_code=422,
+            detail="hanya temuan berstatus 'Sesuai Kondisi Kenyataan' yang dapat disetujui/ditolak",
+        )
+    aktivitas.catat(
+        sesi,
+        pengguna,
+        aksi="persetujuan_validasi_sls",
+        objek="run",
+        objek_id=run.id,
+        detail=f"{keputusan} {jumlah} temuan ({run.kdprov}/{run.kdkab})",
+    )
+    return HasilKonfirmasiOut(jumlah=jumlah)
 
 
 @router.get("/runs/{run_id}/ekspor/unmatch-v.xlsx", response_class=StreamingResponse)

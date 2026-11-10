@@ -542,3 +542,236 @@ def test_jelaskan_galat_run_id_bukan_kolom_berkas() -> None:
     assert pesan is not None
     assert "internal" in pesan and "tidak bersalah" in pesan
     assert "tidak memuat kolom" not in pesan
+
+
+def test_konfirmasi_dan_persetujuan_validasi_sls_sukses_catatan(sesi) -> None:
+    """Konfirmasi semua temuan 'sesuai_kenyataan' + disetujui provinsi -> sukses_catatan."""
+    from app.auth import Pengguna
+    from app.models import (
+        KONFIRMASI_AKAN_DIPERBAIKI,
+        KONFIRMASI_SESUAI_KENYATAAN,
+        PERSETUJUAN_DISETUJUI,
+        PERSETUJUAN_DITOLAK,
+        STATUS_SUKSES_CATATAN,
+    )
+    from app.peran import PERAN_ADMIN_PROVINSI, PERAN_PETUGAS_KABKOT, Peran
+
+    _isi_master(
+        sesi,
+        "3302",
+        ["3302010001000100", "3302010001000200", "3302010001000300"],
+    )
+    run = _run_v(sesi)
+    run.status = STATUS_BELUM_CLEAN
+    sesi.commit()
+
+    petugas_kab = Pengguna(
+        sub="kab-3302",
+        username="petugas.banyumas",
+        nama="Budi Kab",
+        nip="19900101",
+        email="budi@bps.go.id",
+        org="3302",
+        peran=Peran(nama=PERAN_PETUGAS_KABKOT, kdprov="33", kdkab="3302"),
+    )
+    admin_prov = Pengguna(
+        sub="prov-33",
+        username="admin.jateng",
+        nama="Siti Provinsi",
+        nip="19850101",
+        email="siti@bps.go.id",
+        org="3300",
+        peran=Peran(nama=PERAN_ADMIN_PROVINSI, kdprov="33", kdkab=None),
+    )
+
+    total, daftar = layanan.daftar_unmatch(sesi, run.id)
+    assert total == 3
+    ids = [int(b["id"]) for b in daftar]
+
+    # 1. Konfirmasi 2 baris 'sesuai_kenyataan' dan 1 baris 'akan_diperbaiki'
+    layanan.simpan_konfirmasi_validasi(
+        sesi,
+        petugas_kab,
+        run,
+        unmatch_ids=ids[:2],
+        status=KONFIRMASI_SESUAI_KENYATAAN,
+        catatan="Kondisi batas sungai alami sesuai lapangan",
+    )
+    layanan.simpan_konfirmasi_validasi(
+        sesi,
+        petugas_kab,
+        run,
+        unmatch_ids=[ids[2]],
+        status=KONFIRMASI_AKAN_DIPERBAIKI,
+        catatan="Segera dirapikan di QGIS",
+    )
+    ringkas = layanan.ringkasan_validasi(sesi, kdprov="33", kdkab="3302")[0]
+    assert ringkas["terkonfirmasi"] == 3
+    assert ringkas["sesuai_kenyataan"] == 2
+    assert ringkas["akan_diperbaiki"] == 1
+    assert ringkas["menunggu_persetujuan"] == 2
+    assert ringkas["status"] == STATUS_BELUM_CLEAN
+
+    # 2. Ubah baris ke-3 menjadi 'sesuai_kenyataan' oleh provinsi & setujui ketiganya
+    layanan.simpan_konfirmasi_validasi(
+        sesi,
+        admin_prov,
+        run,
+        unmatch_ids=[ids[2]],
+        status=KONFIRMASI_SESUAI_KENYATAAN,
+        catatan="Sudah dicek bersama kab/kota sesuai kenyataan",
+    )
+    disetujui = layanan.simpan_persetujuan_validasi(
+        sesi,
+        admin_prov,
+        run,
+        unmatch_ids=ids,
+        keputusan=PERSETUJUAN_DISETUJUI,
+        catatan="Disetujui tim provinsi",
+    )
+    assert disetujui == 3
+    sesi.refresh(run)
+    assert run.status == STATUS_SUKSES_CATATAN
+
+    ringkas = layanan.ringkasan_validasi(sesi, kdprov="33", kdkab="3302")[0]
+    assert ringkas["status"] == STATUS_SUKSES_CATATAN
+    assert ringkas["disetujui"] == 3
+    assert ringkas["menunggu_persetujuan"] == 0
+
+    # Cek pelaku konfirmasi & persetujuan tersimpan
+    _, daftar_baru = layanan.daftar_unmatch(
+        sesi, run.id, status_konfirmasi="disetujui"
+    )
+    assert len(daftar_baru) == 3
+    assert daftar_baru[0]["konfirmasi"]["oleh"] == "Budi Kab"
+    assert daftar_baru[0]["konfirmasi"]["persetujuan_oleh"] == "Siti Provinsi"
+    assert (
+        daftar_baru[0]["konfirmasi"]["persetujuan_status"]
+        == PERSETUJUAN_DISETUJUI
+    )
+
+    # 3. Bila 1 temuan ditolak provinsi, status kembali belum_clean
+    layanan.simpan_persetujuan_validasi(
+        sesi,
+        admin_prov,
+        run,
+        unmatch_ids=[ids[0]],
+        keputusan=PERSETUJUAN_DITOLAK,
+        catatan="Mohon tetap diperbaiki poligonnya",
+    )
+    sesi.refresh(run)
+    assert run.status == STATUS_BELUM_CLEAN
+    ringkas = layanan.ringkasan_validasi(sesi, kdprov="33", kdkab="3302")[0]
+    assert ringkas["status"] == STATUS_BELUM_CLEAN
+    assert ringkas["disetujui"] == 2
+    assert ringkas["ditolak"] == 1
+
+
+def test_konfirmasi_validasi_sls_endpoint_kewenangan_dan_alasan_wajib(
+    klien, sesi
+) -> None:
+    """Endpoint API: wajib alasan untuk sesuai_kenyataan, dan persetujuan khusus provinsi."""
+    from app import auth
+    from app.main import app
+    from app.models import STATUS_SUKSES_CATATAN
+    from app.peran import PERAN_ADMIN_PROVINSI, PERAN_PETUGAS_KABKOT, Peran
+
+    _isi_master(
+        sesi,
+        "3302",
+        ["3302010001000100", "3302010001000200", "3302010001000300"],
+    )
+    run = _run_v(sesi)
+    run.status = STATUS_BELUM_CLEAN
+    # Tambahkan juga temuan topologi geom_gap untuk menguji filter jenis baru
+    sesi.add(
+        ValidasiSlsUnmatch(
+            run_id=run.id,
+            jenis="geom_gap",
+            idsls_peta="33020100010001",
+            idsubsls_peta="3302010001000100",
+            nmsls="RT 01",
+            catatan="gap/celah antar poligon (±12,50 m²)",
+        )
+    )
+    sesi.commit()
+
+    petugas_kab = auth.Pengguna(
+        sub="kab-3302",
+        username="petugas.banyumas",
+        nama="Budi Kab",
+        org="3302",
+        peran=Peran(nama=PERAN_PETUGAS_KABKOT, kdprov="33", kdkab="3302"),
+    )
+    admin_prov = auth.Pengguna(
+        sub="prov-33",
+        username="admin.jateng",
+        nama="Siti Provinsi",
+        org="33",
+        peran=Peran(nama=PERAN_ADMIN_PROVINSI, kdprov="33", kdkab=None),
+    )
+
+    try:
+        app.dependency_overrides[auth.pengguna_saat_ini] = lambda: petugas_kab
+
+        # Filter jenis geom_gap diizinkan
+        r_gap = klien.get(f"/runs/{run.id}/validasi-sls/unmatch?jenis=geom_gap")
+        assert r_gap.status_code == 200
+        assert r_gap.json()["total"] == 1
+
+        r_all = klien.get(f"/runs/{run.id}/validasi-sls/unmatch")
+        assert r_all.status_code == 200
+        semua_ids = [b["id"] for b in r_all.json()["baris"]]
+        assert len(semua_ids) == 4
+
+        # Sesuai kenyataan tanpa alasan ditolak 422
+        r_tanpa_alasan = klien.post(
+            f"/runs/{run.id}/validasi-sls/konfirmasi",
+            json={
+                "unmatch_ids": semua_ids,
+                "status": "sesuai_kenyataan",
+                "catatan": "   ",
+            },
+        )
+        assert r_tanpa_alasan.status_code == 422
+
+        # Sesuai kenyataan dengan alasan diterima
+        r_ok = klien.post(
+            f"/runs/{run.id}/validasi-sls/konfirmasi",
+            json={
+                "unmatch_ids": semua_ids,
+                "status": "sesuai_kenyataan",
+                "catatan": "Enclave dan batas wilayah sesuai kondisi riil lapangan",
+            },
+        )
+        assert r_ok.status_code == 200
+        assert r_ok.json()["jumlah"] == 4
+
+        # Petugas kab/kota mencoba menyetujui -> ditolak 403
+        r_kab_setuju = klien.post(
+            f"/runs/{run.id}/validasi-sls/persetujuan",
+            json={"unmatch_ids": semua_ids, "keputusan": "disetujui"},
+        )
+        assert r_kab_setuju.status_code == 403
+
+        # Admin provinsi menyetujui -> 200 & status di ringkasan menjadi sukses_catatan
+        app.dependency_overrides[auth.pengguna_saat_ini] = lambda: admin_prov
+        r_prov_setuju = klien.post(
+            f"/runs/{run.id}/validasi-sls/persetujuan",
+            json={
+                "unmatch_ids": semua_ids,
+                "keputusan": "disetujui",
+                "catatan": "Disetujui provinsi",
+            },
+        )
+        assert r_prov_setuju.status_code == 200
+        assert r_prov_setuju.json()["jumlah"] == 4
+
+        r_ringkasan = klien.get("/validasi-sls/ringkasan")
+        assert r_ringkasan.status_code == 200
+        baris_kab = r_ringkasan.json()["baris"][0]
+        assert baris_kab["status"] == STATUS_SUKSES_CATATAN
+        assert baris_kab["disetujui"] == 4
+    finally:
+        app.dependency_overrides.pop(auth.pengguna_saat_ini, None)
+
