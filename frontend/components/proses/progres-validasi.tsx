@@ -319,7 +319,7 @@ export function ProgresValidasi({
                   rowSpan={2}
                   className="sticky top-0 z-10 bg-paper px-3 py-2 align-bottom font-semibold"
                 >
-                  Temuan Topologi (QGIS)
+                  Temuan Topologi (QGIS 3.44)
                 </th>
                 <th
                   scope="col"
