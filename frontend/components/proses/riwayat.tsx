@@ -192,11 +192,17 @@ export function RiwayatWorkspace({ tabAwal = "A" }: { tabAwal?: TipeRun }) {
 
   const controllerRef = useRef<AbortController | null>(null);
 
+  const sedangMemuatRef = useRef(false);
+
   const muat = useCallback(
     async (senyap = false) => {
+      if (sedangMemuatRef.current && senyap) {
+        return;
+      }
       controllerRef.current?.abort();
       const controller = new AbortController();
       controllerRef.current = controller;
+      sedangMemuatRef.current = true;
 
       if (!senyap) {
         setMemuat(true);
@@ -212,59 +218,65 @@ export function RiwayatWorkspace({ tabAwal = "A" }: { tabAwal?: TipeRun }) {
         parameter.set("q", cariAktif);
       }
 
-      const [hasilRun, hasilJalan, hasilMenunggu] =
-        await Promise.allSettled([
-          ambilJson<DaftarRun>(`/runs?${parameter.toString()}`, {
-            signal: controller.signal,
-          }),
-          ambilJson<DaftarRun>(`/runs?tipe=${tipe}&status=jalan&limit=1`, {
-            signal: controller.signal,
-          }),
-          ambilJson<DaftarRun>(`/runs?tipe=${tipe}&status=menunggu&limit=1`, {
-            signal: controller.signal,
-          }),
-        ]);
+      try {
+        const [hasilRun, hasilJalan, hasilMenunggu] =
+          await Promise.allSettled([
+            ambilJson<DaftarRun>(`/runs?${parameter.toString()}`, {
+              signal: controller.signal,
+            }),
+            ambilJson<DaftarRun>(`/runs?tipe=${tipe}&status=jalan&limit=1`, {
+              signal: controller.signal,
+            }),
+            ambilJson<DaftarRun>(`/runs?tipe=${tipe}&status=menunggu&limit=1`, {
+              signal: controller.signal,
+            }),
+          ]);
 
-      if (controller.signal.aborted) {
-        return;
-      }
-
-      const aktifTerhitung =
-        hasilJalan.status === "fulfilled" &&
-        hasilMenunggu.status === "fulfilled"
-          ? hasilJalan.value.total + hasilMenunggu.value.total
-          : null;
-
-      if (hasilRun.status === "fulfilled") {
-        const totalBaru = hasilRun.value.total;
-        const halamanTerakhir = Math.max(
-          0,
-          Math.ceil(totalBaru / UKURAN_HALAMAN) - 1,
-        );
-        if (halaman > halamanTerakhir) {
-          setHalaman(halamanTerakhir);
-          setRuns([]);
-          setTotal(totalBaru);
-          setMemuat(false);
+        if (controller.signal.aborted) {
           return;
         }
 
-        const aktifDiDaftar = hasilRun.value.baris.filter(
-          (run) => run.status === "menunggu" || run.status === "jalan",
-        ).length;
-        setRuns(hasilRun.value.baris);
-        setTotal(totalBaru);
-        setAktif(aktifTerhitung ?? aktifDiDaftar);
-        setGalat(null);
-        setDiperbarui(formatWaktu(new Date().toISOString()));
-      } else if (!adalahBatal(hasilRun.reason)) {
-        setGalat(pesanKesalahan(hasilRun.reason));
-        if (aktifTerhitung !== null) {
-          setAktif(aktifTerhitung);
+        const aktifTerhitung =
+          hasilJalan.status === "fulfilled" &&
+          hasilMenunggu.status === "fulfilled"
+            ? hasilJalan.value.total + hasilMenunggu.value.total
+            : null;
+
+        if (hasilRun.status === "fulfilled") {
+          const totalBaru = hasilRun.value.total;
+          const halamanTerakhir = Math.max(
+            0,
+            Math.ceil(totalBaru / UKURAN_HALAMAN) - 1,
+          );
+          if (halaman > halamanTerakhir) {
+            setHalaman(halamanTerakhir);
+            setRuns([]);
+            setTotal(totalBaru);
+            setMemuat(false);
+            return;
+          }
+
+          const aktifDiDaftar = hasilRun.value.baris.filter(
+            (run) => run.status === "menunggu" || run.status === "jalan",
+          ).length;
+          setRuns(hasilRun.value.baris);
+          setTotal(totalBaru);
+          setAktif(aktifTerhitung ?? aktifDiDaftar);
+          setGalat(null);
+          setDiperbarui(formatWaktu(new Date().toISOString()));
+        } else if (!adalahBatal(hasilRun.reason)) {
+          setGalat(pesanKesalahan(hasilRun.reason));
+          if (aktifTerhitung !== null) {
+            setAktif(aktifTerhitung);
+          }
+        }
+
+        setMemuat(false);
+      } finally {
+        if (controllerRef.current === controller) {
+          sedangMemuatRef.current = false;
         }
       }
-
-      setMemuat(false);
     },
     [tipe, halaman, cariAktif],
   );

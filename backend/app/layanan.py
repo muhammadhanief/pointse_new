@@ -630,31 +630,10 @@ def saring_pencarian_run(teks: str) -> Any:
         .correlate(Run)
         .scalar_subquery()
     )
-    kdkab_pendek = func.substr(Run.kdkab, func.length(Run.kdkab) - 1, 2)
-    saring_wilayah = or_(
-        Wilayah.kdkab == Run.kdkab,
-        Wilayah.kdkab == kdkab_pendek,
-    )
-    nmkab = (
-        select(Wilayah.nmkab)
-        .where(Wilayah.kdprov == Run.kdprov, saring_wilayah)
-        .order_by(Wilayah.id)
-        .limit(1)
-        .correlate(Run)
-        .scalar_subquery()
-    )
-    nmprov = (
-        select(Wilayah.nmprov)
-        .where(Wilayah.kdprov == Run.kdprov)
-        .order_by(Wilayah.id)
-        .limit(1)
-        .correlate(Run)
-        .scalar_subquery()
-    )
 
     return or_(
         cast(Run.id, String).ilike(pola),
-        cast(nomor, String).ilike(pola),
+        *([nomor == int(angka)] if angka and len(angka) <= 4 else []),
         Run.tipe.ilike(pola),
         Run.kdprov.ilike(pola),
         Run.kdkab.ilike(pola),
@@ -671,8 +650,6 @@ def saring_pencarian_run(teks: str) -> Any:
         cast(Run.jumlah_tanpa_wilayah, String).ilike(pola),
         cast(Run.tanggal_data, String).ilike(pola),
         cast(Run.created_at, String).ilike(pola),
-        nmkab.ilike(pola),
-        nmprov.ilike(pola),
     )
 
 
