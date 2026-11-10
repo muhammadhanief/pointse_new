@@ -842,6 +842,10 @@ LEMBAR_UNMATCH_V: tuple[tuple[str, str], ...] = (
     ("ganda", "Ganda di peta"),
     ("nama_beda", "Nama berbeda"),
     ("tidak_konsisten", "Tidak konsisten"),
+    ("geom_gap", "Celah (gap)"),
+    ("geom_overlap", "Tumpang tindih"),
+    ("geom_duplikat", "Duplikat geometri"),
+    ("geom_invalid", "Geometri tidak valid"),
 )
 
 #: Merah penuh (ARGB) untuk tab lembar yang berisi temuan (menyala = perlu dibuka).

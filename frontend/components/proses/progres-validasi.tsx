@@ -31,6 +31,14 @@ function labelJenis(jenis: string): string {
       return "Nama berbeda";
     case "tidak_konsisten":
       return "Tidak konsisten";
+    case "geom_gap":
+      return "Celah (gap)";
+    case "geom_overlap":
+      return "Tumpang tindih (overlap)";
+    case "geom_duplikat":
+      return "Duplikat geometri";
+    case "geom_invalid":
+      return "Geometri tidak valid";
     default:
       return jenis;
   }

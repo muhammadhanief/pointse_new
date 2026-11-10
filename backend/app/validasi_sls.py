@@ -123,6 +123,10 @@ JENIS_TIDAK_DI_MASTER = "tidak_di_master"
 JENIS_GANDA = "ganda"
 JENIS_NAMA_BEDA = "nama_beda"
 JENIS_TIDAK_KONSISTEN = "tidak_konsisten"
+JENIS_GEOM_INVALID = "geom_invalid"
+JENIS_GEOM_DUPLIKAT = "geom_duplikat"
+JENIS_GEOM_OVERLAP = "geom_overlap"
+JENIS_GEOM_GAP = "geom_gap"
 
 
 @dataclass
@@ -153,8 +157,20 @@ class HasilMatching:
 
 
 @dataclass
+class HasilTopologi:
+    """Hasil blok Topology Checker (4 aturan QGIS)."""
+
+    lolos: bool = True
+    jumlah_invalid: int = 0
+    jumlah_duplikat: int = 0
+    jumlah_overlap: int = 0
+    jumlah_gap: int = 0
+    temuan: list[BarisUnmatch] = field(default_factory=list)
+
+
+@dataclass
 class HasilValidasi:
-    """Gabungan empat blok + pesan ringkas untuk ``runs.pesan``."""
+    """Gabungan lima blok + pesan ringkas untuk ``runs.pesan``."""
 
     lolos: bool
     skema: HasilSkema
@@ -162,6 +178,7 @@ class HasilValidasi:
     konsistensi: HasilKonsistensi
     matching: HasilMatching
     pesan: str
+    topologi: HasilTopologi = field(default_factory=HasilTopologi)
 
 
 def normalisasi_idsls(nilai: Any) -> str | None:
@@ -457,12 +474,223 @@ def bandingkan(
     return HasilMatching(lolos=not temuan, temuan=temuan)
 
 
+def periksa_topologi(
+    geometri: list[Any],
+    atribut: list[dict[str, str]] | None = None,
+) -> HasilTopologi:
+    """Jalankan 4 aturan QGIS Topology Checker pada geometri poligon.
+
+    Aturan yang direplikasi persis dari ``src/plugins/topology/topolTest.cpp``:
+
+    - ``must not have invalid geometries`` (``checkValid``)
+    - ``must not have duplicates`` (``checkDuplicates``)
+    - ``must not overlap`` (``checkOverlaps``)
+    - ``must not have gaps`` (``checkGaps``)
+
+    Fitur bergeometri bukan poligon (mis. titik pada data uji sintetis)
+    diabaikan agar tes non-poligon tetap berjalan mulus.
+    """
+    import shapely
+    from shapely import STRtree
+    from shapely.validation import explain_validity
+
+    baris_atribut = atribut or []
+
+    def _info_baris(indeks: int) -> tuple[str | None, str | None, str | None]:
+        if indeks < len(baris_atribut):
+            info = baris_atribut[indeks]
+            return (
+                info.get("kode") or None,
+                info.get("sub") or None,
+                info.get("nama") or None,
+            )
+        return None, None, None
+
+    poligon_indeks: list[int] = []
+    for urut, geom in enumerate(geometri):
+        if geom is None or geom.is_empty:
+            continue
+        if geom.geom_type in ("Polygon", "MultiPolygon"):
+            poligon_indeks.append(urut)
+
+    if not poligon_indeks:
+        return HasilTopologi(lolos=True)
+
+    temuan: list[BarisUnmatch] = []
+
+    # 1. must not have invalid geometries (checkValid)
+    valid_map: dict[int, bool] = {}
+    jumlah_invalid = 0
+    for urut in poligon_indeks:
+        geom = geometri[urut]
+        valid = bool(shapely.is_valid(geom))
+        valid_map[urut] = valid
+        if not valid:
+            jumlah_invalid += 1
+            idsls, idsubsls, nama = _info_baris(urut)
+            alasan = explain_validity(geom)
+            temuan.append(
+                BarisUnmatch(
+                    jenis=JENIS_GEOM_INVALID,
+                    idsls_peta=idsls,
+                    idsubsls_peta=idsubsls,
+                    idsls_master=None,
+                    idsubsls_master=None,
+                    nmsls=nama,
+                    catatan=f"baris {urut + 1}: {alasan}"[:255],
+                )
+            )
+
+    # Indeks spasial bounding-box seperti QgsSpatialIndex di QGIS.
+    kotak = [shapely.box(*geometri[urut].bounds) for urut in poligon_indeks]
+    pohon = STRtree(kotak)
+
+    # 2. must not have duplicates (checkDuplicates)
+    duplikat_lewati: set[int] = set()
+    jumlah_duplikat = 0
+    for pos_a, urut_a in enumerate(poligon_indeks):
+        if urut_a in duplikat_lewati:
+            continue
+        geom_a = geometri[urut_a]
+        for pos_b in pohon.query(kotak[pos_a], predicate="intersects"):
+            pos_b = int(pos_b)
+            urut_b = poligon_indeks[pos_b]
+            if urut_b == urut_a:
+                continue
+            geom_b = geometri[urut_b]
+            if shapely.equals(geom_a, geom_b):
+                duplikat_lewati.add(urut_b)
+                jumlah_duplikat += 1
+                idsls_a, idsubsls_a, nama_a = _info_baris(urut_a)
+                _idsls_b, idsubsls_b, _nama_b = _info_baris(urut_b)
+                lawan = idsubsls_b or f"baris {urut_b + 1}"
+                temuan.append(
+                    BarisUnmatch(
+                        jenis=JENIS_GEOM_DUPLIKAT,
+                        idsls_peta=idsls_a,
+                        idsubsls_peta=idsubsls_a,
+                        idsls_master=None,
+                        idsubsls_master=None,
+                        nmsls=nama_a,
+                        catatan=f"geometri duplikat dengan {lawan}"[:255],
+                    )
+                )
+
+    # 3. must not overlap (checkOverlaps)
+    overlap_lewati: set[int] = set()
+    jumlah_overlap = 0
+    for pos_a, urut_a in enumerate(poligon_indeks):
+        if urut_a in overlap_lewati or not valid_map[urut_a]:
+            continue
+        geom_a = geometri[urut_a]
+        shapely.prepare(geom_a)
+        for pos_b in pohon.query(kotak[pos_a], predicate="intersects"):
+            pos_b = int(pos_b)
+            urut_b = poligon_indeks[pos_b]
+            if urut_b == urut_a or not valid_map[urut_b]:
+                continue
+            geom_b = geometri[urut_b]
+            if shapely.overlaps(geom_a, geom_b):
+                overlap_lewati.add(urut_b)
+                jumlah_overlap += 1
+                idsls_a, idsubsls_a, nama_a = _info_baris(urut_a)
+                _idsls_b, idsubsls_b, _nama_b = _info_baris(urut_b)
+                lawan = idsubsls_b or f"baris {urut_b + 1}"
+                temuan.append(
+                    BarisUnmatch(
+                        jenis=JENIS_GEOM_OVERLAP,
+                        idsls_peta=idsls_a,
+                        idsubsls_peta=idsubsls_a,
+                        idsls_master=None,
+                        idsubsls_master=None,
+                        nmsls=nama_a,
+                        catatan=f"tumpang tindih dengan {lawan}"[:255],
+                    )
+                )
+
+    # 4. must not have gaps (checkGaps)
+    # Geser koordinat (+100, -100) sebelum unary_union agar perilaku pembulatan
+    # floating-point GEOS 3.14 selaras dengan GEOS 3.11 bawaan QGIS LTR pada
+    # celah mikro antar-segmen.
+    potongan_valid = [
+        shapely.transform(bagian, lambda koor: koor + [100.0, -100.0])
+        for urut in poligon_indeks
+        if valid_map[urut]
+        for bagian in shapely.get_parts(geometri[urut])
+    ]
+    jumlah_gap = 0
+    if potongan_valid:
+        gabungan = shapely.unary_union(potongan_valid)
+        if not gabungan.is_empty:
+            batas = shapely.box(*gabungan.bounds).buffer(2, quad_segs=3)
+            selisih = shapely.difference(batas, gabungan)
+            daftar_celah = list(shapely.get_parts(selisih))[1:]
+            jumlah_gap = len(daftar_celah)
+            for nomor_celah, celah_geser in enumerate(daftar_celah, start=1):
+                celah = shapely.transform(
+                    celah_geser, lambda koor: koor - [100.0, -100.0]
+                )
+                titik = celah.representative_point()
+                kandidat = [
+                    poligon_indeks[int(pos)]
+                    for pos in pohon.query(
+                        shapely.box(*celah.bounds), predicate="intersects"
+                    )
+                    if shapely.intersects(
+                        geometri[poligon_indeks[int(pos)]], celah.buffer(1e-7)
+                    )
+                ]
+                idsls_c: str | None = None
+                idsubsls_c: str | None = None
+                nama_c: str | None = None
+                sekitar: list[str] = []
+                for urut_k in kandidat[:3]:
+                    s_sls, s_sub, s_nama = _info_baris(urut_k)
+                    if idsls_c is None and (s_sls or s_sub):
+                        idsls_c, idsubsls_c, nama_c = s_sls, s_sub, s_nama
+                    if s_sub and s_sub not in sekitar:
+                        sekitar.append(s_sub)
+                info_sekitar = (
+                    f" sekitar {', '.join(sekitar)}" if sekitar else ""
+                )
+                temuan.append(
+                    BarisUnmatch(
+                        jenis=JENIS_GEOM_GAP,
+                        idsls_peta=idsls_c,
+                        idsubsls_peta=idsubsls_c,
+                        idsls_master=None,
+                        idsubsls_master=None,
+                        nmsls=nama_c,
+                        catatan=(
+                            f"celah #{nomor_celah} di ({titik.y:.6f}, "
+                            f"{titik.x:.6f}){info_sekitar}"
+                        )[:255],
+                    )
+                )
+
+    lolos = (
+        jumlah_invalid == 0
+        and jumlah_duplikat == 0
+        and jumlah_overlap == 0
+        and jumlah_gap == 0
+    )
+    return HasilTopologi(
+        lolos=lolos,
+        jumlah_invalid=jumlah_invalid,
+        jumlah_duplikat=jumlah_duplikat,
+        jumlah_overlap=jumlah_overlap,
+        jumlah_gap=jumlah_gap,
+        temuan=temuan,
+    )
+
+
 def rangkum_pesan(
     skema: HasilSkema,
     duplikat: HasilDuplikat,
     konsistensi: HasilKonsistensi,
     matching: HasilMatching,
     baris_kosong: int = 0,
+    topologi: HasilTopologi | None = None,
 ) -> tuple[bool, str]:
     """Susun ringkasan per blok, satu blok satu baris (tanpa rahasia)."""
     bagian: list[str] = []
@@ -551,10 +779,35 @@ def rangkum_pesan(
                 "Kemungkinan 2 layer tergabung (banyak pasangan ganda): "
                 "periksa/buang layer ganda di QGIS sebelum ekspor ulang."
             )
+    topo = topologi if topologi is not None else HasilTopologi(lolos=True)
+    if topologi is not None:
+        if topo.lolos:
+            bagian.append(
+                "Validasi Topologi (Topology Checker): Sukses \u2014 "
+                "tidak ada celah (gap), tumpang tindih (overlap), duplikat geometri, "
+                "atau geometri tidak valid."
+            )
+        else:
+            rincian_topo = (
+                f"celah (gap)={topo.jumlah_gap}; "
+                f"tumpang tindih (overlap)={topo.jumlah_overlap}; "
+                f"duplikat geometri={topo.jumlah_duplikat}; "
+                f"geometri tidak valid={topo.jumlah_invalid}"
+            )
+            bagian.append(
+                f"Validasi Topologi (Topology Checker): Gagal \u2014 {rincian_topo}."
+            )
+    if not matching.lolos or not topo.lolos:
         bagian.append(
             "Unduh rincian Excel di halaman Riwayat, perbaiki di QGIS, lalu unggah ulang."
         )
-    lolos = skema.lolos and duplikat.lolos and konsistensi.lolos and matching.lolos
+    lolos = (
+        skema.lolos
+        and duplikat.lolos
+        and konsistensi.lolos
+        and matching.lolos
+        and topo.lolos
+    )
     judul = "Validasi SLS 2026 S1: LOLOS" if lolos else "Validasi SLS 2026 S1: GAGAL"
     return lolos, judul + "\n" + "\n".join(bagian)
 
@@ -565,10 +818,16 @@ def gabungkan_hasil(
     konsistensi: HasilKonsistensi,
     matching: HasilMatching,
     baris_kosong: int = 0,
+    topologi: HasilTopologi | None = None,
 ) -> HasilValidasi:
-    """Gabungkan empat blok + pesan."""
+    """Gabungkan lima blok + pesan."""
     lolos, pesan = rangkum_pesan(
-        skema, duplikat, konsistensi, matching, baris_kosong=baris_kosong
+        skema,
+        duplikat,
+        konsistensi,
+        matching,
+        baris_kosong=baris_kosong,
+        topologi=topologi,
     )
     return HasilValidasi(
         lolos=lolos,
@@ -577,6 +836,7 @@ def gabungkan_hasil(
         konsistensi=konsistensi,
         matching=matching,
         pesan=pesan,
+        topologi=topologi if topologi is not None else HasilTopologi(lolos=True),
     )
 
 
@@ -759,12 +1019,14 @@ def validasi_berkas(
     master: Mapping[tuple[str, str], str | None],
     kode_kab: str | None = None,
 ) -> HasilValidasi:
-    """Jalankan empat blok validasi untuk satu berkas peta (dipakai worker).
+    """Jalankan lima blok validasi untuk satu berkas peta (dipakai worker).
 
     ``master`` = mapping pasangan ``(idsls, idsubsls)`` -> ``nmsls`` dari
     database (lihat ``app.layanan.muat_master``); berkas Excel hanya dibaca
     saat impor, bukan saat validasi.
     """
+    import pyogrio
+
     peta, pasangan, contoh, kolom, kdprov, kdkab, baris_kosong, atribut = (
         baca_peta(berkas, layer)
     )
@@ -792,6 +1054,28 @@ def validasi_berkas(
         pasangan = [kunci for kunci in pasangan if kunci not in buruk]
     hitung = Counter(pasangan)
     matching = bandingkan(peta, master, hitung)
+
+    kolom_geom = [nama for nama in ("idsls", "idsubsls", "nmsls") if nama in kolom]
+    gdf_geom = pyogrio.read_dataframe(
+        str(berkas), layer=layer, columns=kolom_geom, read_geometry=True
+    )
+    atribut_geom: list[dict[str, str]] = []
+    seri_idsls = list(gdf_geom["idsls"]) if "idsls" in gdf_geom.columns else []
+    seri_sub = list(gdf_geom["idsubsls"]) if "idsubsls" in gdf_geom.columns else []
+    seri_nama = list(gdf_geom["nmsls"]) if "nmsls" in gdf_geom.columns else []
+    for urut in range(len(gdf_geom)):
+        kode_g = normalisasi_idsls(seri_idsls[urut] if urut < len(seri_idsls) else None) or ""
+        sub_g = normalisasi_idsls(seri_sub[urut] if urut < len(seri_sub) else None) or ""
+        nama_m = seri_nama[urut] if urut < len(seri_nama) else None
+        nama_g = str(nama_m).strip() if nama_m is not None else ""
+        atribut_geom.append({"kode": kode_g, "sub": sub_g, "nama": nama_g})
+    topologi = periksa_topologi(list(gdf_geom.geometry), atribut_geom)
+
     return gabungkan_hasil(
-        skema, duplikat, konsistensi, matching, baris_kosong=baris_kosong
+        skema,
+        duplikat,
+        konsistensi,
+        matching,
+        baris_kosong=baris_kosong,
+        topologi=topologi,
     )

@@ -67,7 +67,7 @@ def test_daftar_unmatch_paging_dan_saring(sesi) -> None:
 
 
 def test_berkas_unmatch_v_xlsx(sesi) -> None:
-    """Unduhan Excel: ringkasan + 5 sheet jenis, tab merah bila ada temuan."""
+    """Unduhan Excel: ringkasan + 9 sheet jenis, tab merah bila ada temuan."""
     from openpyxl import load_workbook
 
     run = _run_v(sesi)
@@ -80,6 +80,10 @@ def test_berkas_unmatch_v_xlsx(sesi) -> None:
         "Ganda di peta",
         "Nama berbeda",
         "Tidak konsisten",
+        "Celah (gap)",
+        "Tumpang tindih",
+        "Duplikat geometri",
+        "Geometri tidak valid",
     ]
     ringkas = {r[0].value: r[1].value for r in buku["Ringkasan"].iter_rows(min_row=2)}
     assert ringkas["total_temuan"] == 3

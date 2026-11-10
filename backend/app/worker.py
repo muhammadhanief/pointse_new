@@ -1000,7 +1000,11 @@ def proses_validasi_v(sesi: Session, run: Run) -> tuple[int, str, bool]:
             "nmsls": satu.nmsls,
             "catatan": satu.catatan,
         }
-        for satu in (*hasil.konsistensi.temuan, *hasil.matching.temuan)
+        for satu in (
+            *hasil.konsistensi.temuan,
+            *hasil.matching.temuan,
+            *hasil.topologi.temuan,
+        )
     ]
     sesi.execute(delete(ValidasiSlsUnmatch).where(ValidasiSlsUnmatch.run_id == run.id))
     # Daftar kosong (berkas bersih total) tidak boleh di-insert: SQLAlchemy

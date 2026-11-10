@@ -479,3 +479,49 @@ def test_berkas_tidak_konsisten_gagal_tanpa_noise_matching(tmp_path) -> None:
     assert any(
         s.jenis == "tidak_di_peta" for s in hasil.matching.temuan
     )
+
+
+def test_topologi_empat_aturan_qgis() -> None:
+    """Topology Checker: invalid, duplicates, overlap, dan gap terdeteksi."""
+    from shapely.geometry import Polygon
+    from shapely.wkt import loads
+
+    # 1. Bersih: dua kotak bersebelahan rapat tanpa celah atau tumpang tindih.
+    p1 = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    p2 = Polygon([(1, 0), (2, 0), (2, 1), (1, 1)])
+    bersih = validasi_sls.periksa_topologi(
+        [p1, p2],
+        [
+            {"kode": "33160100010001", "sub": "3316010001000100", "nama": "SLS 1"},
+            {"kode": "33160100010002", "sub": "3316010001000200", "nama": "SLS 2"},
+        ],
+    )
+    assert bersih.lolos
+    assert (
+        bersih.jumlah_invalid,
+        bersih.jumlah_duplikat,
+        bersih.jumlah_overlap,
+        bersih.jumlah_gap,
+    ) == (0, 0, 0, 0)
+
+    # 2. Duplikat + overlap + invalid + gap (kotak berlubang di tengah).
+    p_dup = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    p_ov = Polygon([(0.5, 0), (1.5, 0), (1.5, 1), (0.5, 1)])
+    p_inv = loads("POLYGON ((0 0, 2 2, 2 0, 0 2, 0 0))")
+    p_donut = Polygon(
+        [(10, 10), (14, 10), (14, 14), (10, 14)],
+        [[(11, 11), (13, 11), (13, 13), (11, 13)]],
+    )
+    kotor = validasi_sls.periksa_topologi([p1, p_dup, p_ov, p_inv, p_donut])
+    assert not kotor.lolos
+    assert kotor.jumlah_invalid == 1
+    assert kotor.jumlah_duplikat == 1
+    assert kotor.jumlah_overlap >= 1
+    assert kotor.jumlah_gap == 1
+    jenis = {t.jenis for t in kotor.temuan}
+    assert jenis == {
+        validasi_sls.JENIS_GEOM_INVALID,
+        validasi_sls.JENIS_GEOM_DUPLIKAT,
+        validasi_sls.JENIS_GEOM_OVERLAP,
+        validasi_sls.JENIS_GEOM_GAP,
+    }
