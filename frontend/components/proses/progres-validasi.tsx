@@ -19,26 +19,33 @@ import { DetailJob } from "./detail-job";
 
 const INTERVAL_MUAT_ULANG = 15000;
 
+const JENIS_TOPOLOGI = new Set([
+  "geom_gap",
+  "geom_overlap",
+  "geom_duplikat",
+  "geom_invalid",
+]);
+
 function labelJenis(jenis: string): string {
   switch (jenis) {
     case "tidak_di_peta":
-      return "Tidak ada di peta";
+      return "Tidak di peta";
     case "tidak_di_master":
-      return "Tidak ada di master";
+      return "Tidak di master";
     case "ganda":
-      return "Ganda di peta";
+      return "Ganda";
     case "nama_beda":
-      return "Nama berbeda";
+      return "Nama beda";
     case "tidak_konsisten":
       return "Tidak konsisten";
     case "geom_gap":
-      return "Celah (gap)";
+      return "Gap";
     case "geom_overlap":
-      return "Tumpang tindih (overlap)";
+      return "Overlap";
     case "geom_duplikat":
-      return "Duplikat geometri";
+      return "Duplikat";
     case "geom_invalid":
-      return "Geometri tidak valid";
+      return "Invalid";
     default:
       return jenis;
   }
@@ -259,77 +266,94 @@ export function ProgresValidasi({
 
       {tampil.length > 0 ? (
         <div className="relative mt-3 max-h-[70vh] overflow-auto overscroll-contain">
-          <table className="w-full min-w-[68rem] border-collapse text-[13px]">
+          <table className="w-full min-w-[74rem] border-collapse text-[13px]">
             <caption className="sr-only">
               Progres validasi SLS 2026 Semester 1 per kabupaten/kota
             </caption>
             <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-muted">
+              <tr className="border-b border-line/60 text-left text-[11px] uppercase tracking-wide text-muted">
                 <th
                   scope="col"
-                  className="sticky top-0 z-10 bg-paper px-3 py-2 font-semibold"
+                  rowSpan={2}
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 align-bottom font-semibold"
                 >
                   Kode
                 </th>
                 <th
                   scope="col"
-                  className="sticky top-0 z-10 bg-paper px-3 py-2 font-semibold"
+                  rowSpan={2}
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 align-bottom font-semibold"
                 >
                   Kabupaten/kota
                 </th>
                 <th
                   scope="col"
-                  className="sticky top-0 z-10 bg-paper px-3 py-2 font-semibold"
+                  rowSpan={2}
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 align-bottom font-semibold"
                 >
                   Status
                 </th>
                 <th
                   scope="col"
-                  className="sticky top-0 z-10 bg-paper px-3 py-2 font-semibold"
+                  rowSpan={2}
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 align-bottom font-semibold"
                 >
                   Run terakhir
                 </th>
                 <th
-                  scope="col"
-                  className="sticky top-0 z-10 bg-paper px-3 py-2 font-semibold"
+                  scope="colgroup"
+                  colSpan={3}
+                  className="sticky top-0 z-10 border-x border-line/60 bg-paper px-3 py-1.5 text-center font-semibold"
                 >
-                  Petugas
+                  Kecocokan Master MFD
                 </th>
                 <th
                   scope="col"
-                  className="sticky top-0 z-10 bg-paper px-3 py-2 text-right font-semibold"
+                  rowSpan={2}
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 align-bottom font-semibold"
                 >
-                  Temuan
+                  Temuan Atribut
                 </th>
                 <th
                   scope="col"
-                  className="sticky top-0 z-10 bg-paper px-3 py-2 text-right font-semibold"
+                  rowSpan={2}
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 align-bottom font-semibold"
+                >
+                  Temuan Topologi (QGIS)
+                </th>
+                <th
+                  scope="col"
+                  rowSpan={2}
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 text-right align-bottom font-semibold"
+                >
+                  Total Temuan
+                </th>
+                <th
+                  scope="col"
+                  rowSpan={2}
+                  className="sticky top-0 z-10 bg-paper px-3 py-2 text-right align-bottom font-semibold"
+                >
+                  Aksi
+                </th>
+              </tr>
+              <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
+                <th
+                  scope="col"
+                  className="sticky top-7 z-10 border-l border-line/60 bg-paper px-2.5 py-1.5 text-right font-semibold"
                 >
                   Target
                 </th>
                 <th
                   scope="col"
-                  className="sticky top-0 z-10 bg-paper px-3 py-2 text-right font-semibold"
+                  className="sticky top-7 z-10 bg-paper px-2.5 py-1.5 text-right font-semibold"
                 >
-                  Selesai
+                  Cocok
                 </th>
                 <th
                   scope="col"
-                  className="sticky top-0 z-10 bg-paper px-3 py-2 text-right font-semibold"
+                  className="sticky top-7 z-10 border-r border-line/60 bg-paper px-2.5 py-1.5 text-right font-semibold"
                 >
-                  Sisa
-                </th>
-                <th
-                  scope="col"
-                  className="sticky top-0 z-10 bg-paper px-3 py-2 font-semibold"
-                >
-                  Rincian
-                </th>
-                <th
-                  scope="col"
-                  className="sticky top-0 z-10 bg-paper px-3 py-2 text-right font-semibold"
-                >
-                  Aksi
+                  Selisih
                 </th>
               </tr>
             </thead>
@@ -337,10 +361,21 @@ export function ProgresValidasi({
               {tampil.map((satu) => {
                 const kode = kodeWilayah(satu.kdprov, satu.kdkab);
                 const runId = satu.run_id;
-                const rincian = Object.entries(satu.per_jenis)
-                  .map(([jenis, jumlah]) => `${labelJenis(jenis)} ${jumlah}`)
-                  .join(", ");
                 const belumUnggah = runId === null;
+                const entriAtribut = Object.entries(satu.per_jenis).filter(
+                  ([jenis, jumlah]) => !JENIS_TOPOLOGI.has(jenis) && jumlah > 0,
+                );
+                const entriTopologi = Object.entries(satu.per_jenis).filter(
+                  ([jenis, jumlah]) => JENIS_TOPOLOGI.has(jenis) && jumlah > 0,
+                );
+                const totalAtribut = entriAtribut.reduce(
+                  (akum, [, jumlah]) => akum + jumlah,
+                  0,
+                );
+                const totalTopologi = entriTopologi.reduce(
+                  (akum, [, jumlah]) => akum + jumlah,
+                  0,
+                );
                 return (
                   <tr
                     key={`${satu.kdprov}-${satu.kdkab}`}
@@ -361,20 +396,95 @@ export function ProgresValidasi({
                       <BadgeStatus status={satu.status} rata="start" />
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted">
-                      {satu.selesai_pada ? formatWaktu(satu.selesai_pada) : formatTanggal(satu.tanggal_data)}
-                      <span className="block text-xs">
-                        {satu.semester ?? "-"}
-                      </span>
+                      {belumUnggah ? (
+                        "—"
+                      ) : (
+                        <>
+                          <span className="text-ink">
+                            {satu.selesai_pada
+                              ? formatWaktu(satu.selesai_pada)
+                              : formatTanggal(satu.tanggal_data)}
+                          </span>
+                          <span className="block text-xs text-muted">
+                            {satu.petugas ?? "—"}
+                            {satu.semester ? ` · ${satu.semester}` : ""}
+                          </span>
+                        </>
+                      )}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-muted">
-                      {satu.petugas ?? "—"}
+                    <td className="border-l border-line/50 px-2.5 py-2 text-right tabular-nums text-muted">
+                      {satu.target !== null ? formatAngka(satu.target) : "—"}
+                    </td>
+                    <td className="px-2.5 py-2 text-right tabular-nums text-success">
+                      {satu.selesai !== null ? formatAngka(satu.selesai) : "—"}
+                    </td>
+                    <td className="border-r border-line/50 px-2.5 py-2 text-right tabular-nums font-semibold">
+                      {satu.sisa === null ? (
+                        <span className="font-normal text-muted">—</span>
+                      ) : satu.sisa > 0 ? (
+                        <span className="text-danger">
+                          {formatAngka(satu.sisa)}
+                        </span>
+                      ) : (
+                        <span className="text-success">0</span>
+                      )}
+                    </td>
+                    <td className="max-w-[16rem] px-3 py-2 text-xs leading-5">
+                      {belumUnggah ? (
+                        <span className="text-muted">—</span>
+                      ) : totalAtribut === 0 ? (
+                        <span className="font-medium text-success">
+                          0 (Clean)
+                        </span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {entriAtribut.map(([jenis, jumlah]) => (
+                            <span
+                              key={jenis}
+                              className="inline-flex items-center rounded border border-danger/25 bg-danger-soft/50 px-1.5 py-0.5 text-[11px] font-medium text-ink tabular-nums"
+                            >
+                              {labelJenis(jenis)}:{" "}
+                              <strong className="ml-1 text-danger">
+                                {formatAngka(jumlah)}
+                              </strong>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td className="max-w-[16rem] px-3 py-2 text-xs leading-5">
+                      {belumUnggah ? (
+                        <span className="text-muted">—</span>
+                      ) : totalTopologi === 0 ? (
+                        <span className="font-medium text-success">
+                          0 (Clean)
+                        </span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {entriTopologi.map(([jenis, jumlah]) => (
+                            <span
+                              key={jenis}
+                              className="inline-flex items-center rounded border border-warning/40 bg-warning-soft/50 px-1.5 py-0.5 text-[11px] font-medium text-ink tabular-nums"
+                            >
+                              {labelJenis(jenis)}:{" "}
+                              <strong className="ml-1 text-ink">
+                                {formatAngka(jumlah)}
+                              </strong>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold">
                       {belumUnggah ? (
                         <span className="text-muted">—</span>
                       ) : (
                         <>
-                          <span className={satu.total > 0 ? "text-danger" : "text-success"}>
+                          <span
+                            className={
+                              satu.total > 0 ? "text-danger" : "text-success"
+                            }
+                          >
                             {formatAngka(satu.total)}
                           </span>{" "}
                           <span className="block text-[11px] font-normal text-muted">
@@ -383,45 +493,33 @@ export function ProgresValidasi({
                         </>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-muted">
-                      {satu.target ?? "-"}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-success">
-                      {satu.selesai ?? "-"}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-ink">
-                      {satu.sisa ?? "-"}
-                    </td>
-                    <td className="max-w-[22rem] px-3 py-2 text-xs leading-5 text-muted">
-                      {belumUnggah ? "Belum ada unggahan" : rincian || "Tidak ada temuan"}
-                    </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right">
                       {belumUnggah ? (
                         <span className="text-xs text-muted">—</span>
                       ) : (
                         <>
-                      <TombolAksi
-                        varian="sekunder"
-                        className="min-h-8 px-3 text-xs"
-                        onClick={() => void bukaDetail(runId)}
-                      >
-                        Detail
-                      </TombolAksi>{" "}
-                      <TombolAksi
-                        varian="sekunder"
-                        className="min-h-8 px-3 text-xs"
-                        onClick={() => void unduh(runId, kode)}
-                        disabled={sibuk !== null || satu.total === 0}
-                        title={
-                          satu.total === 0
-                            ? "Tidak ada temuan untuk diunduh"
-                            : "Unduh daftar temuan sebagai Excel"
-                        }
-                      >
-                        {sibuk === runId
-                          ? "Menyiapkan..."
-                          : "Unduh Excel"}
-                      </TombolAksi>
+                          <TombolAksi
+                            varian="sekunder"
+                            className="min-h-8 px-3 text-xs"
+                            onClick={() => void bukaDetail(runId)}
+                          >
+                            Detail
+                          </TombolAksi>{" "}
+                          <TombolAksi
+                            varian="sekunder"
+                            className="min-h-8 px-3 text-xs"
+                            onClick={() => void unduh(runId, kode)}
+                            disabled={sibuk !== null || satu.total === 0}
+                            title={
+                              satu.total === 0
+                                ? "Tidak ada temuan untuk diunduh"
+                                : "Unduh daftar temuan sebagai Excel"
+                            }
+                          >
+                            {sibuk === runId
+                              ? "Menyiapkan..."
+                              : "Unduh Excel"}
+                          </TombolAksi>
                         </>
                       )}
                     </td>
