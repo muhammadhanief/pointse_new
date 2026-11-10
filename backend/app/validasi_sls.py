@@ -609,11 +609,8 @@ def periksa_topologi(
                 )
 
     # 4. must not have gaps (checkGaps)
-    # Geser koordinat (+100, -100) sebelum unary_union agar perilaku pembulatan
-    # floating-point GEOS 3.14 selaras dengan GEOS 3.11 bawaan QGIS LTR pada
-    # celah mikro antar-segmen.
     potongan_valid = [
-        shapely.transform(bagian, lambda koor: koor + [100.0, -100.0])
+        bagian
         for urut in poligon_indeks
         if valid_map[urut]
         for bagian in shapely.get_parts(geometri[urut])
@@ -626,10 +623,7 @@ def periksa_topologi(
             selisih = shapely.difference(batas, gabungan)
             daftar_celah = list(shapely.get_parts(selisih))[1:]
             jumlah_gap = len(daftar_celah)
-            for nomor_celah, celah_geser in enumerate(daftar_celah, start=1):
-                celah = shapely.transform(
-                    celah_geser, lambda koor: koor - [100.0, -100.0]
-                )
+            for nomor_celah, celah in enumerate(daftar_celah, start=1):
                 titik = celah.representative_point()
                 kandidat = [
                     poligon_indeks[int(pos)]
