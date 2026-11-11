@@ -24,21 +24,25 @@ from sqlalchemy import select
 AKAR_BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AKAR_BACKEND))
 
-from app import layanan  # noqa: E402
-from app.db import get_sessionmaker  # noqa: E402
-from app.models import TIPE_V, Run  # noqa: E402
-from app.worker import proses_validasi_v, simpan_fase_akhir_v  # noqa: E402
-
-
 def daftar_run_terakhir(sesi, filter_kab: str | None = None) -> list[Run]:
     """Ambil satu run V dengan ``id`` terbesar untuk tiap kode kabupaten 4 digit."""
+    from app import layanan
+    from app.models import TIPE_V, Run
+
+    daftar_filter = {
+        k.strip() for k in (filter_kab or "").split(",") if k.strip()
+    }
     semua = sesi.scalars(
         select(Run).where(Run.tipe == TIPE_V).order_by(Run.id.asc())
     ).all()
     terakhir_per_kab: dict[str, Run] = {}
     for satu in semua:
         kode = layanan.kode_kabupaten(satu.kdprov, satu.kdkab)
-        if filter_kab and kode != filter_kab and satu.kdkab != filter_kab:
+        if (
+            daftar_filter
+            and kode not in daftar_filter
+            and (satu.kdkab or "") not in daftar_filter
+        ):
             continue
         terakhir_per_kab[kode] = satu
     return [terakhir_per_kab[k] for k in sorted(terakhir_per_kab)]
@@ -49,11 +53,25 @@ def main(argv: list[str] | None = None) -> int:
         description="Proses ulang run validasi V terakhir per kabupaten/kota."
     )
     parser.add_argument(
+        "--env-file",
+        default=None,
+        help="Berkas environment server, mis. /etc/pointse/pointse.env",
+    )
+    parser.add_argument(
         "--kdkab",
-        help="Hanya proses satu kabupaten/kota (mis. 3316 atau 16).",
+        help="Hanya proses kabupaten/kota tertentu (bisa pisah koma, mis. 3321,3327,3372).",
         default=None,
     )
     args = parser.parse_args(argv)
+
+    if args.env_file:
+        from app.master_impor import muat_env
+
+        muat_env(args.env_file)
+
+    from app import layanan
+    from app.db import get_sessionmaker
+    from app.worker import proses_validasi_v, simpan_fase_akhir_v
 
     SessionLocal = get_sessionmaker()
     with SessionLocal() as sesi:
@@ -79,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 hasil = proses_validasi_v(sesi, run)
                 simpan_fase_akhir_v(sesi, run, hasil)
+                sesi.commit()
                 durasi = time.perf_counter() - t0
                 baris_topo = next(
                     (
