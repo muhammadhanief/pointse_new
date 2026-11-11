@@ -144,6 +144,7 @@ def test_perbarui_batas_dan_layanan_ringkasan_detail(tmp_path, sesi) -> None:
         kdkab="3301",
         status=STATUS_SUKSES,
         tanggal_data=date(2026, 11, 10),
+        user="Petugas Cilacap",
         nama_file_input="peta_3301.geojson",
         nama_file_peta="peta_3301.geojson",
         berkas_input=str(berkas_3301),
@@ -156,6 +157,7 @@ def test_perbarui_batas_dan_layanan_ringkasan_detail(tmp_path, sesi) -> None:
         kdkab="3302",
         status=STATUS_SUKSES,
         tanggal_data=date(2026, 11, 11),
+        user="Petugas Banyumas",
         nama_file_input="peta_3302.geojson",
         nama_file_peta="peta_3302.geojson",
         berkas_input=str(berkas_3302),
@@ -186,6 +188,8 @@ def test_perbarui_batas_dan_layanan_ringkasan_detail(tmp_path, sesi) -> None:
     baris_3301_3302 = ringkasan_multi["baris"][0]
     assert baris_3301_3302["waktu_a"] is not None
     assert baris_3301_3302["waktu_b"] is not None
+    assert baris_3301_3302["pengunggah_a"] == "Petugas Cilacap"
+    assert baris_3301_3302["pengunggah_b"] == "Petugas Banyumas"
     assert baris_3301_3302["ada_peta_a"] is True
     assert baris_3301_3302["ada_peta_b"] is True
 

@@ -1004,6 +1004,8 @@ class RekonsiliasiBatasPasangBarisOut(BaseModel):
     tanggal_b: date | None = None
     waktu_a: datetime | None = None
     waktu_b: datetime | None = None
+    pengunggah_a: str | None = None
+    pengunggah_b: str | None = None
     ada_peta_a: bool = False
     ada_peta_b: bool = False
     status: str

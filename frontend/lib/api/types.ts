@@ -618,6 +618,8 @@ export type RekonsiliasiBatasPasangBaris = {
   tanggal_b: string | null;
   waktu_a?: string | null;
   waktu_b?: string | null;
+  pengunggah_a?: string | null;
+  pengunggah_b?: string | null;
   ada_peta_a?: boolean;
   ada_peta_b?: boolean;
   status: StatusRekonsiliasiBatas | string;

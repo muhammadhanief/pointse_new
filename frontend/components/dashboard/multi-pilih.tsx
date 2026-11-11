@@ -184,29 +184,45 @@ export function MultiPilih({
             )}
           </div>
 
-          <div className="flex justify-end gap-1.5 border-t border-line p-2">
-            <TombolAksi
-              varian="sekunder"
-              className="min-h-8 px-2.5 text-xs"
-              onClick={() => setBuka(false)}
-            >
-              Batal
-            </TombolAksi>
-            <TombolAksi
-              className="min-h-8 px-2.5 text-xs"
-              disabled={draf.length === 0}
-              title={
-                draf.length === 0
-                  ? "Pilih minimal satu"
-                  : "Pakai pilihan ini"
-              }
-              onClick={() => {
-                onTerapkan(draf);
-                setBuka(false);
-              }}
-            >
-              Terapkan
-            </TombolAksi>
+          <div className="flex items-center justify-between gap-1.5 border-t border-line p-2">
+            <div>
+              {terpilih.length > 0 && (
+                <button
+                  type="button"
+                  className="px-2 py-1 text-xs font-medium text-muted hover:text-ink"
+                  onClick={() => {
+                    onTerapkan([]);
+                    setBuka(false);
+                  }}
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+            <div className="flex gap-1.5">
+              <TombolAksi
+                varian="sekunder"
+                className="min-h-8 px-2.5 text-xs"
+                onClick={() => setBuka(false)}
+              >
+                Batal
+              </TombolAksi>
+              <TombolAksi
+                className="min-h-8 px-2.5 text-xs"
+                disabled={draf.length === 0}
+                title={
+                  draf.length === 0
+                    ? "Pilih minimal satu"
+                    : "Pakai pilihan ini"
+                }
+                onClick={() => {
+                  onTerapkan(draf);
+                  setBuka(false);
+                }}
+              >
+                Terapkan
+              </TombolAksi>
+            </div>
           </div>
         </div>
       ) : null}

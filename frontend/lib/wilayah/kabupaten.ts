@@ -3,6 +3,57 @@ export type Kabupaten = {
   nama: string;
 };
 
+export type Karesidenan = {
+  id: string;
+  nama: string;
+  pic: string;
+  kdkabList: readonly string[];
+};
+
+// Pengelompokan Karesidenan Provinsi Jawa Tengah (33) sesuai pembagian PIC Rekonsiliasi Batas.
+export const KARESIDENAN_33: readonly Karesidenan[] = [
+  {
+    id: "pati",
+    nama: "Karesidenan Pati",
+    pic: "Ekta, Adi",
+    kdkabList: ["3315", "3316", "3317", "3318", "3319", "3320"],
+  },
+  {
+    id: "surakarta",
+    nama: "Karesidenan Surakarta",
+    pic: "Herry, Rizchi",
+    kdkabList: ["3309", "3310", "3311", "3312", "3313", "3314", "3372"],
+  },
+  {
+    id: "semarang",
+    nama: "Karesidenan Semarang",
+    pic: "Septyaji",
+    kdkabList: ["3321", "3322", "3324", "3373", "3374"],
+  },
+  {
+    id: "kedu",
+    nama: "Karesidenan Kedu",
+    pic: "Yuli",
+    kdkabList: ["3305", "3306", "3307", "3308", "3323", "3371"],
+  },
+  {
+    id: "pekalongan",
+    nama: "Karesidenan Pekalongan",
+    pic: "Hanief, Indah",
+    kdkabList: ["3325", "3326", "3327", "3328", "3329", "3375", "3376"],
+  },
+  {
+    id: "banyumas",
+    nama: "Karesidenan Banyumas",
+    pic: "Eva Dian, Sukma",
+    kdkabList: ["3301", "3302", "3303", "3304"],
+  },
+];
+
+export function daftarKaresidenan(kdprov: string): readonly Karesidenan[] {
+  return kdprov === "33" ? KARESIDENAN_33 : [];
+}
+
 // Kode BPS 4 digit untuk Provinsi Jawa Tengah (33).
 export const KABUPATEN_33: readonly Kabupaten[] = [
   { kode: "3301", nama: "Kabupaten Cilacap" },
