@@ -895,12 +895,17 @@ def jalur_master(
 
 def baca_master_impor(
     jalur_msubsls: str | Path,
+    jalur_hirarki: str | Path | None = None,
 ) -> tuple[dict[tuple[str, str], str | None], int, int, list[str]]:
     """Baca satu berkas msubsls untuk impor ke database.
 
     Kembalikan ``(mapping pasangan -> nmsls, total_baris, baris_dilewati,
     contoh)``. Hanya baris dengan ``idsubsls`` 16 digit yang dipakai; sisanya
     dihitung sebagai dilewati beserta contohnya untuk laporan impor.
+    Bila ``jalur_hirarki`` (``hirarki_sls_26_1_<kdkab>.xlsx``) ada, pasangan
+    ``SUBSLS_GABUNG`` yang masih tertulis dengan kode lama (``idsubsls_25_2``)
+    di ``msubsls`` otomatis direkonsiliasi ke kode gabung baru
+    (``idsubsls_26_1``) agar selaras dengan master Web GS Pusat.
     """
     from openpyxl import load_workbook
 
@@ -946,7 +951,91 @@ def baca_master_impor(
             master.setdefault((idsls, subsls), nama or None)
     finally:
         wb.close()
+
+    if jalur_hirarki is not None and Path(jalur_hirarki).is_file():
+        terapkan_hirarki_gabung(master, Path(jalur_hirarki))
+
     return master, total_baris, dilewati, contoh_lewat
+
+
+def terapkan_hirarki_gabung(
+    master: dict[tuple[str, str], str | None],
+    jalur_hirarki: Path,
+) -> int:
+    """Rekonsiliasi ``SUBSLS_GABUNG`` dari berkas ``hirarki_sls_26_1_*.xlsx``.
+
+    Bila berkas hirarki mencatat penggabungan sub-SLS (``ket_perub ==
+    'SUBSLS_GABUNG'``) dari ``idsubsls_25_2`` menjadi ``idsubsls_26_1`` (dengan
+    14 digit SLS induk yang sama), tetapi berkas ``msubsls`` belum memuat
+    ``idsubsls_26_1`` dan masih memuat seluruh ``idsubsls_25_2`` asalnya, maka
+    kode lama digantikan oleh ``idsubsls_26_1``. Kembalikan jumlah kode target
+    gabung yang direkonsiliasi.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(str(jalur_hirarki), read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        if ws is None:
+            return 0
+        baris = ws.iter_rows(values_only=True)
+        try:
+            kepala = [
+                str(kolom).strip().lower() if kolom is not None else ""
+                for kolom in next(baris)
+            ]
+        except StopIteration:
+            return 0
+        wajib = ("idsubsls_25_2", "idsubsls_26_1", "ket_perub")
+        if any(kol not in kepala for kol in wajib):
+            return 0
+        idx_25 = kepala.index("idsubsls_25_2")
+        idx_26 = kepala.index("idsubsls_26_1")
+        idx_ket = kepala.index("ket_perub")
+        idx_nm = kepala.index("nmsls_26_1") if "nmsls_26_1" in kepala else None
+
+        grup_gabung: dict[str, tuple[str | None, set[str]]] = {}
+        for satu in baris:
+            if satu is None or max(idx_25, idx_26, idx_ket) >= len(satu):
+                continue
+            ket = str(satu[idx_ket] or "").strip().upper()
+            if ket != "SUBSLS_GABUNG":
+                continue
+            sub_lama = normalisasi_idsls(satu[idx_25])
+            sub_baru = normalisasi_idsls(satu[idx_26])
+            if (
+                not sub_lama
+                or not sub_baru
+                or len(sub_lama) != 16
+                or len(sub_baru) != 16
+                or not sub_lama.isdigit()
+                or not sub_baru.isdigit()
+                or sub_lama == sub_baru
+                or sub_lama[:14] != sub_baru[:14]
+            ):
+                continue
+            nama_baru = None
+            if idx_nm is not None and idx_nm < len(satu) and satu[idx_nm] is not None:
+                nama_baru = str(satu[idx_nm]).strip() or None
+            nama_simpan, asal = grup_gabung.get(sub_baru, (nama_baru, set()))
+            asal.add(sub_lama)
+            grup_gabung[sub_baru] = (nama_simpan or nama_baru, asal)
+    finally:
+        wb.close()
+
+    diubah = 0
+    for sub_baru, (nama_baru, asal_set) in grup_gabung.items():
+        kunci_baru = (sub_baru[:14], sub_baru)
+        if kunci_baru in master or not asal_set:
+            continue
+        kunci_asal = [(s[:14], s) for s in sorted(asal_set)]
+        if all(k in master for k in kunci_asal):
+            nama_pakai = nama_baru or master.get(kunci_asal[0])
+            for k in kunci_asal:
+                master.pop(k, None)
+            master[kunci_baru] = nama_pakai
+            diubah += 1
+    return diubah
 
 
 def kolom_berkas_peta(berkas: str | Path, layer: str | None) -> list[str]:

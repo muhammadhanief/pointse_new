@@ -183,6 +183,92 @@ def test_impor_master_db_idempoten(tmp_path, sesi) -> None:
     assert sesi.query(MasterSls2026S1).count() == 1
 
 
+def test_impor_master_dari_zip_dan_rekonsiliasi_hirarki_gabung(
+    tmp_path, sesi
+) -> None:
+    """Impor langsung dari .zip + rekonsiliasi SUBSLS_GABUNG pada hirarki_sls."""
+    import io
+    import zipfile
+
+    import openpyxl
+
+    from app import master_impor
+    from app.models import MasterSls2026S1
+
+    def _xlsx_bytes(baris_data: list[list[object]]) -> bytes:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        for r in baris_data:
+            ws.append(r)
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    jalur_zip = tmp_path / "33.zip"
+    with zipfile.ZipFile(jalur_zip, "w") as zf:
+        zf.writestr(
+            "33/3327/Master/msubsls_26_1_3327.xlsx",
+            _xlsx_bytes(
+                [
+                    ["idsubsls", "nmsls"],
+                    ["3327080015005001", "RT 003 RW 010"],
+                    ["3327080015005002", "RT 003 RW 010"],
+                    ["3327080015011200", "RT 006 RW 010"],
+                ]
+            ),
+        )
+        zf.writestr(
+            "33/3327/Hirarki/hirarki_sls_26_1_3327.xlsx",
+            _xlsx_bytes(
+                [
+                    [
+                        "idsls_25_2",
+                        "nmsls_25_2",
+                        "idsls_26_1",
+                        "nmsls_26_1",
+                        "idsubsls_25_2",
+                        "idsubsls_26_1",
+                        "id_perub",
+                        "ket_perub",
+                    ],
+                    [
+                        "33270800150050",
+                        "RT 003 RW 010",
+                        "33270800150050",
+                        "RT 003 RW 010",
+                        "3327080015005001",
+                        "3327080015005000",
+                        "7",
+                        "SUBSLS_GABUNG",
+                    ],
+                    [
+                        "33270800150050",
+                        "RT 003 RW 010",
+                        "33270800150050",
+                        "RT 003 RW 010",
+                        "3327080015005002",
+                        "3327080015005000",
+                        "7",
+                        "SUBSLS_GABUNG",
+                    ],
+                ]
+            ),
+        )
+
+    tujuan = tmp_path / "ekstrak"
+    with master_impor.siapkan_akar_sumber(
+        jalur_zip, ekstrak_ke=tujuan, hanya="3327"
+    ) as akar:
+        hasil = master_impor.impor_kabupaten(sesi, akar, "3327")
+
+    assert hasil["disimpan"] == 2
+    sub_db = {
+        r.idsubsls
+        for r in sesi.query(MasterSls2026S1).filter_by(kdkab="3327").all()
+    }
+    assert sub_db == {"3327080015005000", "3327080015011200"}
+
+
 def test_ringkasan_validasi_target_selesai_sisa(tmp_path, sesi) -> None:
     """Target dari master DB; selesai = target dikurangi pasangan bermasalah."""
     from app.models import STATUS_SUKSES, MasterSls2026S1, Run
