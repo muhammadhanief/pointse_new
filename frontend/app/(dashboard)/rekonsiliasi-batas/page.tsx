@@ -17,7 +17,7 @@ export default async function RekonsiliasiBatasPage() {
     <div className="space-y-field">
       <PageHeader
         judul="Rekonsiliasi Batas Antar-Kabupaten/Kota (2026 S1)"
-        deskripsi="Pemeriksaan otomatis celah (gap) dan tumpang tindih (overlap) pada sabuk perbatasan antar-kabupaten/kota dari unggahan peta Validasi SLS 2026 Semester 1."
+        deskripsi="Pemeriksaan otomatis celah kosong (gap) dan tumpang tindih (overlap) di sepanjang garis perbatasan antar-kabupaten/kota dari unggahan peta Validasi SLS 2026 Semester 1."
       />
       <RekonsiliasiBatasClient
         kdprov={sesi.kdprov}

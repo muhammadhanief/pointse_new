@@ -1617,6 +1617,8 @@ def ringkasan_rekonsiliasi_batas(
     jml_belum_unggah = 0
     total_overlap = 0
     total_gap = 0
+    total_luas_overlap = 0.0
+    total_luas_gap = 0.0
 
     for a, b in daftar_kandidat:
         run_a = runs_v.get(a)
@@ -1675,6 +1677,8 @@ def ringkasan_rekonsiliasi_batas(
 
         total_overlap += ov
         total_gap += gp
+        total_luas_overlap += luas_ov
+        total_luas_gap += luas_gp
 
         if himpunan_status is not None and st not in himpunan_status:
             continue
@@ -1713,6 +1717,8 @@ def ringkasan_rekonsiliasi_batas(
         "belum_unggah": jml_belum_unggah,
         "total_overlap": total_overlap,
         "total_gap": total_gap,
+        "total_luas_overlap_m2": round(total_luas_overlap, 2),
+        "total_luas_gap_m2": round(total_luas_gap, 2),
         "baris": baris,
     }
 

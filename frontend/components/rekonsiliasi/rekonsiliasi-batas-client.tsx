@@ -292,6 +292,26 @@ export function RekonsiliasiBatasClient({
   const persenClean =
     totalPasang > 0 ? Math.round((jmlClean / totalPasang) * 100) : 0;
 
+  const totalLuasOverlap = useMemo(() => {
+    if (typeof ringkasan?.total_luas_overlap_m2 === "number") {
+      return ringkasan.total_luas_overlap_m2;
+    }
+    return (ringkasan?.baris ?? []).reduce(
+      (acc, b) => acc + (b.total_luas_overlap_m2 ?? 0),
+      0,
+    );
+  }, [ringkasan]);
+
+  const totalLuasGap = useMemo(() => {
+    if (typeof ringkasan?.total_luas_gap_m2 === "number") {
+      return ringkasan.total_luas_gap_m2;
+    }
+    return (ringkasan?.baris ?? []).reduce(
+      (acc, b) => acc + (b.total_luas_gap_m2 ?? 0),
+      0,
+    );
+  }, [ringkasan]);
+
   const opsiStatus = useMemo(
     () => [
       {
@@ -338,23 +358,23 @@ export function RekonsiliasiBatasClient({
               </span>
             </div>
             <p className="text-xs text-ink-muted">
-              Sabuk pemeriksaan ≤ 220 meter antar-kabupaten/kota bertetangga
-              otomatis diperbarui setiap kali run Validasi SLS (2026 S1) selesai
-              diproses.
+              Pemeriksaan poligon SLS di sepanjang garis perbatasan
+              antar-kabupaten/kota bertetangga otomatis diperbarui setiap kali
+              run Validasi SLS (2026 S1) selesai diproses.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-xs">
             <div className="rounded-lg border border-hairline bg-surface-muted/60 px-3 py-2">
-              <span className="text-ink-muted">Total Overlap: </span>
+              <span className="text-ink-muted">Total Luas Overlap: </span>
               <span className="font-mono font-semibold tabular-nums text-danger">
-                {formatAngka(ringkasan?.total_overlap ?? 0)}
+                {formatLuas(totalLuasOverlap)} m²
               </span>
             </div>
             <div className="rounded-lg border border-hairline bg-surface-muted/60 px-3 py-2">
-              <span className="text-ink-muted">Total Gap: </span>
+              <span className="text-ink-muted">Total Luas Gap: </span>
               <span className="font-mono font-semibold tabular-nums text-warn">
-                {formatAngka(ringkasan?.total_gap ?? 0)}
+                {formatLuas(totalLuasGap)} m²
               </span>
             </div>
             <TombolAksi
@@ -546,22 +566,16 @@ export function RekonsiliasiBatasClient({
 
                         <td className="px-3 py-3 align-top text-right font-mono tabular-nums">
                           {sudahDihitung ? (
-                            <div>
-                              <span
-                                className={
-                                  baris.jumlah_overlap > 0
-                                    ? "font-bold text-danger"
-                                    : "text-ink-muted"
-                                }
-                              >
-                                {formatAngka(baris.jumlah_overlap)} titik
-                              </span>
-                              {baris.jumlah_overlap > 0 && (
-                                <div className="text-[11px] text-ink-muted">
-                                  {formatLuas(baris.total_luas_overlap_m2)} m²
-                                </div>
-                              )}
-                            </div>
+                            <span
+                              className={
+                                baris.jumlah_overlap > 0 ||
+                                baris.total_luas_overlap_m2 > 0
+                                  ? "font-bold text-danger"
+                                  : "text-ink-muted"
+                              }
+                            >
+                              {formatLuas(baris.total_luas_overlap_m2)} m²
+                            </span>
                           ) : (
                             <span className="text-ink-subtle">-</span>
                           )}
@@ -569,22 +583,16 @@ export function RekonsiliasiBatasClient({
 
                         <td className="px-3 py-3 align-top text-right font-mono tabular-nums">
                           {sudahDihitung ? (
-                            <div>
-                              <span
-                                className={
-                                  baris.jumlah_gap > 0
-                                    ? "font-bold text-warn"
-                                    : "text-ink-muted"
-                                }
-                              >
-                                {formatAngka(baris.jumlah_gap)} titik
-                              </span>
-                              {baris.jumlah_gap > 0 && (
-                                <div className="text-[11px] text-ink-muted">
-                                  {formatLuas(baris.total_luas_gap_m2)} m²
-                                </div>
-                              )}
-                            </div>
+                            <span
+                              className={
+                                baris.jumlah_gap > 0 ||
+                                baris.total_luas_gap_m2 > 0
+                                  ? "font-bold text-warn"
+                                  : "text-ink-muted"
+                              }
+                            >
+                              {formatLuas(baris.total_luas_gap_m2)} m²
+                            </span>
                           ) : (
                             <span className="text-ink-subtle">-</span>
                           )}
@@ -603,7 +611,7 @@ export function RekonsiliasiBatasClient({
                                 }
                                 className="inline-flex min-h-9 items-center rounded-lg border border-hairline bg-surface px-2.5 py-1 text-xs font-medium text-ink transition-colors hover:bg-surface-muted"
                               >
-                                Rincian SLS ({formatAngka(baris.total_temuan)})
+                                Rincian SLS
                               </button>
                             )}
                             {baris.ada_geojson && baris.total_temuan > 0 && (
@@ -695,8 +703,9 @@ export function RekonsiliasiBatasClient({
                     : `${pasangAktif.kdkab_a} ↔ ${pasangAktif.kdkab_b}`}
                 </h2>
                 <p className="mt-0.5 text-xs text-ink-muted">
-                  Daftar poligon SLS yang bersinggungan pada titik Overlap
-                  maupun Celah Kosong (Gap) di sepanjang sabuk perbatasan.
+                  Daftar poligon SLS yang bersinggungan pada area Overlap maupun
+                  Celah Kosong (Gap) di sepanjang garis perbatasan kedua
+                  kabupaten/kota.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">

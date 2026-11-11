@@ -639,6 +639,8 @@ export type RekonsiliasiBatasRingkasan = {
   belum_unggah: number;
   total_overlap: number;
   total_gap: number;
+  total_luas_overlap_m2?: number;
+  total_luas_gap_m2?: number;
   baris: RekonsiliasiBatasPasangBaris[];
 };
 

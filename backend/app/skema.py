@@ -1027,6 +1027,8 @@ class RekonsiliasiBatasRingkasanOut(BaseModel):
     belum_unggah: int = 0
     total_overlap: int = 0
     total_gap: int = 0
+    total_luas_overlap_m2: float = 0.0
+    total_luas_gap_m2: float = 0.0
     baris: list[RekonsiliasiBatasPasangBarisOut] = Field(default_factory=list)
 
 
