@@ -80,29 +80,6 @@ function BadgeStatusBatas({ status }: { status: string }) {
   }
 }
 
-function BadgeTingkat({ tingkat }: { tingkat: string }) {
-  switch (tingkat) {
-    case "besar":
-      return (
-        <span className="inline-flex whitespace-nowrap rounded border border-danger/25 bg-danger-soft px-2 py-0.5 text-[11px] font-semibold text-danger">
-          Besar (&gt;100 m²)
-        </span>
-      );
-    case "sedang":
-      return (
-        <span className="inline-flex whitespace-nowrap rounded border border-warning/30 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-warning">
-          Sedang (1–100 m²)
-        </span>
-      );
-    default:
-      return (
-        <span className="inline-flex whitespace-nowrap rounded border border-line bg-paper px-2 py-0.5 text-[11px] font-medium text-muted">
-          Sliver (&lt;1 m²)
-        </span>
-      );
-  }
-}
-
 export function RekonsiliasiBatasClient({
   kdprov,
   kdkab,
@@ -122,6 +99,7 @@ export function RekonsiliasiBatasClient({
   const [galat, setGalat] = useState<string | null>(null);
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
 
+  const [tabAktif, setTabAktif] = useState<"pasangan" | "kabkota">("pasangan");
   const [filterKaresidenan, setFilterKaresidenan] = useState<string[]>([]);
   const [filterKabs, setFilterKabs] = useState<string[]>(
     kodeKabPengguna ? [kodeKabPengguna] : [],
@@ -158,8 +136,6 @@ export function RekonsiliasiBatasClient({
   const [memuatDetail, setMemuatDetail] = useState(false);
   const [galatDetail, setGalatDetail] = useState<string | null>(null);
   const [filterJenisDetail, setFilterJenisDetail] = useState<string>("semua");
-  const [filterTingkatDetail, setFilterTingkatDetail] =
-    useState<string>("semua");
   const [koordinatDisalin, setKoordinatDisalin] = useState<number | null>(null);
 
   const controllerRef = useRef<AbortController | null>(null);
@@ -220,7 +196,6 @@ export function RekonsiliasiBatasClient({
   const bukaRincian = useCallback(async (kdkabA: string, kdkabB: string) => {
     setPasangAktif({ kdkab_a: kdkabA, kdkab_b: kdkabB });
     setFilterJenisDetail("semua");
-    setFilterTingkatDetail("semua");
     setMemuatDetail(true);
     setGalatDetail(null);
     try {
@@ -295,15 +270,162 @@ export function RekonsiliasiBatasClient({
       if (filterJenisDetail !== "semua" && t.jenis !== filterJenisDetail) {
         return false;
       }
-      if (
-        filterTingkatDetail !== "semua" &&
-        t.tingkat !== filterTingkatDetail
-      ) {
-        return false;
-      }
       return true;
     });
-  }, [detailPasang, filterJenisDetail, filterTingkatDetail]);
+  }, [detailPasang, filterJenisDetail]);
+
+  const rekapKabKotaTersaring = useMemo(() => {
+    const semuaBaris = ringkasan?.baris ?? [];
+    if (semuaBaris.length === 0) {
+      return [];
+    }
+
+    const petaNama = new Map<string, string>();
+    for (const k of semuaKab) {
+      petaNama.set(k.kode, k.nama);
+    }
+
+    type ItemTetangga = {
+      kdkab: string;
+      nmkab: string;
+      status: string;
+      kdkab_a: string;
+      kdkab_b: string;
+      sudahDihitung: boolean;
+    };
+
+    type RekapSatuKab = {
+      kdkab: string;
+      nmkab: string;
+      run_id: number | null;
+      waktu: string | null | undefined;
+      tanggal: string | null | undefined;
+      pengunggah: string | null | undefined;
+      ada_peta: boolean;
+      pasanganPertama: { kdkab_a: string; kdkab_b: string } | null;
+      tetangga: ItemTetangga[];
+      clean: number;
+      belum_clean: number;
+      menunggu_tetangga: number;
+      belum_unggah: number;
+    };
+
+    const petaRekap = new Map<string, RekapSatuKab>();
+
+    function pastikanKab(
+      kode: string,
+      namaFallback: string,
+      runId: number | null,
+      waktu: string | null | undefined,
+      tanggal: string | null | undefined,
+      pengunggah: string | null | undefined,
+      adaPeta: boolean,
+      pasangan: { kdkab_a: string; kdkab_b: string },
+    ): RekapSatuKab {
+      let entri = petaRekap.get(kode);
+      if (!entri) {
+        entri = {
+          kdkab: kode,
+          nmkab: petaNama.get(kode) ?? namaFallback,
+          run_id: runId,
+          waktu,
+          tanggal,
+          pengunggah,
+          ada_peta: adaPeta,
+          pasanganPertama: pasangan,
+          tetangga: [],
+          clean: 0,
+          belum_clean: 0,
+          menunggu_tetangga: 0,
+          belum_unggah: 0,
+        };
+        petaRekap.set(kode, entri);
+      } else if (entri.run_id == null && runId != null) {
+        entri.run_id = runId;
+        entri.waktu = waktu;
+        entri.tanggal = tanggal;
+        entri.pengunggah = pengunggah;
+        entri.ada_peta = adaPeta;
+      }
+      return entri;
+    }
+
+    for (const b of semuaBaris) {
+      const sudahDihitung = b.status === "clean" || b.status === "belum_clean";
+      const pas = { kdkab_a: b.kdkab_a, kdkab_b: b.kdkab_b };
+
+      const entriA = pastikanKab(
+        b.kdkab_a,
+        b.nmkab_a,
+        b.run_a_id,
+        b.waktu_a,
+        b.tanggal_a,
+        b.pengunggah_a,
+        Boolean(b.ada_peta_a ?? b.run_a_id),
+        pas,
+      );
+      entriA.tetangga.push({
+        kdkab: b.kdkab_b,
+        nmkab: b.nmkab_b,
+        status: b.status,
+        kdkab_a: b.kdkab_a,
+        kdkab_b: b.kdkab_b,
+        sudahDihitung,
+      });
+      if (b.status === "clean") entriA.clean += 1;
+      else if (b.status === "belum_clean") entriA.belum_clean += 1;
+      else if (b.status === "menunggu_tetangga") entriA.menunggu_tetangga += 1;
+      else entriA.belum_unggah += 1;
+
+      const entriB = pastikanKab(
+        b.kdkab_b,
+        b.nmkab_b,
+        b.run_b_id,
+        b.waktu_b,
+        b.tanggal_b,
+        b.pengunggah_b,
+        Boolean(b.ada_peta_b ?? b.run_b_id),
+        pas,
+      );
+      entriB.tetangga.push({
+        kdkab: b.kdkab_a,
+        nmkab: b.nmkab_a,
+        status: b.status,
+        kdkab_a: b.kdkab_a,
+        kdkab_b: b.kdkab_b,
+        sudahDihitung,
+      });
+      if (b.status === "clean") entriB.clean += 1;
+      else if (b.status === "belum_clean") entriB.belum_clean += 1;
+      else if (b.status === "menunggu_tetangga") entriB.menunggu_tetangga += 1;
+      else entriB.belum_unggah += 1;
+    }
+
+    const setKabSaring =
+      daftarKabAktif.length > 0 ? new Set(daftarKabAktif) : null;
+    const setStatusSaring =
+      filterStatuses.length > 0 ? new Set(filterStatuses) : null;
+
+    const hasil = Array.from(petaRekap.values())
+      .filter((item) => {
+        if (setKabSaring && !setKabSaring.has(item.kdkab)) {
+          return false;
+        }
+        if (
+          setStatusSaring &&
+          !item.tetangga.some((t) => setStatusSaring.has(t.status))
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => a.kdkab.localeCompare(b.kdkab));
+
+    for (const item of hasil) {
+      item.tetangga.sort((a, b) => a.kdkab.localeCompare(b.kdkab));
+    }
+    return hasil;
+  }, [ringkasan, semuaKab, daftarKabAktif, filterStatuses]);
 
   const totalPasang = ringkasan?.total_pasang ?? 0;
   const jmlClean = ringkasan?.clean ?? 0;
@@ -496,7 +618,60 @@ export function RekonsiliasiBatasClient({
         </div>
       )}
 
-      {/* Daftar Pasangan Perbatasan */}
+      {/* Tab Pilihan Tampilan: Daftar Pasangan vs Rekap per Kabupaten/Kota */}
+      <div
+        role="tablist"
+        aria-label="Tampilan rekonsiliasi batas"
+        className="flex flex-wrap gap-2 border-b border-line pb-2"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tabAktif === "pasangan"}
+          onClick={() => setTabAktif("pasangan")}
+          className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+            tabAktif === "pasangan"
+              ? "bg-brand text-white"
+              : "border border-line bg-surface text-ink hover:bg-paper"
+          }`}
+        >
+          <span>Daftar Pasangan Batas</span>
+          <span
+            className={`rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${
+              tabAktif === "pasangan"
+                ? "bg-white/20 text-white"
+                : "bg-paper text-muted"
+            }`}
+          >
+            {daftarBarisTersaring.length}
+          </span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tabAktif === "kabkota"}
+          onClick={() => setTabAktif("kabkota")}
+          className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+            tabAktif === "kabkota"
+              ? "bg-brand text-white"
+              : "border border-line bg-surface text-ink hover:bg-paper"
+          }`}
+        >
+          <span>Rekap per Kabupaten/Kota</span>
+          <span
+            className={`rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${
+              tabAktif === "kabkota"
+                ? "bg-white/20 text-white"
+                : "bg-paper text-muted"
+            }`}
+          >
+            {rekapKabKotaTersaring.length}
+          </span>
+        </button>
+      </div>
+
+      {/* Tab 1: Daftar Pasangan Perbatasan */}
+      {tabAktif === "pasangan" ? (
       <Panel
         judul="Daftar Pasangan Perbatasan Kabupaten/Kota"
         deskripsi={
@@ -742,6 +917,181 @@ export function RekonsiliasiBatasClient({
           </div>
         )}
       </Panel>
+      ) : (
+      /* Tab 2: Rekap per Kabupaten/Kota */
+      <Panel
+        judul="Rekap Perbatasan per Kabupaten/Kota"
+        deskripsi={
+          diperbarui
+            ? `Menampilkan ${rekapKabKotaTersaring.length} kabupaten/kota • Diperbarui ${diperbarui}`
+            : `Menampilkan ${rekapKabKotaTersaring.length} kabupaten/kota`
+        }
+      >
+        {memuat && !ringkasan ? (
+          <p className="py-8 text-center text-xs text-muted">
+            Memuat data rekonsiliasi batas...
+          </p>
+        ) : rekapKabKotaTersaring.length === 0 ? (
+          <EmptyState judul="Tidak ada kabupaten/kota yang cocok">
+            Ubah saringan status atau pilihan wilayah untuk melihat rekap
+            kabupaten/kota lainnya.
+          </EmptyState>
+        ) : (
+          <div className="mt-3 max-h-[68vh] overflow-auto rounded-lg border border-line">
+            <table className="w-full border-collapse text-left text-xs">
+              <thead className="sticky top-0 z-10 bg-paper shadow-[0_1px_0_0_var(--line)]">
+                <tr className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                  <th className="px-3 py-2.5">Kabupaten/Kota</th>
+                  <th className="px-3 py-2.5">Kab/Kota Tetangga</th>
+                  <th className="px-3 py-2.5 text-right">Total</th>
+                  <th className="px-3 py-2.5 text-right">Clean</th>
+                  <th className="px-3 py-2.5 text-right">Belum Clean</th>
+                  <th className="px-3 py-2.5 text-right">Menunggu</th>
+                  <th className="px-3 py-2.5 text-right">Belum Unggah</th>
+                  <th className="px-3 py-2.5 text-right">Progres</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {rekapKabKotaTersaring.map((item) => {
+                  const totalTetangga = item.tetangga.length;
+                  const persenKab =
+                    totalTetangga > 0
+                      ? Math.round((item.clean / totalTetangga) * 100)
+                      : 0;
+                  return (
+                    <tr
+                      key={item.kdkab}
+                      className="transition-colors hover:bg-paper/70"
+                    >
+                      <td className="px-3 py-3 align-top">
+                        <div className="flex items-center gap-1.5">
+                          <span className="rounded bg-paper px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-ink">
+                            {item.kdkab}
+                          </span>
+                          <span className="font-medium text-ink">
+                            {formatNamaKabKota(item.nmkab)}
+                          </span>
+                        </div>
+                        <div className="mt-1 space-y-0.5 text-[11px] text-muted">
+                          {item.run_id ? (
+                            <>
+                              <div>
+                                Run #{item.run_id} •{" "}
+                                {formatWaktuRun(item.waktu, item.tanggal)}
+                              </div>
+                              {item.pengunggah && (
+                                <div className="text-[11px] text-muted">
+                                  {item.pengunggah}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-warning">
+                              Belum unggah peta V
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="px-3 py-3 align-top">
+                        <div className="flex flex-wrap gap-1.5">
+                          {item.tetangga.map((t) => {
+                            const kelasWarna =
+                              t.status === "clean"
+                                ? "border-success/25 bg-success-soft text-success"
+                                : t.status === "belum_clean"
+                                  ? "border-danger/25 bg-danger-soft text-danger"
+                                  : t.status === "menunggu_tetangga"
+                                    ? "border-warning/30 bg-amber-50 text-warning"
+                                    : "border-line bg-paper text-muted";
+                            const isi = (
+                              <>
+                                <span className="font-mono font-semibold tabular-nums">
+                                  {t.kdkab}
+                                </span>
+                                <span>{formatNamaKabKota(t.nmkab)}</span>
+                              </>
+                            );
+                            return t.sudahDihitung ? (
+                              <button
+                                key={t.kdkab}
+                                type="button"
+                                onClick={() =>
+                                  void bukaRincian(t.kdkab_a, t.kdkab_b)
+                                }
+                                title={`Klik untuk melihat rincian batas ${item.kdkab} ↔ ${t.kdkab}`}
+                                className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium transition-opacity hover:opacity-80 ${kelasWarna}`}
+                              >
+                                {isi}
+                              </button>
+                            ) : (
+                              <span
+                                key={t.kdkab}
+                                className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${kelasWarna}`}
+                              >
+                                {isi}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </td>
+
+                      <td className="px-3 py-3 align-top text-right font-mono font-semibold tabular-nums text-ink">
+                        {totalTetangga}
+                      </td>
+
+                      <td className="px-3 py-3 align-top text-right font-mono tabular-nums">
+                        <span
+                          className={
+                            item.clean > 0
+                              ? "font-bold text-success"
+                              : "text-muted"
+                          }
+                        >
+                          {item.clean}
+                        </span>
+                      </td>
+
+                      <td className="px-3 py-3 align-top text-right font-mono tabular-nums">
+                        <span
+                          className={
+                            item.belum_clean > 0
+                              ? "font-bold text-danger"
+                              : "text-muted"
+                          }
+                        >
+                          {item.belum_clean}
+                        </span>
+                      </td>
+
+                      <td className="px-3 py-3 align-top text-right font-mono tabular-nums">
+                        <span
+                          className={
+                            item.menunggu_tetangga > 0
+                              ? "font-semibold text-warning"
+                              : "text-muted"
+                          }
+                        >
+                          {item.menunggu_tetangga}
+                        </span>
+                      </td>
+
+                      <td className="px-3 py-3 align-top text-right font-mono tabular-nums text-muted">
+                        {item.belum_unggah}
+                      </td>
+
+                      <td className="px-3 py-3 align-top text-right font-mono font-semibold tabular-nums text-ink">
+                        {persenKab}%
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+      )}
 
       {/* Modal Rincian Temuan Pasangan Perbatasan */}
       {pasangAktif && (
@@ -766,8 +1116,7 @@ export function RekonsiliasiBatasClient({
                 </h2>
                 <p className="mt-0.5 text-xs text-muted">
                   Daftar poligon SLS yang bersinggungan pada area Overlap maupun
-                  Celah Kosong (Gap) di sepanjang garis perbatasan kedua
-                  kabupaten/kota.
+                  Gap di sepanjang garis perbatasan kedua kabupaten/kota.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -853,29 +1202,6 @@ export function RekonsiliasiBatasClient({
                   </button>
                 ))}
               </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium text-muted">Ukuran Luas:</span>
-                {[
-                  { id: "semua", label: "Semua Ukuran" },
-                  { id: "besar", label: "Besar (>100 m²)" },
-                  { id: "sedang", label: "Sedang (1–100 m²)" },
-                  { id: "sliver", label: "Sliver (<1 m²)" },
-                ].map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setFilterTingkatDetail(t.id)}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium ${
-                      filterTingkatDetail === t.id
-                        ? "bg-brand text-white"
-                        : "bg-surface text-ink hover:bg-paper"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
             </div>
 
             {/* Isi Tabel Rincian */}
@@ -899,7 +1225,7 @@ export function RekonsiliasiBatasClient({
                     <thead className="sticky top-0 z-10 bg-paper shadow-[0_1px_0_0_var(--line)]">
                       <tr className="text-[11px] font-semibold uppercase tracking-wider text-muted">
                         <th className="px-3 py-2">No</th>
-                        <th className="px-3 py-2">Jenis &amp; Tingkat</th>
+                        <th className="px-3 py-2">Jenis</th>
                         <th className="px-3 py-2">
                           SLS [{detailPasang?.kdkab_a}]{" "}
                           {formatNamaKabKota(detailPasang?.nmkab_a)}
@@ -924,18 +1250,15 @@ export function RekonsiliasiBatasClient({
                             {idx + 1}
                           </td>
                           <td className="px-3 py-2.5">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span
-                                className={`inline-flex rounded border px-2 py-0.5 text-[11px] font-bold uppercase ${
-                                  item.jenis === "overlap"
-                                    ? "border-danger/25 bg-danger-soft text-danger"
-                                    : "border-warning/30 bg-amber-50 text-warning"
-                                }`}
-                              >
-                                {item.jenis}
-                              </span>
-                              <BadgeTingkat tingkat={item.tingkat} />
-                            </div>
+                            <span
+                              className={`inline-flex rounded border px-2 py-0.5 text-[11px] font-bold uppercase ${
+                                item.jenis === "overlap"
+                                  ? "border-danger/25 bg-danger-soft text-danger"
+                                  : "border-warning/30 bg-amber-50 text-warning"
+                              }`}
+                            >
+                              {item.jenis}
+                            </span>
                           </td>
                           <td className="px-3 py-2.5">
                             <div className="font-mono font-semibold tabular-nums text-ink">
