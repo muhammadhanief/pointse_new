@@ -194,6 +194,10 @@ export function RekonsiliasiBatasClient({
     return filterKabs;
   }, [filterKaresidenan, filterKabs, semuaKaresidenan]);
 
+  // Modal pengaturan ambang: dimount hanya saat terbuka supaya state selalu
+  // segar dan inputnya tidak tertimpa polling dari instance lama.
+  const [modalAmbang, setModalAmbang] = useState(false);
+
   // State modal rincian pasangan
   const [pasangAktif, setPasangAktif] = useState<{
     kdkab_a: string;
@@ -656,6 +660,15 @@ export function RekonsiliasiBatasClient({
             >
               {memuat ? "Memuat..." : "Refresh"}
             </TombolAksi>
+
+            {bisaAturPemeriksaan && (
+              <TombolAksi
+                varian="sekunder"
+                onClick={() => setModalAmbang(true)}
+              >
+                Ubah ambang
+              </TombolAksi>
+            )}
           </div>
         </div>
 
@@ -756,15 +769,6 @@ export function RekonsiliasiBatasClient({
           />
         </div>
       </Panel>
-
-      {bisaAturPemeriksaan && (
-        <PengaturanPemeriksaanBatas
-          onSelesai={() => {
-            setMemuat(true);
-            void muatRingkasan(daftarKabAktif);
-          }}
-        />
-      )}
 
       {galat && (
         <div
@@ -1537,6 +1541,17 @@ export function RekonsiliasiBatasClient({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal pengaturan ambang pemeriksaan batas (khusus Admin Provinsi) */}
+      {modalAmbang && (
+        <PengaturanPemeriksaanBatas
+          onTutup={() => setModalAmbang(false)}
+          onSelesai={() => {
+            setMemuat(true);
+            void muatRingkasan(daftarKabAktif);
+          }}
+        />
       )}
     </div>
   );

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Panel, TombolAksi } from "@/components/dashboard/ui";
+import { TombolAksi } from "@/components/dashboard/ui";
 import { ambilJson, pesanKesalahan } from "@/lib/api/klien";
 import type { RekonsiliasiBatasPengaturan } from "@/lib/api/types";
 import { formatAngka, formatWaktu } from "@/lib/format";
@@ -32,8 +32,10 @@ function labelStatus(status: string): string {
 }
 
 export function PengaturanPemeriksaanBatas({
+  onTutup,
   onSelesai,
 }: {
+  onTutup: () => void;
   onSelesai: () => void;
 }) {
   const [data, setData] = useState<RekonsiliasiBatasPengaturan | null>(null);
@@ -45,10 +47,36 @@ export function PengaturanPemeriksaanBatas({
   const statusSebelumnya = useRef<string | null>(null);
   const luasTersimpan = useRef<number | null>(null);
   const onSelesaiRef = useRef(onSelesai);
+  const onTutupRef = useRef(onTutup);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     onSelesaiRef.current = onSelesai;
   }, [onSelesai]);
+
+  useEffect(() => {
+    onTutupRef.current = onTutup;
+  }, [onTutup]);
+
+  // Modal: fokus ke input, tutup dengan Escape, dan kunci gulir halaman.
+  // Dijalankan sekali saat modal dipasang; handler memakai ref supaya
+  // render ulang induk (mis. auto-refresh 20 detik) tidak merebut fokus input.
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+    const overflowAwal = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onTutupRef.current();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = overflowAwal;
+    };
+  }, []);
 
   const terapkan = useCallback((hasil: RekonsiliasiBatasPengaturan) => {
     setData(hasil);
@@ -165,145 +193,177 @@ export function PengaturanPemeriksaanBatas({
       : 0;
 
   return (
-    <Panel
-      judul="Ambang pemeriksaan batas"
-      deskripsi="Dipakai saat menghitung Gap dan Overlap. Ubah ambang, lalu periksa ulang seluruh pasangan tanpa menunggu unggahan peta baru."
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="judul-modal-ambang-batas"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-3 sm:p-6"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onTutup();
+        }
+      }}
     >
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-        <div>
-          <label
-            htmlFor="ambang-luas-minimum"
-            className="block text-xs font-semibold uppercase tracking-wider text-muted"
-          >
-            Luas minimum temuan (m²)
-          </label>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <input
-              id="ambang-luas-minimum"
-              type="number"
-              min={0}
-              step="any"
-              inputMode="decimal"
-              value={nilai}
-              onChange={(e) => setNilai(e.target.value)}
-              disabled={memuat || sedangSimpan}
-              className="min-h-9 w-40 rounded-lg border border-line-strong bg-surface px-3 py-1.5 font-mono text-sm tabular-nums text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:opacity-60"
-            />
-            <TombolAksi
-              varian="sekunder"
-              onClick={() => void simpanAmbang()}
-              disabled={memuat || sedangSimpan}
+      <div className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-xl">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
+          <div>
+            <h2
+              id="judul-modal-ambang-batas"
+              className="text-sm font-bold text-ink sm:text-base"
             >
-              {sedangSimpan ? "Menyimpan..." : "Simpan ambang"}
-            </TombolAksi>
+              Ambang pemeriksaan batas
+            </h2>
+            <p className="mt-0.5 text-xs leading-normal text-muted">
+              Dipakai saat menghitung Gap dan Overlap. Ubah ambang, lalu periksa
+              ulang seluruh pasangan tanpa menunggu unggahan peta baru.
+            </p>
           </div>
-          <p className="mt-2 text-xs leading-normal text-muted">
-            Isi <span className="font-mono tabular-nums">0</span> agar semua
-            temuan dari mesin GEOS dicatat, sama persis dengan Topology Checker
-            QGIS. Isi{" "}
-            <span className="font-mono tabular-nums">0.000001</span> untuk
-            mengabaikan irisan di bawah 1 mm² akibat selisih desimal koordinat.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {NILAI_CEPAT.map((pilihan) => (
-              <button
-                key={pilihan.nilai}
-                type="button"
-                title={pilihan.keterangan}
-                onClick={() => setNilai(pilihan.nilai)}
-                className={`min-h-9 rounded-md border px-2.5 text-xs font-medium transition-colors ${
-                  nilai === pilihan.nilai
-                    ? "border-brand bg-brand-soft text-brand-strong"
-                    : "border-line bg-surface text-muted hover:border-brand hover:text-brand-strong"
-                }`}
-              >
-                {pilihan.label}
-              </button>
-            ))}
-          </div>
+          <button
+            type="button"
+            onClick={onTutup}
+            className="inline-flex min-h-9 items-center rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-paper"
+          >
+            Tutup
+          </button>
         </div>
 
-        <div className="border-t border-line pt-4 lg:border-t-0 lg:border-l lg:pl-4 lg:pt-0">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-              Pemeriksaan ulang semua pasangan
-            </span>
-            {jalankan && (
-              <span className="font-mono text-xs tabular-nums text-muted">
-                #{jalankan.id}
-              </span>
-            )}
-          </div>
-
-          {jalankan ? (
-            <div className="mt-2 space-y-2">
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
-                <span className="font-semibold text-ink">
-                  {labelStatus(jalankan.status)}
-                </span>
-                {sedangBerjalan && (
-                  <span className="font-mono tabular-nums text-muted">
-                    {formatAngka(sudahDiproses)} / {formatAngka(totalPasang)}{" "}
-                    pasangan
-                  </span>
-                )}
-                {jalankan.finished_at && (
-                  <span className="text-muted">
-                    {formatWaktu(jalankan.finished_at)}
-                  </span>
-                )}
-              </div>
-              {sedangBerjalan && (
-                <div className="h-1.5 overflow-hidden rounded-full bg-paper">
-                  <div
-                    className="h-full rounded-full bg-brand transition-[width]"
-                    style={{ width: `${persen}%` }}
-                  />
-                </div>
-              )}
-              {jalankan.pesan && (
-                <p
-                  className={`text-xs leading-normal ${
-                    jalankan.status === "gagal" ? "text-danger" : "text-muted"
+        <div className="space-y-4 overflow-y-auto px-5 py-4">
+          <section>
+            <label
+              htmlFor="ambang-luas-minimum"
+              className="block text-xs font-semibold uppercase tracking-wider text-muted"
+            >
+              Luas minimum temuan (m²)
+            </label>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <input
+                ref={inputRef}
+                id="ambang-luas-minimum"
+                type="number"
+                min={0}
+                step="any"
+                inputMode="decimal"
+                value={nilai}
+                onChange={(e) => setNilai(e.target.value)}
+                disabled={memuat || sedangSimpan}
+                className="min-h-9 w-40 rounded-lg border border-line-strong bg-surface px-3 py-1.5 font-mono text-sm tabular-nums text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:opacity-60"
+              />
+              <TombolAksi
+                varian="sekunder"
+                onClick={() => void simpanAmbang()}
+                disabled={memuat || sedangSimpan}
+              >
+                {sedangSimpan ? "Menyimpan..." : "Simpan ambang"}
+              </TombolAksi>
+            </div>
+            <p className="mt-2 text-xs leading-normal text-muted">
+              Isi <span className="font-mono tabular-nums">0</span> agar semua
+              temuan dari mesin GEOS dicatat, sama persis dengan Topology Checker
+              QGIS. Isi <span className="font-mono tabular-nums">0.000001</span>{" "}
+              untuk mengabaikan irisan di bawah 1 mm² akibat selisih desimal
+              koordinat.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {NILAI_CEPAT.map((pilihan) => (
+                <button
+                  key={pilihan.nilai}
+                  type="button"
+                  title={pilihan.keterangan}
+                  onClick={() => setNilai(pilihan.nilai)}
+                  className={`min-h-9 rounded-md border px-2.5 text-xs font-medium transition-colors ${
+                    nilai === pilihan.nilai
+                      ? "border-brand bg-brand-soft text-brand-strong"
+                      : "border-line bg-surface text-muted hover:border-brand hover:text-brand-strong"
                   }`}
                 >
-                  {jalankan.pesan}
-                </p>
-              )}
-              {jalankan.status === "sukses" && (
-                <p className="text-xs text-muted">
-                  {formatAngka(jalankan.jumlah_bersih)} clean,{" "}
-                  {formatAngka(jalankan.jumlah_belum_clean)} belum clean,{" "}
-                  {formatAngka(jalankan.jumlah_gagal)} gagal diperiksa.
-                </p>
+                  {pilihan.label}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="border-t border-line pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+                Pemeriksaan ulang semua pasangan
+              </span>
+              {jalankan && (
+                <span className="font-mono text-xs tabular-nums text-muted">
+                  #{jalankan.id}
+                </span>
               )}
             </div>
-          ) : (
-            <p className="mt-2 text-xs leading-normal text-muted">
-              Belum ada pemeriksaan ulang manual. Pemeriksaan otomatis tetap
-              berjalan setiap kali run Validasi SLS selesai.
+
+            {jalankan ? (
+              <div className="mt-2 space-y-2">
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
+                  <span className="font-semibold text-ink">
+                    {labelStatus(jalankan.status)}
+                  </span>
+                  {sedangBerjalan && (
+                    <span className="font-mono tabular-nums text-muted">
+                      {formatAngka(sudahDiproses)} / {formatAngka(totalPasang)}{" "}
+                      pasangan
+                    </span>
+                  )}
+                  {jalankan.finished_at && (
+                    <span className="text-muted">
+                      {formatWaktu(jalankan.finished_at)}
+                    </span>
+                  )}
+                </div>
+                {sedangBerjalan && (
+                  <div className="h-1.5 overflow-hidden rounded-full bg-paper">
+                    <div
+                      className="h-full rounded-full bg-brand transition-[width]"
+                      style={{ width: `${persen}%` }}
+                    />
+                  </div>
+                )}
+                {jalankan.pesan && (
+                  <p
+                    className={`text-xs leading-normal ${
+                      jalankan.status === "gagal" ? "text-danger" : "text-muted"
+                    }`}
+                  >
+                    {jalankan.pesan}
+                  </p>
+                )}
+                {jalankan.status === "sukses" && (
+                  <p className="text-xs text-muted">
+                    {formatAngka(jalankan.jumlah_bersih)} clean,{" "}
+                    {formatAngka(jalankan.jumlah_belum_clean)} belum clean,{" "}
+                    {formatAngka(jalankan.jumlah_gagal)} gagal diperiksa.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs leading-normal text-muted">
+                Belum ada pemeriksaan ulang manual. Pemeriksaan otomatis tetap
+                berjalan setiap kali run Validasi SLS selesai.
+              </p>
+            )}
+
+            <TombolAksi
+              className="mt-3"
+              onClick={() => void jalankanUlang()}
+              disabled={memuat || sedangJalankan || sedangBerjalan}
+            >
+              {sedangJalankan
+                ? "Mengantrekan..."
+                : sedangBerjalan
+                  ? "Sedang berjalan"
+                  : "Periksa ulang semua pasangan"}
+            </TombolAksi>
+          </section>
+
+          {galat && (
+            <p role="alert" className="text-xs text-danger">
+              {galat}
             </p>
           )}
-
-          <TombolAksi
-            className="mt-3"
-            onClick={() => void jalankanUlang()}
-            disabled={memuat || sedangJalankan || sedangBerjalan}
-          >
-            {sedangJalankan
-              ? "Mengantrekan..."
-              : sedangBerjalan
-                ? "Sedang berjalan"
-                : "Periksa ulang semua pasangan"}
-          </TombolAksi>
         </div>
       </div>
-
-      {galat && (
-        <p role="alert" className="mt-3 text-xs text-danger">
-          {galat}
-        </p>
-      )}
-    </Panel>
+    </div>
   );
 }
