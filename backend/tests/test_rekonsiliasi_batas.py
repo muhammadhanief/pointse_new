@@ -6,10 +6,17 @@ import json
 from datetime import date
 
 import shapely
+from sqlalchemy import select
 
-from app import layanan, rekonsiliasi_batas
+from app import layanan, pengaturan, rekonsiliasi_batas
 from app.config import Settings
-from app.models import STATUS_SUKSES, TIPE_V, Run
+from app.models import (
+    KUNCI_LUAS_MIN_BATAS,
+    STATUS_SUKSES,
+    TIPE_V,
+    RekonsiliasiBatasPasang,
+    Run,
+)
 
 
 def test_kamus_74_pasangan_tetangga_jawa_tengah() -> None:
@@ -222,3 +229,156 @@ def test_perbarui_batas_dan_layanan_ringkasan_detail(tmp_path, sesi) -> None:
     )
     assert jalur_peta_b == berkas_3302
     assert "3302" in nama_peta_b
+
+
+def test_ambang_luas_minimum_bawaan_nol_menangkap_overlap_mikro() -> None:
+    """Ambang 0 (bawaan) mencatat overlap mikroskopis, sama seperti QGIS.
+
+    Dengan ambang lebih besar, irisan selebar sepersekian nanometer itu
+    dibuang sehingga hasil PointSE lebih ramping daripada Topology Checker.
+    """
+    a = shapely.box(109.0, -7.5, 109.01, -7.49)
+    b = shapely.box(109.01 - 1e-13, -7.5, 109.02, -7.4999)
+    atr_a = [{"idsls": "33010100010001", "idsubsls": "3301010001000100", "nmsls": "A"}]
+    atr_b = [{"idsls": "33020100010001", "idsubsls": "3302010001000100", "nmsls": "B"}]
+
+    hasil_nol = rekonsiliasi_batas.periksa_batas_dua_geometri(
+        "3301", "3302", [a], atr_a, [b], atr_b, luas_min_m2=0.0
+    )
+    assert hasil_nol.jumlah_overlap == 1
+    assert hasil_nol.temuan[0].jenis == "overlap"
+    assert hasil_nol.temuan[0].luas_m2 < 0.001
+
+    hasil_ambang = rekonsiliasi_batas.periksa_batas_dua_geometri(
+        "3301", "3302", [a], atr_a, [b], atr_b, luas_min_m2=1e-6
+    )
+    assert hasil_ambang.jumlah_overlap == 0
+
+
+def test_pengaturan_luas_min_batas_bawaan_dan_simpan(sesi) -> None:
+    """Pengaturan ambang: bawaan 0, tersimpan sebagai teks, nilai rusak diabaikan."""
+    from app import pengaturan
+
+    assert pengaturan.baca_luas_min_batas(sesi) == 0.0
+
+    assert pengaturan.tulis_luas_min_batas(sesi, 1e-6, oleh="admin") == 1e-6
+    sesi.commit()
+    assert pengaturan.baca_luas_min_batas(sesi) == 1e-6
+
+    pengaturan.tulis_nilai(sesi, KUNCI_LUAS_MIN_BATAS, "bukan angka")
+    sesi.commit()
+    assert pengaturan.baca_luas_min_batas(sesi) == 0.0
+
+
+def test_jalankan_ulang_semua_batas_memakai_ambang_baru(tmp_path, sesi, setelan) -> None:
+    """Periksa ulang semua pasangan hanya menyentuh pasangan yang petanya lengkap."""
+    def _tulis_geojson(jalur, fitur_list):
+        jalur.parent.mkdir(parents=True, exist_ok=True)
+        jalur.write_text(
+            json.dumps({"type": "FeatureCollection", "features": fitur_list}),
+            encoding="utf-8",
+        )
+
+    berkas_3301 = tmp_path / "peta_3301.geojson"
+    berkas_3302 = tmp_path / "peta_3302.geojson"
+    _tulis_geojson(
+        berkas_3301,
+        [
+            {
+                "type": "Feature",
+                "properties": {
+                    "idsls": "33010100010001",
+                    "idsubsls": "3301010001000100",
+                    "nmsls": "RT 001 RW 001",
+                },
+                "geometry": json.loads(
+                    shapely.to_geojson(shapely.box(109.000, -7.500, 109.0102, -7.490))
+                ),
+            }
+        ],
+    )
+    _tulis_geojson(
+        berkas_3302,
+        [
+            {
+                "type": "Feature",
+                "properties": {
+                    "idsls": "33020100010001",
+                    "idsubsls": "3302010001000100",
+                    "nmsls": "RT 005 RW 002",
+                },
+                "geometry": json.loads(
+                    shapely.to_geojson(shapely.box(109.010, -7.500, 109.020, -7.490))
+                ),
+            }
+        ],
+    )
+
+    for kode, berkas, nama in (
+        ("3301", berkas_3301, "Petugas Cilacap"),
+        ("3302", berkas_3302, "Petugas Banyumas"),
+    ):
+        sesi.add(
+            Run(
+                tipe=TIPE_V,
+                kdprov="33",
+                kdkab=kode,
+                status=STATUS_SUKSES,
+                tanggal_data=date(2026, 11, 10),
+                user=nama,
+                nama_file_input=berkas.name,
+                nama_file_peta=berkas.name,
+                berkas_input=str(berkas),
+                berkas_peta=str(berkas),
+                semester="2026_1",
+            )
+        )
+    sesi.commit()
+
+    kemajuan: list[tuple[int, int]] = []
+    ringkas = rekonsiliasi_batas.jalankan_ulang_semua_batas(
+        sesi,
+        setelan,
+        luas_min_m2=0.0,
+        progres=lambda sudah, total: kemajuan.append((sudah, total)),
+    )
+
+    assert ringkas["total"] == 1
+    assert ringkas["bersih"] == 0
+    assert ringkas["belum_clean"] == 1
+    assert ringkas["gagal"] == 0
+    assert kemajuan[-1] == (1, 1)
+
+    pasang = sesi.scalars(select(RekonsiliasiBatasPasang)).all()
+    assert len(pasang) == 1
+    assert (pasang[0].kdkab_a, pasang[0].kdkab_b) == ("3301", "3302")
+    assert pasang[0].jumlah_overlap == 1
+
+
+def test_api_pengaturan_dan_jalankan_ulang_batas(klien, sesi) -> None:
+    """Admin dapat membaca/mengubah ambang dan mengantrekan pemeriksaan ulang."""
+    awal = klien.get("/rekonsiliasi-batas/pengaturan")
+    assert awal.status_code == 200
+    assert awal.json()["luas_min_m2"] == 0.0
+    assert awal.json()["jalankan"] is None
+
+    ubah = klien.put(
+        "/rekonsiliasi-batas/pengaturan", json={"luas_min_m2": 0.000001}
+    )
+    assert ubah.status_code == 200
+    assert ubah.json()["luas_min_m2"] == 0.000001
+
+    minta = klien.post("/rekonsiliasi-batas/jalankan-ulang")
+    assert minta.status_code == 202
+    assert minta.json()["status"] == "menunggu"
+    assert minta.json()["luas_min_m2"] == 0.000001
+
+    ganda = klien.post("/rekonsiliasi-batas/jalankan-ulang")
+    assert ganda.status_code == 409
+
+    status = klien.get("/rekonsiliasi-batas/jalankan-ulang")
+    assert status.status_code == 200
+    assert status.json()["status"] == "menunggu"
+
+    negatif = klien.put("/rekonsiliasi-batas/pengaturan", json={"luas_min_m2": -1})
+    assert negatif.status_code == 422

@@ -15,7 +15,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from sqlalchemy import delete, insert, or_, select
 
@@ -49,8 +49,12 @@ METER_PER_DERAJAT: float = 111_320.0
 #: Lebar sabuk perbatasan dalam derajat (~220 meter).
 JARAK_SABUK_DERAJAT: float = 0.002
 
-#: Ambang luas minimum (m2) agar artefak titik/garis degenerat 0 m2 diabaikan.
-LUAS_MIN_M2: float = 1e-6
+#: Ambang luas minimum bawaan (m2) agar artefak titik/garis degenerat 0 m2
+#: diabaikan. ``0.0`` berarti tanpa filter: setiap irisan yang dinyatakan
+#: GEOS/QGIS sebagai overlap/gap ikut dicatat (identik dengan Topology Checker
+#: QGIS). Nilai efektif dibaca dari tabel ``pengaturan`` lewat
+#: :func:`app.pengaturan.baca_luas_min_batas` dan dapat diubah admin.
+LUAS_MIN_M2: float = 0.0
 
 #: Tingkat keparahan luas temuan batas.
 TINGKAT_SLIVER = "sliver"
@@ -190,6 +194,7 @@ def periksa_batas_dua_geometri(
     atribut_b: list[dict[str, str | None]],
     *,
     jarak_sabuk_derajat: float = JARAK_SABUK_DERAJAT,
+    luas_min_m2: float = LUAS_MIN_M2,
 ) -> HasilRekonsiliasiPasang:
     """Periksa Gap dan Overlap pada sabuk perbatasan dua kabupaten/kota (murni).
 
@@ -199,6 +204,9 @@ def periksa_batas_dua_geometri(
     2. Deteksi **Gap** (celah kosong terjepit) menggunakan metode ``checkGaps``
        QGIS Topology Checker pada gabungan poligon sabuk perbatasan yang
        menyentuh kedua kabupaten sekaligus di dalam koridor pertemuan.
+
+    ``luas_min_m2`` adalah ambang luas minimum (m2). Nilai ``0`` mencatat semua
+    irisan yang valid sebagai poligon (sama dengan Topology Checker QGIS).
     """
     import shapely
     from shapely import STRtree
@@ -273,7 +281,7 @@ def periksa_batas_dua_geometri(
             if irisan is None:
                 continue
             luas_m2 = float(shapely.area(irisan) * (METER_PER_DERAJAT**2))
-            if luas_m2 <= LUAS_MIN_M2:
+            if luas_min_m2 > 0 and luas_m2 <= luas_min_m2:
                 continue
             atr_b = sub_ib[loc_b]
             titik = irisan.representative_point()
@@ -329,7 +337,7 @@ def periksa_batas_dua_geometri(
                 ):
                     continue
                 luas_m2 = float(shapely.area(celah) * (METER_PER_DERAJAT**2))
-                if luas_m2 <= LUAS_MIN_M2:
+                if luas_min_m2 > 0 and luas_m2 <= luas_min_m2:
                     continue
 
                 # Cari poligon kab A dan kab B yang menyentuh celah ini
@@ -517,6 +525,8 @@ def periksa_batas_dua_berkas(
     kdkab_b: str,
     berkas_b: str | Path,
     layer_b: str | None,
+    *,
+    luas_min_m2: float = LUAS_MIN_M2,
 ) -> HasilRekonsiliasiPasang:
     """Baca dua berkas peta SLS dan jalankan pemeriksaan batas berpasangan."""
     a, b = pasangan_kanonik(kdkab_a, kdkab_b)
@@ -525,7 +535,9 @@ def periksa_batas_dua_berkas(
         layer_a, layer_b = layer_b, layer_a
     geom_a, atr_a = _baca_geometri_dan_atribut_berkas(berkas_a, layer_a)
     geom_b, atr_b = _baca_geometri_dan_atribut_berkas(berkas_b, layer_b)
-    return periksa_batas_dua_geometri(a, b, geom_a, atr_a, geom_b, atr_b)
+    return periksa_batas_dua_geometri(
+        a, b, geom_a, atr_a, geom_b, atr_b, luas_min_m2=luas_min_m2
+    )
 
 
 def run_v_terakhir_per_kab(
@@ -673,6 +685,10 @@ def perbarui_batas_untuk_run_v(
     if not daftar_tetangga:
         return 0
 
+    from app import pengaturan as pengaturan_app
+
+    luas_min_m2 = pengaturan_app.baca_luas_min_batas(sesi)
+
     runs_kab = run_v_terakhir_per_kab(sesi, kdprov=run.kdprov)
     runs_kab[kode_utama] = run
 
@@ -708,12 +724,24 @@ def perbarui_batas_untuk_run_v(
             a, b = pasangan_kanonik(kode_utama, kode_lawan)
             if a == kode_utama:
                 hasil = periksa_batas_dua_geometri(
-                    a, b, geom_utama, atr_utama, geom_lawan, atr_lawan
+                    a,
+                    b,
+                    geom_utama,
+                    atr_utama,
+                    geom_lawan,
+                    atr_lawan,
+                    luas_min_m2=luas_min_m2,
                 )
                 run_a, run_b = run, run_lawan
             else:
                 hasil = periksa_batas_dua_geometri(
-                    a, b, geom_lawan, atr_lawan, geom_utama, atr_utama
+                    a,
+                    b,
+                    geom_lawan,
+                    atr_lawan,
+                    geom_utama,
+                    atr_utama,
+                    luas_min_m2=luas_min_m2,
                 )
                 run_a, run_b = run_lawan, run
             simpan_hasil_pasang(
@@ -734,3 +762,91 @@ def perbarui_batas_untuk_run_v(
                 "gagal memeriksa batas %s vs %s", kode_utama, kode_lawan
             )
     return diperiksa
+
+
+def jalankan_ulang_semua_batas(
+    sesi: Session,
+    setelan: Settings,
+    *,
+    luas_min_m2: float = LUAS_MIN_M2,
+    progres: Callable[[int, int], None] | None = None,
+) -> dict[str, int]:
+    """Periksa ulang **semua** pasangan tetangga Jawa Tengah dengan ambang baru.
+
+    Hanya pasangan yang kedua kabupaten/kotanya sudah punya run ``V`` beserta
+    berkas peta yang masih ada yang diperiksa. Dipanggil worker untuk tombol
+    "Jalankan ulang pemeriksaan batas" setelah admin mengubah ambang luas
+    minimum. Satu pasangan dibaca dan diperiksa sekaligus supaya pemakaian
+    memori tetap di bawah anggaran worker (tidak ada cache antar-pasangan).
+
+    ``progres(sudah, total)`` dipanggil setelah tiap pasangan selesai agar
+    halaman admin dapat menampilkan kemajuan.
+
+    Mengembalikan hitungan ``total``, ``sudah``, ``bersih``, ``belum_clean``,
+    ``gagal``, dan ``dilewati`` (pasangan yang petanya belum lengkap).
+    """
+    runs_kab = run_v_terakhir_per_kab(sesi, kdprov="33")
+
+    siap: list[tuple[str, str, Run, Run]] = []
+    dilewati = 0
+    for a, b in PASANGAN_TETANGGA_33:
+        run_a = runs_kab.get(a)
+        run_b = runs_kab.get(b)
+        if (
+            run_a is not None
+            and run_b is not None
+            and run_a.berkas_peta
+            and run_b.berkas_peta
+            and Path(run_a.berkas_peta).is_file()
+            and Path(run_b.berkas_peta).is_file()
+        ):
+            siap.append((a, b, run_a, run_b))
+        else:
+            dilewati += 1
+
+    total = len(siap)
+    bersih = belum_clean = gagal = 0
+    if progres is not None:
+        progres(0, total)
+
+    for urut, (a, b, run_a, run_b) in enumerate(siap, start=1):
+        try:
+            geom_a, atr_a = _baca_geometri_dan_atribut_berkas(
+                run_a.berkas_peta, run_a.layer_peta
+            )
+            geom_b, atr_b = _baca_geometri_dan_atribut_berkas(
+                run_b.berkas_peta, run_b.layer_peta
+            )
+            hasil = periksa_batas_dua_geometri(
+                a, b, geom_a, atr_a, geom_b, atr_b, luas_min_m2=luas_min_m2
+            )
+            simpan_hasil_pasang(
+                sesi,
+                setelan,
+                kdprov="33",
+                kdkab_a=a,
+                kdkab_b=b,
+                run_a=run_a,
+                run_b=run_b,
+                hasil=hasil,
+            )
+            sesi.commit()
+            if hasil.bersih:
+                bersih += 1
+            else:
+                belum_clean += 1
+        except Exception:  # noqa: BLE001 - satu pasangan gagal tidak menggugurkan sisanya
+            sesi.rollback()
+            gagal += 1
+            logger.exception("gagal memeriksa ulang batas %s vs %s", a, b)
+        if progres is not None:
+            progres(urut, total)
+
+    return {
+        "total": total,
+        "sudah": total,
+        "bersih": bersih,
+        "belum_clean": belum_clean,
+        "gagal": gagal,
+        "dilewati": dilewati,
+    }

@@ -1026,3 +1026,55 @@ class RekonsiliasiBatasTemuan(Base):
     catatan: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
 
+
+#: Kunci pengaturan ambang luas minimum pemeriksaan batas (m2).
+KUNCI_LUAS_MIN_BATAS = "rekonsiliasi_batas_luas_min_m2"
+
+
+class Pengaturan(Base):
+    """Pengaturan aplikasi sederhana (key-value) yang dapat diubah admin.
+
+    Dipakai untuk ambang luas minimum pemeriksaan batas
+    (``rekonsiliasi_batas_luas_min_m2``): ``0`` berarti semua temuan yang
+    dinyatakan GEOS/QGIS sebagai overlap/gap ikut dicatat (sama persis dengan
+    Topology Checker QGIS), nilai lebih besar membuang temuan mikroskopis.
+    """
+
+    __tablename__ = "pengaturan"
+
+    kunci: Mapped[str] = mapped_column(String(64), primary_key=True)
+    nilai: Mapped[str] = mapped_column(String(255))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=sekarang, onupdate=sekarang
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(128))
+
+
+class RekonsiliasiBatasJalankan(Base):
+    """Satu permintaan "jalankan ulang pemeriksaan batas" untuk seluruh pasangan.
+
+    Antrean dikerjakan :mod:`app.worker` (bukan API) karena modul spasial
+    (``shapely``/``pyogrio``) tidak boleh dimuat di proses API. Progres
+    (``total_pasang``/``sudah_diproses``) dibaca halaman Rekonsiliasi Batas
+    selama status masih ``menunggu``/``jalan``.
+    """
+
+    __tablename__ = "rekonsiliasi_batas_jalankan"
+    __table_args__ = (Index("ix_rekonsiliasi_batas_jalankan_status", "status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    #: ``menunggu``, ``jalan``, ``sukses``, atau ``gagal``.
+    status: Mapped[str] = mapped_column(String(16), default=STATUS_MENUNGGU)
+    #: Ambang luas minimum (m2) yang dipakai saat permintaan ini dibuat.
+    luas_min_m2: Mapped[float] = mapped_column(Double, default=0.0)
+    total_pasang: Mapped[int] = mapped_column(Integer, default=0)
+    sudah_diproses: Mapped[int] = mapped_column(Integer, default=0)
+    jumlah_bersih: Mapped[int] = mapped_column(Integer, default=0)
+    jumlah_belum_clean: Mapped[int] = mapped_column(Integer, default=0)
+    jumlah_gagal: Mapped[int] = mapped_column(Integer, default=0)
+    pesan: Mapped[str | None] = mapped_column(Text)
+    diminta_oleh: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+

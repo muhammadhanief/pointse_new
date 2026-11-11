@@ -665,3 +665,31 @@ export type RekonsiliasiBatasTemuan = {
 export type RekonsiliasiBatasDetail = RekonsiliasiBatasPasangBaris & {
   temuan: RekonsiliasiBatasTemuan[];
 };
+
+export type StatusJalankanBatas =
+  | "menunggu"
+  | "jalan"
+  | "sukses"
+  | "gagal";
+
+export type RekonsiliasiBatasJalankan = {
+  id: number;
+  status: StatusJalankanBatas | string;
+  luas_min_m2: number;
+  total_pasang: number;
+  sudah_diproses: number;
+  jumlah_bersih: number;
+  jumlah_belum_clean: number;
+  jumlah_gagal: number;
+  pesan: string | null;
+  diminta_oleh: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type RekonsiliasiBatasPengaturan = {
+  luas_min_m2: number;
+  bawaan: number;
+  jalankan: RekonsiliasiBatasJalankan | null;
+};

@@ -118,6 +118,7 @@ from app.models import (
     RekapDesa,
     RekapKabupaten,
     RekapSubsls,
+    RekonsiliasiBatasJalankan,
     Run,
     TitikHasil,
     ValidasiSlsUnmatch,
@@ -1412,6 +1413,126 @@ def pasang_batas_tunggu_kunci(sesi: Session, setelan: Settings) -> None:
     )
 
 
+def tandai_jalankan_batas_terhenti(sesi: Session, setelan: Settings) -> int:
+    """Tandai permintaan jalankan-ulang batas yang macet sebagai gagal.
+
+    Baris berstatus ``jalan`` yang tidak menunjukkan kemajuan lebih lama dari
+    tiga kali :attr:`Settings.job_timeout_menit` (minimal 30 menit) dianggap
+    yatim (worker mati di tengah jalan) supaya admin tidak terkunci menunggu
+    selamanya.
+    """
+    batas = sekarang() - timedelta(
+        minutes=max(setelan.job_timeout_menit * 3, 30)
+    )
+    hasil = sesi.execute(
+        update(RekonsiliasiBatasJalankan)
+        .where(
+            RekonsiliasiBatasJalankan.status == STATUS_JALAN,
+            func.coalesce(
+                RekonsiliasiBatasJalankan.started_at,
+                RekonsiliasiBatasJalankan.created_at,
+            )
+            < batas,
+        )
+        .values(
+            status=STATUS_GAGAL,
+            finished_at=sekarang(),
+            pesan="Pemeriksaan batas terhenti; silakan jalankan ulang.",
+        )
+    )
+    return int(hasil.rowcount or 0)
+
+
+def klaim_jalankan_batas(sesi: Session) -> int | None:
+    """Ambil satu permintaan "jalankan ulang batas" tertua; ``None`` bila kosong."""
+    baris = sesi.scalars(
+        select(RekonsiliasiBatasJalankan)
+        .where(RekonsiliasiBatasJalankan.status == STATUS_MENUNGGU)
+        .order_by(RekonsiliasiBatasJalankan.id.asc())
+        .with_for_update(skip_locked=True)
+    ).first()
+    if baris is None:
+        return None
+    baris.status = STATUS_JALAN
+    baris.started_at = sekarang()
+    sesi.flush()
+    return baris.id
+
+
+def proses_jalankan_batas(
+    sesi_pabrik: sessionmaker[Session],
+    setelan: Settings,
+    jalankan_id: int,
+    worker_id: str,
+) -> None:
+    """Kerjakan satu permintaan "jalankan ulang pemeriksaan batas" (semua pasangan).
+
+    Berjalan di proses worker karena modul spasial (``shapely``/``pyogrio``)
+    tidak boleh dimuat di proses API. Progres dan denyut worker ditulis ulang
+    tiap pasangan selesai (sesi terpisah), sehingga halaman admin bisa
+    menampilkan kemajuan dan worker tidak dianggap mati.
+    """
+    from app import rekonsiliasi_batas
+
+    with sesi_pabrik() as sesi:
+        baris = sesi.get(RekonsiliasiBatasJalankan, jalankan_id)
+        if baris is None:
+            return
+        luas_min_m2 = float(baris.luas_min_m2 or 0.0)
+
+    def progres(sudah: int, total: int) -> None:
+        with sesi_pabrik() as s2:
+            perbarui_heartbeat_worker(s2, worker_id, status=WORKER_JALAN)
+            s2.execute(
+                update(RekonsiliasiBatasJalankan)
+                .where(RekonsiliasiBatasJalankan.id == jalankan_id)
+                .values(total_pasang=total, sudah_diproses=sudah)
+            )
+            s2.commit()
+
+    with sesi_pabrik() as sesi:
+        ringkas: dict[str, int] = {}
+        try:
+            ringkas = rekonsiliasi_batas.jalankan_ulang_semua_batas(
+                sesi, setelan, luas_min_m2=luas_min_m2, progres=progres
+            )
+            pesan = (
+                f"{ringkas['sudah']} pasangan diperiksa "
+                f"({ringkas['bersih']} clean, {ringkas['belum_clean']} belum clean, "
+                f"{ringkas['gagal']} gagal, {ringkas['dilewati']} dilewati)."
+            )
+            status_akhir = STATUS_SUKSES
+        except Exception as galat:  # noqa: BLE001 - dicatat ke baris & event
+            sesi.rollback()
+            logger.exception("jalankan ulang batas %s gagal", jalankan_id)
+            pesan = f"Pemeriksaan batas gagal: {galat}"[:4000]
+            status_akhir = STATUS_GAGAL
+
+    with sesi_pabrik() as sesi:
+        sesi.execute(
+            update(RekonsiliasiBatasJalankan)
+            .where(RekonsiliasiBatasJalankan.id == jalankan_id)
+            .values(
+                status=status_akhir,
+                pesan=pesan,
+                jumlah_bersih=ringkas.get("bersih", 0),
+                jumlah_belum_clean=ringkas.get("belum_clean", 0),
+                jumlah_gagal=ringkas.get("gagal", 0),
+                finished_at=sekarang(),
+            )
+        )
+        catat_event(
+            sesi,
+            worker_id=worker_id,
+            level="info" if status_akhir == STATUS_SUKSES else "error",
+            jenis="jalankan_batas",
+            pesan=f"Permintaan {jalankan_id}: {pesan}",
+            setelan=setelan,
+        )
+        perbarui_heartbeat_worker(sesi, worker_id, status=WORKER_MENANGGUR)
+        sesi.commit()
+
+
 def proses_satu_job(
     sesi_pabrik: sessionmaker[Session] | None = None,
     setelan: Settings | None = None,
@@ -1432,6 +1553,30 @@ def proses_satu_job(
         terhenti = tandai_job_terhenti(sesi, setelan, worker_id)
         if terhenti:
             logger.warning("job terhenti ditandai gagal: %s", terhenti)
+        macet = tandai_jalankan_batas_terhenti(sesi, setelan)
+        if macet:
+            logger.warning("permintaan jalankan batas macet ditandai gagal: %s", macet)
+        jalankan_batas_id = klaim_jalankan_batas(sesi)
+        if jalankan_batas_id is not None:
+            perbarui_heartbeat_worker(sesi, worker_id, status=WORKER_JALAN)
+            catat_event(
+                sesi,
+                worker_id=worker_id,
+                jenis="jalankan_batas_klaim",
+                pesan=(
+                    f"Permintaan jalankan ulang pemeriksaan batas "
+                    f"{jalankan_batas_id} mulai dikerjakan"
+                ),
+                setelan=setelan,
+            )
+            sesi.commit()
+            logger.info(
+                "permintaan jalankan ulang batas %s mulai", jalankan_batas_id
+            )
+            proses_jalankan_batas(
+                sesi_pabrik, setelan, jalankan_batas_id, worker_id
+            )
+            return True
         run = klaim_job(sesi)
         if run is None:
             perbarui_heartbeat_worker(sesi, worker_id, status=WORKER_MENANGGUR)

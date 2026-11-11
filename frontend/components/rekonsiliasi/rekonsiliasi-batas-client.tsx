@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { MultiPilih } from "@/components/dashboard/multi-pilih";
 import { EmptyState, Panel, TombolAksi } from "@/components/dashboard/ui";
+import { PengaturanPemeriksaanBatas } from "@/components/rekonsiliasi/pengaturan-pemeriksaan-batas";
 import {
   adalahBatal,
   ambilJson,
@@ -148,6 +149,7 @@ export function RekonsiliasiBatasClient({
   peran: string;
 }) {
   const adalahAdminProv = peran === PERAN_ADMIN_PROVINSI || !kdkab;
+  const bisaAturPemeriksaan = peran === PERAN_ADMIN_PROVINSI;
   const kodeKabPengguna = kdkab ? kodeWilayah(kdprov, kdkab) : null;
 
   const [ringkasan, setRingkasan] = useState<RekonsiliasiBatasRingkasan | null>(
@@ -754,6 +756,15 @@ export function RekonsiliasiBatasClient({
           />
         </div>
       </Panel>
+
+      {bisaAturPemeriksaan && (
+        <PengaturanPemeriksaanBatas
+          onSelesai={() => {
+            setMemuat(true);
+            void muatRingkasan(daftarKabAktif);
+          }}
+        />
+      )}
 
       {galat && (
         <div

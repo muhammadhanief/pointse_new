@@ -34,7 +34,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from app import aktivitas, anomali, auth, ekspor, geser, konfirmasi, layanan, unggahan, validasi_sls
+from app import aktivitas, anomali, auth, ekspor, geser, konfirmasi, layanan, pengaturan, unggahan, validasi_sls
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.layanan import (
@@ -51,6 +51,9 @@ from app.models import (
     PERSETUJUAN_DISETUJUI,
     PERSETUJUAN_DITOLAK,
     SEMESTER_SLS_2026_1,
+    STATUS_GAGAL,
+    STATUS_JALAN,
+    STATUS_MENUNGGU,
     STATUS_SUKSES,
     TIPE_A,
     TIPE_B,
@@ -58,6 +61,7 @@ from app.models import (
     AnomaliTitik,
     KonfirmasiAnomali,
     RekapTarget,
+    RekonsiliasiBatasJalankan,
     Run,
 )
 from app.peran import PERAN_ADMIN_PROVINSI
@@ -85,6 +89,9 @@ from app.skema import (
     RekapDetailOut,
     RekapOut,
     RekonsiliasiBatasDetailOut,
+    RekonsiliasiBatasJalankanOut,
+    RekonsiliasiBatasPengaturanMasuk,
+    RekonsiliasiBatasPengaturanOut,
     RekonsiliasiBatasRingkasanOut,
     RingkasanKonfirmasiOut,
     RingkasanOut,
@@ -1179,6 +1186,122 @@ def unduh_peta_kab_rekonsiliasi_batas(
     except FileNotFoundError as galat:
         raise HTTPException(status_code=404, detail=str(galat)) from galat
     return _unduhan_mentah(str(jalur), nama)
+
+
+def _terakhir_jalankan_batas(sesi: Session) -> RekonsiliasiBatasJalankan | None:
+    """Permintaan jalankan-ulang pemeriksaan batas yang paling baru."""
+    return sesi.scalars(
+        select(RekonsiliasiBatasJalankan).order_by(
+            RekonsiliasiBatasJalankan.id.desc()
+        )
+    ).first()
+
+
+def _out_jalankan_batas(
+    baris: RekonsiliasiBatasJalankan | None,
+) -> RekonsiliasiBatasJalankanOut | None:
+    if baris is None:
+        return None
+    return RekonsiliasiBatasJalankanOut.model_validate(baris, from_attributes=True)
+
+
+@router.get(
+    "/rekonsiliasi-batas/pengaturan",
+    response_model=RekonsiliasiBatasPengaturanOut,
+)
+def baca_pengaturan_rekonsiliasi_batas(
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> RekonsiliasiBatasPengaturanOut:
+    """Ambang luas minimum Gap/Overlap dan status jalankan-ulang terakhir."""
+    auth.pastikan_peran(pengguna, PERAN_ADMIN_PROVINSI)
+    return RekonsiliasiBatasPengaturanOut(
+        luas_min_m2=pengaturan.baca_luas_min_batas(sesi),
+        bawaan=pengaturan.LUAS_MIN_BATAS_BAWAAN,
+        jalankan=_out_jalankan_batas(_terakhir_jalankan_batas(sesi)),
+    )
+
+
+@router.put(
+    "/rekonsiliasi-batas/pengaturan",
+    response_model=RekonsiliasiBatasPengaturanOut,
+)
+def ubah_pengaturan_rekonsiliasi_batas(
+    masuk: RekonsiliasiBatasPengaturanMasuk,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> RekonsiliasiBatasPengaturanOut:
+    """Ubah ambang luas minimum (m2) pemeriksaan Gap/Overlap.
+
+    Nilai ``0`` berarti tanpa filter: semua irisan yang dinyatakan GEOS/QGIS
+    ikut dicatat, sama persis dengan Topology Checker QGIS. Perubahan baru
+    berlaku untuk pemeriksaan berikutnya; tekan "Jalankan ulang" agar seluruh
+    pasangan diperiksa dengan ambang baru.
+    """
+    auth.pastikan_peran(pengguna, PERAN_ADMIN_PROVINSI)
+    nilai = pengaturan.tulis_luas_min_batas(
+        sesi, masuk.luas_min_m2, oleh=pengguna.sub
+    )
+    sesi.commit()
+    return RekonsiliasiBatasPengaturanOut(
+        luas_min_m2=nilai,
+        bawaan=pengaturan.LUAS_MIN_BATAS_BAWAAN,
+        jalankan=_out_jalankan_batas(_terakhir_jalankan_batas(sesi)),
+    )
+
+
+@router.post(
+    "/rekonsiliasi-batas/jalankan-ulang",
+    response_model=RekonsiliasiBatasJalankanOut,
+    status_code=202,
+)
+def jalankan_ulang_rekonsiliasi_batas(
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> RekonsiliasiBatasJalankanOut:
+    """Antrekan pemeriksaan ulang seluruh 74 pasangan dengan ambang yang berlaku.
+
+    Dikerjakan worker (bukan API) karena memuat pustaka spasial; halaman admin
+    memantau progres lewat :func:`status_jalankan_rekonsiliasi_batas`.
+    """
+    auth.pastikan_peran(pengguna, PERAN_ADMIN_PROVINSI)
+    aktif = sesi.scalars(
+        select(RekonsiliasiBatasJalankan)
+        .where(
+            RekonsiliasiBatasJalankan.status.in_((STATUS_MENUNGGU, STATUS_JALAN))
+        )
+        .order_by(RekonsiliasiBatasJalankan.id.desc())
+    ).first()
+    if aktif is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Pemeriksaan batas masih berjalan atau menunggu antrean. "
+                "Tunggu sampai selesai sebelum menjalankan ulang."
+            ),
+        )
+    baris = RekonsiliasiBatasJalankan(
+        status=STATUS_MENUNGGU,
+        luas_min_m2=pengaturan.baca_luas_min_batas(sesi),
+        diminta_oleh=pengguna.sub,
+    )
+    sesi.add(baris)
+    sesi.commit()
+    sesi.refresh(baris)
+    return _out_jalankan_batas(baris)  # type: ignore[return-value]
+
+
+@router.get(
+    "/rekonsiliasi-batas/jalankan-ulang",
+    response_model=RekonsiliasiBatasJalankanOut | None,
+)
+def status_jalankan_rekonsiliasi_batas(
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> RekonsiliasiBatasJalankanOut | None:
+    """Status permintaan jalankan-ulang pemeriksaan batas yang paling baru."""
+    auth.pastikan_peran(pengguna, PERAN_ADMIN_PROVINSI)
+    return _out_jalankan_batas(_terakhir_jalankan_batas(sesi))
 
 
 @router.get("/perubahan", response_model=PerubahanOut)

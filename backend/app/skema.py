@@ -1056,3 +1056,35 @@ class RekonsiliasiBatasDetailOut(RekonsiliasiBatasPasangBarisOut):
     """Detail satu pasangan perbatasan beserta daftar temuan Gap & Overlap."""
 
     temuan: list[RekonsiliasiBatasTemuanOut] = Field(default_factory=list)
+
+
+class RekonsiliasiBatasJalankanOut(BaseModel):
+    """Status satu permintaan "jalankan ulang pemeriksaan batas"."""
+
+    id: int
+    status: str
+    luas_min_m2: float = 0.0
+    total_pasang: int = 0
+    sudah_diproses: int = 0
+    jumlah_bersih: int = 0
+    jumlah_belum_clean: int = 0
+    jumlah_gagal: int = 0
+    pesan: str | None = None
+    diminta_oleh: str | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class RekonsiliasiBatasPengaturanOut(BaseModel):
+    """Ambang luas minimum dan status permintaan jalankan-ulang pemeriksaan batas."""
+
+    luas_min_m2: float
+    bawaan: float
+    jalankan: RekonsiliasiBatasJalankanOut | None = None
+
+
+class RekonsiliasiBatasPengaturanMasuk(BaseModel):
+    """Perubahan ambang luas minimum pemeriksaan batas (m2, 0 = tanpa filter)."""
+
+    luas_min_m2: float = Field(..., ge=0, le=1_000_000)
