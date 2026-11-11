@@ -1031,6 +1031,10 @@ class RekonsiliasiBatasRingkasanOut(BaseModel):
     total_gap: int = 0
     total_luas_overlap_m2: float = 0.0
     total_luas_gap_m2: float = 0.0
+    #: Ambang luas minimum (m2) yang dipakai saat pemeriksaan terakhir. ``0``
+    #: berarti tanpa toleransi (semua temuan dicatat). Ditampilkan ke semua
+    #: peran, termasuk petugas kabupaten/kota, agar aturan yang berlaku jelas.
+    luas_min_m2: float = 0.0
     baris: list[RekonsiliasiBatasPasangBarisOut] = Field(default_factory=list)
 
 

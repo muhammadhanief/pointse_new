@@ -35,6 +35,13 @@ function formatLuas(luas: number): string {
   });
 }
 
+function formatAmbang(m2: number): string {
+  if (!Number.isFinite(m2) || m2 <= 0) {
+    return "0";
+  }
+  return m2.toLocaleString("id-ID", { maximumFractionDigits: 6 });
+}
+
 function formatWaktuRun(
   waktu: string | null | undefined,
   tanggal: string | null | undefined,
@@ -584,6 +591,7 @@ export function RekonsiliasiBatasClient({
   const jmlBelumClean = ringkasan?.belum_clean ?? 0;
   const jmlMenunggu = ringkasan?.menunggu_tetangga ?? 0;
   const jmlBelumUnggah = ringkasan?.belum_unggah ?? 0;
+  const luasMin = ringkasan?.luas_min_m2 ?? 0;
   const persenClean =
     totalPasang > 0 ? Math.round((jmlClean / totalPasang) * 100) : 0;
 
@@ -642,9 +650,21 @@ export function RekonsiliasiBatasClient({
               </span>
             </div>
             <p className="text-xs text-muted">
-              Pemeriksaan poligon SLS di sepanjang garis perbatasan
-              antar-kabupaten/kota bertetangga otomatis diperbarui setiap kali
-              run Validasi SLS (2026 S1) selesai diproses.
+              {luasMin <= 0 ? (
+                <>
+                  Tanpa toleransi: setiap gap dan overlap yang terdeteksi ikut
+                  dihitung, sama dengan Topology Checker QGIS.
+                </>
+              ) : (
+                <>
+                  Batas toleransi{" "}
+                  <span className="font-mono font-semibold tabular-nums text-ink">
+                    {formatAmbang(luasMin)} m2
+                  </span>
+                  : gap atau overlap dengan luas kurang dari nilai ini diampuni
+                  (tidak dihitung).
+                </>
+              )}
             </p>
           </div>
 

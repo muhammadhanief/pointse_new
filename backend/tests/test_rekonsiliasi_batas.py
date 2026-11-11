@@ -270,6 +270,17 @@ def test_pengaturan_luas_min_batas_bawaan_dan_simpan(sesi) -> None:
     assert pengaturan.baca_luas_min_batas(sesi) == 0.0
 
 
+def test_ringkasan_memuat_ambang_toleransi(sesi) -> None:
+    """Ringkasan yang dibaca semua peran memuat ambang toleransi yang berlaku."""
+    assert layanan.ringkasan_rekonsiliasi_batas(sesi)["luas_min_m2"] == 0.0
+
+    pengaturan.tulis_luas_min_batas(sesi, 1e-6, oleh="admin")
+    sesi.commit()
+    assert (
+        layanan.ringkasan_rekonsiliasi_batas(sesi)["luas_min_m2"] == 0.000001
+    )
+
+
 def test_jalankan_ulang_semua_batas_memakai_ambang_baru(tmp_path, sesi, setelan) -> None:
     """Periksa ulang semua pasangan hanya menyentuh pasangan yang petanya lengkap."""
     def _tulis_geojson(jalur, fitur_list):

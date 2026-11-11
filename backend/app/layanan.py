@@ -1587,12 +1587,14 @@ def ringkasan_rekonsiliasi_batas(
     Bila ``kdkab`` diisi (satu kode atau daftar kode kabupaten/kota), hanya
     menampilkan pasangan tetangga yang melibatkan salah satu kabupaten tersebut.
     """
+    from app import pengaturan as pengaturan_app
     from app import rekonsiliasi_batas
     from app.models import RekonsiliasiBatasPasang
 
     prov = (kdprov or "33").strip() or "33"
     himpunan_kab = _normalisasi_daftar_kdkab(prov, kdkab)
     himpunan_status = _normalisasi_daftar_status(status_filter)
+    luas_min_m2 = pengaturan_app.baca_luas_min_batas(sesi)
 
     runs_v = rekonsiliasi_batas.run_v_terakhir_per_kab(sesi, kdprov=prov)
     semua_pasang_db = {
@@ -1721,6 +1723,7 @@ def ringkasan_rekonsiliasi_batas(
         "total_gap": total_gap,
         "total_luas_overlap_m2": round(total_luas_overlap, 2),
         "total_luas_gap_m2": round(total_luas_gap, 2),
+        "luas_min_m2": luas_min_m2,
         "baris": baris,
     }
 
