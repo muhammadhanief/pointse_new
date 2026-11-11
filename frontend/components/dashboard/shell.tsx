@@ -97,6 +97,7 @@ const MENU: GrupMenu[] = [
       { href: "/anomali", label: "Pencermatan Titik", ikon: IkonAnomali },
       { href: "/geser", label: "Pergeseran Titik", ikon: IkonGeser },
       { href: "/hasil-validasi-sls", label: "Hasil Validasi SLS 2026 S1", ikon: IkonPengecekan },
+      { href: "/rekonsiliasi-batas", label: "Rekonsiliasi Batas Kab/Kota", ikon: IkonPengecekan },
     ],
   },
   {

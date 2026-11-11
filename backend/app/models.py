@@ -946,3 +946,83 @@ class KomunitasDukungan(Base):
     nama: Mapped[str] = mapped_column(String(128))
     kdkab: Mapped[str | None] = mapped_column(String(4))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+
+
+# Nilai status & jenis untuk modul Rekonsiliasi Batas Antar-Kabupaten/Kota
+STATUS_BATAS_CLEAN = "clean"
+STATUS_BATAS_BELUM_CLEAN = "belum_clean"
+STATUS_BATAS_GAGAL = "gagal"
+
+JENIS_BATAS_OVERLAP = "overlap"
+JENIS_BATAS_GAP = "gap"
+
+
+class RekonsiliasiBatasPasang(Base):
+    """Hasil pemeriksaan batas berpasangan antar dua kabupaten/kota bertetangga (run V).
+
+    Pasangan disimpan secara kanonik dengan ``kdkab_a < kdkab_b`` (4 digit, mis.
+    ``3301`` dan ``3302``). Berkas poligon QC disimpan di disk (``berkas_geojson``)
+    agar database bebas dari kolom geometri.
+    """
+
+    __tablename__ = "rekonsiliasi_batas_pasang"
+    __table_args__ = (
+        UniqueConstraint(
+            "kdkab_a", "kdkab_b", name="uq_rekonsiliasi_batas_pasang_kab"
+        ),
+        Index("ix_rekonsiliasi_batas_pasang_prov_status", "kdprov", "status"),
+        Index("ix_rekonsiliasi_batas_pasang_kab_a", "kdkab_a"),
+        Index("ix_rekonsiliasi_batas_pasang_kab_b", "kdkab_b"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kdprov: Mapped[str] = mapped_column(String(4))
+    kdkab_a: Mapped[str] = mapped_column(String(4))
+    kdkab_b: Mapped[str] = mapped_column(String(4))
+    run_a_id: Mapped[int | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL")
+    )
+    run_b_id: Mapped[int | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL")
+    )
+    #: ``clean``, ``belum_clean``, atau ``gagal``.
+    status: Mapped[str] = mapped_column(String(24), default=STATUS_BATAS_BELUM_CLEAN)
+    jumlah_overlap: Mapped[int] = mapped_column(Integer, default=0)
+    jumlah_gap: Mapped[int] = mapped_column(Integer, default=0)
+    total_luas_overlap_m2: Mapped[float] = mapped_column(Double, default=0.0)
+    total_luas_gap_m2: Mapped[float] = mapped_column(Double, default=0.0)
+    berkas_geojson: Mapped[str | None] = mapped_column(String(512))
+    pesan: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+
+
+class RekonsiliasiBatasTemuan(Base):
+    """Rincian tiap titik/area Gap atau Overlap pada satu pasangan perbatasan kab/kota."""
+
+    __tablename__ = "rekonsiliasi_batas_temuan"
+    __table_args__ = (
+        Index("ix_rekonsiliasi_batas_temuan_pasang_jenis", "pasang_id", "jenis"),
+    )
+
+    id: Mapped[int] = mapped_column(IdBesar, primary_key=True, autoincrement=True)
+    pasang_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("rekonsiliasi_batas_pasang.id", ondelete="CASCADE")
+    )
+    kdkab_a: Mapped[str] = mapped_column(String(4))
+    kdkab_b: Mapped[str] = mapped_column(String(4))
+    #: ``overlap`` atau ``gap``.
+    jenis: Mapped[str] = mapped_column(String(16))
+    #: ``sliver`` (< 1 m2), ``sedang`` (1 - 100 m2), ``besar`` (> 100 m2).
+    tingkat: Mapped[str] = mapped_column(String(16))
+    idsls_a: Mapped[str | None] = mapped_column(String(20))
+    idsubsls_a: Mapped[str | None] = mapped_column(String(20))
+    nmsls_a: Mapped[str | None] = mapped_column(String(128))
+    idsls_b: Mapped[str | None] = mapped_column(String(20))
+    idsubsls_b: Mapped[str | None] = mapped_column(String(20))
+    nmsls_b: Mapped[str | None] = mapped_column(String(128))
+    luas_m2: Mapped[float] = mapped_column(Double, default=0.0)
+    lat: Mapped[float] = mapped_column(Double)
+    lon: Mapped[float] = mapped_column(Double)
+    catatan: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=sekarang)
+

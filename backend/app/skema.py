@@ -989,3 +989,62 @@ class KomunitasRuleMasuk(BaseModel):
     status: str = Field(..., max_length=24)
     rule_target: str | None = Field(None, max_length=24)
     rule_catatan: str | None = Field(None, max_length=4000)
+
+
+class RekonsiliasiBatasPasangBarisOut(BaseModel):
+    """Satu baris pasangan kabupaten/kota bertetangga pada Rekonsiliasi Batas."""
+
+    kdkab_a: str
+    nmkab_a: str
+    kdkab_b: str
+    nmkab_b: str
+    run_a_id: int | None = None
+    run_b_id: int | None = None
+    tanggal_a: date | None = None
+    tanggal_b: date | None = None
+    status: str
+    jumlah_overlap: int = 0
+    jumlah_gap: int = 0
+    total_temuan: int = 0
+    total_luas_overlap_m2: float = 0.0
+    total_luas_gap_m2: float = 0.0
+    ada_geojson: bool = False
+    pesan: str | None = None
+    updated_at: datetime | None = None
+
+
+class RekonsiliasiBatasRingkasanOut(BaseModel):
+    """Ringkasan seluruh pasangan perbatasan kabupaten/kota."""
+
+    total_pasang: int
+    clean: int = 0
+    belum_clean: int = 0
+    menunggu_tetangga: int = 0
+    belum_unggah: int = 0
+    total_overlap: int = 0
+    total_gap: int = 0
+    baris: list[RekonsiliasiBatasPasangBarisOut] = Field(default_factory=list)
+
+
+class RekonsiliasiBatasTemuanOut(BaseModel):
+    """Satu rincian temuan Gap atau Overlap pada pasangan perbatasan."""
+
+    id: int
+    jenis: str
+    tingkat: str
+    idsls_a: str | None = None
+    idsubsls_a: str | None = None
+    nmsls_a: str | None = None
+    idsls_b: str | None = None
+    idsubsls_b: str | None = None
+    nmsls_b: str | None = None
+    luas_m2: float
+    lat: float
+    lon: float
+    catatan: str | None = None
+
+
+class RekonsiliasiBatasDetailOut(RekonsiliasiBatasPasangBarisOut):
+    """Detail satu pasangan perbatasan beserta daftar temuan Gap & Overlap."""
+
+    temuan: list[RekonsiliasiBatasTemuanOut] = Field(default_factory=list)

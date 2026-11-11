@@ -84,6 +84,8 @@ from app.skema import (
     ProgresBOut,
     RekapDetailOut,
     RekapOut,
+    RekonsiliasiBatasDetailOut,
+    RekonsiliasiBatasRingkasanOut,
     RingkasanKonfirmasiOut,
     RingkasanOut,
     RunDetailOut,
@@ -1036,6 +1038,94 @@ def ringkasan_validasi(
             ValidasiRingkasanBarisOut.model_validate(satu)
             for satu in layanan.ringkasan_validasi(sesi, kdprov=kdprov, kdkab=kdkab)
         ],
+    )
+
+
+def _pastikan_akses_pasang_batas(
+    pengguna: auth.Pengguna, kdkab_a: str, kdkab_b: str
+) -> tuple[str, str]:
+    """Pastikan pengguna berhak mengakses pasangan perbatasan ``(kdkab_a, kdkab_b)``."""
+    a = layanan.kode_kabupaten("33", kdkab_a)
+    b = layanan.kode_kabupaten("33", kdkab_b)
+    if pengguna.peran.kdkab is not None and pengguna.peran.kdkab not in (a, b):
+        raise HTTPException(
+            status_code=403,
+            detail=f"tidak berhak mengakses pasangan perbatasan {a} dan {b}",
+        )
+    auth.pastikan_akses(pengguna, "33", pengguna.peran.kdkab)
+    return a, b
+
+
+@router.get(
+    "/rekonsiliasi-batas/ringkasan",
+    response_model=RekonsiliasiBatasRingkasanOut,
+)
+def ringkasan_rekonsiliasi_batas(
+    kdprov: str | None = Query(None, description="Saring provinsi, mis. 33"),
+    kdkab: str | None = Query(
+        None,
+        description="Saring pasangan yang melibatkan kabupaten/kota ini, mis. 3302",
+    ),
+    status: str | None = Query(
+        None,
+        description="Saring status pasangan: clean, belum_clean, menunggu_tetangga, belum_unggah",
+    ),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> RekonsiliasiBatasRingkasanOut:
+    """Ringkasan 74 pasang perbatasan kabupaten/kota se-Jawa Tengah (run V)."""
+    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
+    hasil = layanan.ringkasan_rekonsiliasi_batas(
+        sesi, kdprov=kdprov, kdkab=kdkab, status_filter=status
+    )
+    return RekonsiliasiBatasRingkasanOut.model_validate(hasil)
+
+
+@router.get(
+    "/rekonsiliasi-batas/pasang/{kdkab_a}/{kdkab_b}",
+    response_model=RekonsiliasiBatasDetailOut,
+)
+def detail_rekonsiliasi_batas(
+    kdkab_a: str,
+    kdkab_b: str,
+    jenis: str | None = Query(None, description="Saring jenis: overlap atau gap"),
+    tingkat: str | None = Query(
+        None, description="Saring tingkat luas: sliver, sedang, atau besar"
+    ),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> RekonsiliasiBatasDetailOut:
+    """Rincian temuan Gap & Overlap untuk satu pasangan perbatasan kabupaten/kota."""
+    a, b = _pastikan_akses_pasang_batas(pengguna, kdkab_a, kdkab_b)
+    try:
+        hasil = layanan.detail_rekonsiliasi_batas(
+            sesi, a, b, jenis=jenis, tingkat=tingkat
+        )
+    except KesalahanPerubahan as galat:
+        raise HTTPException(status_code=404, detail=str(galat)) from galat
+    return RekonsiliasiBatasDetailOut.model_validate(hasil)
+
+
+@router.get(
+    "/rekonsiliasi-batas/pasang/{kdkab_a}/{kdkab_b}/geojson",
+    response_class=FileResponse,
+)
+def unduh_geojson_rekonsiliasi_batas(
+    kdkab_a: str,
+    kdkab_b: str,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> FileResponse:
+    """Unduh berkas GeoJSON poligon QC Batas (Gap & Overlap) untuk dibuka di QGIS."""
+    a, b = _pastikan_akses_pasang_batas(pengguna, kdkab_a, kdkab_b)
+    try:
+        jalur, nama = layanan.jalur_unduh_geojson_batas(sesi, a, b)
+    except FileNotFoundError as galat:
+        raise HTTPException(status_code=404, detail=str(galat)) from galat
+    return FileResponse(
+        jalur,
+        media_type="application/geo+json",
+        filename=nama,
     )
 
 

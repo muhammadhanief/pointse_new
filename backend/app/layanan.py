@@ -1528,6 +1528,278 @@ def ringkasan_validasi(
     return [keluaran[kode] for kode in sorted(keluaran)]
 
 
+# ------------------------------------------------------- rekonsiliasi batas kab/kota
+
+
+def ringkasan_rekonsiliasi_batas(
+    sesi: Session,
+    *,
+    kdprov: str | None = None,
+    kdkab: str | None = None,
+    status_filter: str | None = None,
+) -> dict[str, object]:
+    """Ringkasan 74 pasang perbatasan kabupaten/kota se-Jawa Tengah (run V).
+
+    Bila ``kdkab`` diisi (mis. akun Kabupaten/Kota atau filter dropdown), hanya
+    menampilkan pasangan tetangga yang melibatkan kabupaten tersebut.
+    """
+    from app import rekonsiliasi_batas
+    from app.models import RekonsiliasiBatasPasang
+
+    prov = (kdprov or "33").strip() or "33"
+    kode_saring = kode_kabupaten(prov, kdkab) if kdkab else None
+
+    runs_v = rekonsiliasi_batas.run_v_terakhir_per_kab(sesi, kdprov=prov)
+    semua_pasang_db = {
+        (p.kdkab_a, p.kdkab_b): p
+        for p in sesi.scalars(
+            select(RekonsiliasiBatasPasang).where(
+                RekonsiliasiBatasPasang.kdprov == prov
+            )
+        ).all()
+    }
+
+    daftar_kandidat = [
+        (a, b)
+        for a, b in rekonsiliasi_batas.PASANGAN_TETANGGA_33
+        if kode_saring is None or a == kode_saring or b == kode_saring
+    ]
+
+    baris: list[dict[str, object]] = []
+    jml_clean = 0
+    jml_belum_clean = 0
+    jml_menunggu = 0
+    jml_belum_unggah = 0
+    total_overlap = 0
+    total_gap = 0
+
+    for a, b in daftar_kandidat:
+        run_a = runs_v.get(a)
+        run_b = runs_v.get(b)
+        row_db = semua_pasang_db.get((a, b))
+
+        if row_db is not None:
+            st = str(row_db.status)
+            ov = int(row_db.jumlah_overlap or 0)
+            gp = int(row_db.jumlah_gap or 0)
+            luas_ov = float(row_db.total_luas_overlap_m2 or 0.0)
+            luas_gp = float(row_db.total_luas_gap_m2 or 0.0)
+            ada_geo = bool(
+                row_db.berkas_geojson and Path(row_db.berkas_geojson).is_file()
+            )
+            diperbarui = row_db.updated_at
+            pesan = row_db.pesan
+        elif run_a is not None and run_b is not None:
+            st = "menunggu_tetangga"
+            ov = 0
+            gp = 0
+            luas_ov = 0.0
+            luas_gp = 0.0
+            ada_geo = False
+            diperbarui = None
+            pesan = "Kedua kabupaten sudah mengunggah peta V; menunggu hitung rekonsiliasi."
+        elif run_a is not None or run_b is not None:
+            st = "menunggu_tetangga"
+            ov = 0
+            gp = 0
+            luas_ov = 0.0
+            luas_gp = 0.0
+            ada_geo = False
+            diperbarui = None
+            kurang = b if run_a is not None else a
+            nama_kurang = NAMA_KABUPATEN_33.get(kurang, kurang)
+            pesan = f"Menunggu unggahan peta Validasi SLS dari {kurang} ({nama_kurang})."
+        else:
+            st = "belum_unggah"
+            ov = 0
+            gp = 0
+            luas_ov = 0.0
+            luas_gp = 0.0
+            ada_geo = False
+            diperbarui = None
+            pesan = "Kedua kabupaten/kota belum mengunggah peta Validasi SLS."
+
+        if st == "clean":
+            jml_clean += 1
+        elif st == "belum_clean":
+            jml_belum_clean += 1
+        elif st == "menunggu_tetangga":
+            jml_menunggu += 1
+        else:
+            jml_belum_unggah += 1
+
+        total_overlap += ov
+        total_gap += gp
+
+        if status_filter and status_filter != st:
+            continue
+
+        baris.append(
+            {
+                "kdkab_a": a,
+                "nmkab_a": NAMA_KABUPATEN_33.get(a, a),
+                "kdkab_b": b,
+                "nmkab_b": NAMA_KABUPATEN_33.get(b, b),
+                "run_a_id": run_a.id if run_a is not None else None,
+                "run_b_id": run_b.id if run_b is not None else None,
+                "tanggal_a": run_a.tanggal_data if run_a is not None else None,
+                "tanggal_b": run_b.tanggal_data if run_b is not None else None,
+                "status": st,
+                "jumlah_overlap": ov,
+                "jumlah_gap": gp,
+                "total_temuan": ov + gp,
+                "total_luas_overlap_m2": round(luas_ov, 2),
+                "total_luas_gap_m2": round(luas_gp, 2),
+                "ada_geojson": ada_geo,
+                "pesan": pesan,
+                "updated_at": diperbarui,
+            }
+        )
+
+    return {
+        "total_pasang": len(daftar_kandidat),
+        "clean": jml_clean,
+        "belum_clean": jml_belum_clean,
+        "menunggu_tetangga": jml_menunggu,
+        "belum_unggah": jml_belum_unggah,
+        "total_overlap": total_overlap,
+        "total_gap": total_gap,
+        "baris": baris,
+    }
+
+
+def detail_rekonsiliasi_batas(
+    sesi: Session,
+    kdkab_1: str,
+    kdkab_2: str,
+    *,
+    jenis: str | None = None,
+    tingkat: str | None = None,
+) -> dict[str, object]:
+    """Rincian temuan Gap & Overlap untuk satu pasangan perbatasan ``(kdkab_a, kdkab_b)``."""
+    from app import rekonsiliasi_batas
+    from app.models import RekonsiliasiBatasPasang, RekonsiliasiBatasTemuan
+
+    a = kode_kabupaten("33", kdkab_1)
+    b = kode_kabupaten("33", kdkab_2)
+    a, b = rekonsiliasi_batas.pasangan_kanonik(a, b)
+    if (a, b) not in rekonsiliasi_batas.PASANGAN_TETANGGA_33:
+        raise KesalahanPerubahan(f"Pasangan {a} dan {b} bukan tetangga perbatasan langsung.")
+
+    runs_v = rekonsiliasi_batas.run_v_terakhir_per_kab(sesi, kdprov="33")
+    run_a = runs_v.get(a)
+    run_b = runs_v.get(b)
+
+    pasang = sesi.scalars(
+        select(RekonsiliasiBatasPasang).where(
+            RekonsiliasiBatasPasang.kdkab_a == a,
+            RekonsiliasiBatasPasang.kdkab_b == b,
+        )
+    ).first()
+
+    if pasang is None:
+        st = (
+            "menunggu_tetangga"
+            if (run_a is not None or run_b is not None)
+            else "belum_unggah"
+        )
+        return {
+            "kdkab_a": a,
+            "nmkab_a": NAMA_KABUPATEN_33.get(a, a),
+            "kdkab_b": b,
+            "nmkab_b": NAMA_KABUPATEN_33.get(b, b),
+            "run_a_id": run_a.id if run_a is not None else None,
+            "run_b_id": run_b.id if run_b is not None else None,
+            "tanggal_a": run_a.tanggal_data if run_a is not None else None,
+            "tanggal_b": run_b.tanggal_data if run_b is not None else None,
+            "status": st,
+            "jumlah_overlap": 0,
+            "jumlah_gap": 0,
+            "total_temuan": 0,
+            "total_luas_overlap_m2": 0.0,
+            "total_luas_gap_m2": 0.0,
+            "ada_geojson": False,
+            "pesan": "Pemeriksaan batas belum dapat dijalankan karena salah satu/kedua kabupaten belum mengunggah peta V.",
+            "updated_at": None,
+            "temuan": [],
+        }
+
+    saring_temuan: list[object] = [RekonsiliasiBatasTemuan.pasang_id == pasang.id]
+    if jenis:
+        saring_temuan.append(RekonsiliasiBatasTemuan.jenis == jenis.strip().lower())
+    if tingkat:
+        saring_temuan.append(RekonsiliasiBatasTemuan.tingkat == tingkat.strip().lower())
+
+    daftar_temuan = sesi.scalars(
+        select(RekonsiliasiBatasTemuan)
+        .where(*saring_temuan)
+        .order_by(RekonsiliasiBatasTemuan.luas_m2.desc(), RekonsiliasiBatasTemuan.id.asc())
+    ).all()
+
+    ada_geo = bool(pasang.berkas_geojson and Path(pasang.berkas_geojson).is_file())
+    return {
+        "kdkab_a": a,
+        "nmkab_a": NAMA_KABUPATEN_33.get(a, a),
+        "kdkab_b": b,
+        "nmkab_b": NAMA_KABUPATEN_33.get(b, b),
+        "run_a_id": pasang.run_a_id or (run_a.id if run_a is not None else None),
+        "run_b_id": pasang.run_b_id or (run_b.id if run_b is not None else None),
+        "tanggal_a": run_a.tanggal_data if run_a is not None else None,
+        "tanggal_b": run_b.tanggal_data if run_b is not None else None,
+        "status": pasang.status,
+        "jumlah_overlap": int(pasang.jumlah_overlap or 0),
+        "jumlah_gap": int(pasang.jumlah_gap or 0),
+        "total_temuan": int(pasang.jumlah_overlap or 0) + int(pasang.jumlah_gap or 0),
+        "total_luas_overlap_m2": round(float(pasang.total_luas_overlap_m2 or 0.0), 2),
+        "total_luas_gap_m2": round(float(pasang.total_luas_gap_m2 or 0.0), 2),
+        "ada_geojson": ada_geo,
+        "pesan": pasang.pesan,
+        "updated_at": pasang.updated_at,
+        "temuan": [
+            {
+                "id": t.id,
+                "jenis": t.jenis,
+                "tingkat": t.tingkat,
+                "idsls_a": t.idsls_a,
+                "idsubsls_a": t.idsubsls_a,
+                "nmsls_a": t.nmsls_a,
+                "idsls_b": t.idsls_b,
+                "idsubsls_b": t.idsubsls_b,
+                "nmsls_b": t.nmsls_b,
+                "luas_m2": round(float(t.luas_m2 or 0.0), 4),
+                "lat": float(t.lat),
+                "lon": float(t.lon),
+                "catatan": t.catatan,
+            }
+            for t in daftar_temuan
+        ],
+    }
+
+
+def jalur_unduh_geojson_batas(
+    sesi: Session, kdkab_1: str, kdkab_2: str
+) -> tuple[Path, str]:
+    """Ambil jalur berkas GeoJSON QC Batas di disk untuk pasangan ``(kdkab_a, kdkab_b)``."""
+    from app import rekonsiliasi_batas
+    from app.models import RekonsiliasiBatasPasang
+
+    a = kode_kabupaten("33", kdkab_1)
+    b = kode_kabupaten("33", kdkab_2)
+    a, b = rekonsiliasi_batas.pasangan_kanonik(a, b)
+    pasang = sesi.scalars(
+        select(RekonsiliasiBatasPasang).where(
+            RekonsiliasiBatasPasang.kdkab_a == a,
+            RekonsiliasiBatasPasang.kdkab_b == b,
+        )
+    ).first()
+    if pasang is None or not pasang.berkas_geojson:
+        raise FileNotFoundError(f"Berkas GeoJSON QC Batas {a}-{b} belum tersedia.")
+    jalur = Path(pasang.berkas_geojson)
+    if not jalur.is_file():
+        raise FileNotFoundError(f"Berkas GeoJSON QC Batas {a}-{b} tidak ditemukan di disk.")
+    return jalur, f"QC_Batas_{a}_{b}.geojson"
+
+
 # --------------------------------------------------------------------------- rekap
 
 

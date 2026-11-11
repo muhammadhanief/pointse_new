@@ -1096,6 +1096,10 @@ def simpan_fase_akhir_v(sesi: Session, run: Run, hasil: tuple[int, str, bool]) -
     run.detail_tersedia = 0
     sesi.commit()
 
+    from app import rekonsiliasi_batas
+
+    rekonsiliasi_batas.perbarui_batas_untuk_run_v(sesi, run)
+
 
 def bersihkan_hasil(sesi: Session, run_id: int) -> None:
     """Buang sisa hasil/rekap satu job (job diulang atau gagal di tengah jalan)."""

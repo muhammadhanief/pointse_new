@@ -600,3 +600,60 @@ export type DaftarKomunitasTopik = {
   jadi_rule: number;
   baris: KomunitasTopik[];
 };
+
+export type StatusRekonsiliasiBatas =
+  | "clean"
+  | "belum_clean"
+  | "menunggu_tetangga"
+  | "belum_unggah";
+
+export type RekonsiliasiBatasPasangBaris = {
+  kdkab_a: string;
+  nmkab_a: string;
+  kdkab_b: string;
+  nmkab_b: string;
+  run_a_id: number | null;
+  run_b_id: number | null;
+  tanggal_a: string | null;
+  tanggal_b: string | null;
+  status: StatusRekonsiliasiBatas | string;
+  jumlah_overlap: number;
+  jumlah_gap: number;
+  total_temuan: number;
+  total_luas_overlap_m2: number;
+  total_luas_gap_m2: number;
+  ada_geojson: boolean;
+  pesan: string | null;
+  updated_at: string | null;
+};
+
+export type RekonsiliasiBatasRingkasan = {
+  total_pasang: number;
+  clean: number;
+  belum_clean: number;
+  menunggu_tetangga: number;
+  belum_unggah: number;
+  total_overlap: number;
+  total_gap: number;
+  baris: RekonsiliasiBatasPasangBaris[];
+};
+
+export type RekonsiliasiBatasTemuan = {
+  id: number;
+  jenis: "overlap" | "gap" | string;
+  tingkat: "sliver" | "sedang" | "besar" | string;
+  idsls_a: string | null;
+  idsubsls_a: string | null;
+  nmsls_a: string | null;
+  idsls_b: string | null;
+  idsubsls_b: string | null;
+  nmsls_b: string | null;
+  luas_m2: number;
+  lat: number;
+  lon: number;
+  catatan: string | null;
+};
+
+export type RekonsiliasiBatasDetail = RekonsiliasiBatasPasangBaris & {
+  temuan: RekonsiliasiBatasTemuan[];
+};

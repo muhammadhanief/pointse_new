@@ -1,0 +1,816 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { EmptyState, Panel, TombolAksi } from "@/components/dashboard/ui";
+import {
+  adalahBatal,
+  ambilJson,
+  pesanKesalahan,
+  unduhBerkas,
+} from "@/lib/api/klien";
+import type {
+  RekonsiliasiBatasDetail,
+  RekonsiliasiBatasPasangBaris,
+  RekonsiliasiBatasRingkasan,
+} from "@/lib/api/types";
+import { PERAN_ADMIN_PROVINSI, kodeWilayah } from "@/lib/auth/peran";
+import { formatAngka, formatTanggal, formatWaktu } from "@/lib/format";
+import { daftarKabupaten } from "@/lib/wilayah/kabupaten";
+
+const INTERVAL_MUAT_ULANG = 20000;
+
+function formatLuas(luas: number): string {
+  if (luas <= 0) {
+    return "0";
+  }
+  if (luas < 0.01) {
+    return "< 0,01";
+  }
+  return luas.toLocaleString("id-ID", {
+    minimumFractionDigits: luas < 10 ? 2 : 1,
+    maximumFractionDigits: 2,
+  });
+}
+
+function BadgeStatusBatas({ status }: { status: string }) {
+  switch (status) {
+    case "clean":
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-ok-soft px-2.5 py-0.5 text-xs font-semibold text-ok">
+          <span className="h-1.5 w-1.5 rounded-full bg-ok" />
+          Clean
+        </span>
+      );
+    case "belum_clean":
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-danger-soft px-2.5 py-0.5 text-xs font-semibold text-danger">
+          <span className="h-1.5 w-1.5 rounded-full bg-danger" />
+          Belum Clean
+        </span>
+      );
+    case "menunggu_tetangga":
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-warn-soft px-2.5 py-0.5 text-xs font-semibold text-warn">
+          <span className="h-1.5 w-1.5 rounded-full bg-warn" />
+          Menunggu Tetangga
+        </span>
+      );
+    default:
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-muted px-2.5 py-0.5 text-xs font-medium text-ink-muted">
+          <span className="h-1.5 w-1.5 rounded-full bg-ink-subtle" />
+          Belum Unggah
+        </span>
+      );
+  }
+}
+
+function BadgeTingkat({ tingkat }: { tingkat: string }) {
+  switch (tingkat) {
+    case "besar":
+      return (
+        <span className="inline-flex rounded bg-danger-soft px-2 py-0.5 text-[11px] font-semibold text-danger">
+          Besar (&gt;100 m²)
+        </span>
+      );
+    case "sedang":
+      return (
+        <span className="inline-flex rounded bg-warn-soft px-2 py-0.5 text-[11px] font-semibold text-warn">
+          Sedang (1–100 m²)
+        </span>
+      );
+    default:
+      return (
+        <span className="inline-flex rounded bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-ink-muted">
+          Sliver (&lt;1 m²)
+        </span>
+      );
+  }
+}
+
+export function RekonsiliasiBatasClient({
+  kdprov,
+  kdkab,
+  peran,
+}: {
+  kdprov: string;
+  kdkab: string | null;
+  peran: string;
+}) {
+  const adalahAdminProv = peran === PERAN_ADMIN_PROVINSI || !kdkab;
+  const kodeKabPengguna = kdkab ? kodeWilayah(kdprov, kdkab) : null;
+
+  const [ringkasan, setRingkasan] = useState<RekonsiliasiBatasRingkasan | null>(
+    null,
+  );
+  const [memuat, setMemuat] = useState(true);
+  const [galat, setGalat] = useState<string | null>(null);
+  const [diperbarui, setDiperbarui] = useState<string | null>(null);
+
+  const [filterKab, setFilterKab] = useState<string>(kodeKabPengguna ?? "");
+  const [filterStatus, setFilterStatus] = useState<string>("semua");
+  const [kataKunci, setKataKunci] = useState<string>("");
+  const [sedangUnduh, setSedangUnduh] = useState<string | null>(null);
+
+  // State modal rincian pasangan
+  const [pasangAktif, setPasangAktif] = useState<{
+    kdkab_a: string;
+    kdkab_b: string;
+  } | null>(null);
+  const [detailPasang, setDetailPasang] =
+    useState<RekonsiliasiBatasDetail | null>(null);
+  const [memuatDetail, setMemuatDetail] = useState(false);
+  const [galatDetail, setGalatDetail] = useState<string | null>(null);
+  const [filterJenisDetail, setFilterJenisDetail] = useState<string>("semua");
+  const [filterTingkatDetail, setFilterTingkatDetail] =
+    useState<string>("semua");
+  const [koordinatDisalin, setKoordinatDisalin] = useState<number | null>(null);
+
+  const controllerRef = useRef<AbortController | null>(null);
+
+  const muatRingkasan = useCallback(
+    (kdkabSaring: string) => {
+      controllerRef.current?.abort();
+      const controller = new AbortController();
+      controllerRef.current = controller;
+
+      const params = new URLSearchParams();
+      if (adalahAdminProv && kdkabSaring) {
+        params.set("kdkab", kdkabSaring);
+      }
+      const qs = params.toString();
+      const url = `/rekonsiliasi-batas/ringkasan${qs ? `?${qs}` : ""}`;
+
+      ambilJson<RekonsiliasiBatasRingkasan>(url, {
+        signal: controller.signal,
+      })
+        .then((hasil) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          setRingkasan(hasil);
+          setGalat(null);
+          setDiperbarui(formatWaktu(new Date().toISOString()));
+        })
+        .catch((err: unknown) => {
+          if (!adalahBatal(err)) {
+            setGalat(pesanKesalahan(err));
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setMemuat(false);
+          }
+        });
+    },
+    [adalahAdminProv],
+  );
+
+  useEffect(() => {
+    muatRingkasan(filterKab);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        muatRingkasan(filterKab);
+      }
+    }, INTERVAL_MUAT_ULANG);
+    return () => {
+      window.clearInterval(interval);
+      controllerRef.current?.abort();
+    };
+  }, [muatRingkasan, filterKab]);
+
+  const bukaRincian = useCallback(async (kdkabA: string, kdkabB: string) => {
+    setPasangAktif({ kdkab_a: kdkabA, kdkab_b: kdkabB });
+    setFilterJenisDetail("semua");
+    setFilterTingkatDetail("semua");
+    setMemuatDetail(true);
+    setGalatDetail(null);
+    try {
+      const hasil = await ambilJson<RekonsiliasiBatasDetail>(
+        `/rekonsiliasi-batas/pasang/${kdkabA}/${kdkabB}`,
+      );
+      setDetailPasang(hasil);
+    } catch (err) {
+      setGalatDetail(pesanKesalahan(err));
+    } finally {
+      setMemuatDetail(false);
+    }
+  }, []);
+
+  async function handleUnduhGeojson(kdkabA: string, kdkabB: string) {
+    const kunci = `${kdkabA}_${kdkabB}`;
+    setSedangUnduh(kunci);
+    try {
+      await unduhBerkas(
+        `/rekonsiliasi-batas/pasang/${kdkabA}/${kdkabB}/geojson`,
+        `QC_Batas_${kdkabA}_${kdkabB}.geojson`,
+      );
+    } catch (err) {
+      setGalat(pesanKesalahan(err));
+    } finally {
+      setSedangUnduh(null);
+    }
+  }
+
+  function salinKoordinat(id: number, lat: number, lon: number) {
+    const teks = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+    void navigator.clipboard?.writeText(teks);
+    setKoordinatDisalin(id);
+    window.setTimeout(() => {
+      setKoordinatDisalin((sebelumnya) => (sebelumnya === id ? null : sebelumnya));
+    }, 1800);
+  }
+
+  const daftarBarisTersaring = useMemo(() => {
+    const semua = ringkasan?.baris ?? [];
+    const cari = kataKunci.trim().toLowerCase();
+    return semua.filter((b) => {
+      if (filterStatus !== "semua" && b.status !== filterStatus) {
+        return false;
+      }
+      if (cari) {
+        const gabungan =
+          `${b.kdkab_a} ${b.nmkab_a} ${b.kdkab_b} ${b.nmkab_b}`.toLowerCase();
+        if (!gabungan.includes(cari)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [ringkasan, filterStatus, kataKunci]);
+
+  const temuanDetailTersaring = useMemo(() => {
+    const semua = detailPasang?.temuan ?? [];
+    return semua.filter((t) => {
+      if (filterJenisDetail !== "semua" && t.jenis !== filterJenisDetail) {
+        return false;
+      }
+      if (filterTingkatDetail !== "semua" && t.tingkat !== filterTingkatDetail) {
+        return false;
+      }
+      return true;
+    });
+  }, [detailPasang, filterJenisDetail, filterTingkatDetail]);
+
+  const semuaKab = useMemo(() => daftarKabupaten(kdprov), [kdprov]);
+
+  const totalPasang = ringkasan?.total_pasang ?? 0;
+  const jmlClean = ringkasan?.clean ?? 0;
+  const jmlBelumClean = ringkasan?.belum_clean ?? 0;
+  const jmlMenunggu = ringkasan?.menunggu_tetangga ?? 0;
+  const jmlBelumUnggah = ringkasan?.belum_unggah ?? 0;
+  const persenClean =
+    totalPasang > 0 ? Math.round((jmlClean / totalPasang) * 100) : 0;
+
+  return (
+    <div className="space-y-field">
+      {/* Pita Ringkasan & Progres Pasangan Perbatasan */}
+      <Panel>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-baseline gap-2.5">
+              <span className="font-mono text-2xl font-bold tabular-nums text-ink">
+                {formatAngka(jmlClean)} / {formatAngka(totalPasang)}
+              </span>
+              <span className="text-sm font-semibold text-ink">
+                pasang perbatasan berstatus Clean ({persenClean}%)
+              </span>
+            </div>
+            <p className="text-xs text-ink-muted">
+              Sabuk pemeriksaan ≤ 220 meter antar-kabupaten/kota bertetangga
+              otomatis diperbarui setiap kali run Validasi SLS (2026 S1) selesai
+              diproses.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <div className="rounded-lg border border-hairline bg-surface-muted/60 px-3 py-2">
+              <span className="text-ink-muted">Total Overlap: </span>
+              <span className="font-mono font-semibold tabular-nums text-danger">
+                {formatAngka(ringkasan?.total_overlap ?? 0)}
+              </span>
+            </div>
+            <div className="rounded-lg border border-hairline bg-surface-muted/60 px-3 py-2">
+              <span className="text-ink-muted">Total Gap: </span>
+              <span className="font-mono font-semibold tabular-nums text-warn">
+                {formatAngka(ringkasan?.total_gap ?? 0)}
+              </span>
+            </div>
+            <TombolAksi
+              varian="sekunder"
+              onClick={() => {
+                setMemuat(true);
+                setGalat(null);
+                void muatRingkasan(filterKab);
+              }}
+              disabled={memuat}
+            >
+              {memuat ? "Memuat..." : "Segarkan"}
+            </TombolAksi>
+          </div>
+        </div>
+
+        {/* Bar Progres Komposisi Status */}
+        {totalPasang > 0 && (
+          <div className="mt-4">
+            <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-muted">
+              {jmlClean > 0 && (
+                <div
+                  className="bg-ok transition-all"
+                  style={{ width: `${(jmlClean / totalPasang) * 100}%` }}
+                  title={`Clean: ${jmlClean} pasang`}
+                />
+              )}
+              {jmlBelumClean > 0 && (
+                <div
+                  className="bg-danger transition-all"
+                  style={{ width: `${(jmlBelumClean / totalPasang) * 100}%` }}
+                  title={`Belum Clean: ${jmlBelumClean} pasang`}
+                />
+              )}
+              {jmlMenunggu > 0 && (
+                <div
+                  className="bg-warn transition-all"
+                  style={{ width: `${(jmlMenunggu / totalPasang) * 100}%` }}
+                  title={`Menunggu Tetangga: ${jmlMenunggu} pasang`}
+                />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Filter Status & Wilayah */}
+        <div className="mt-4 flex flex-col gap-3 border-t border-hairline pt-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[
+              { id: "semua", label: "Semua Pasangan", nilai: totalPasang },
+              { id: "belum_clean", label: "Belum Clean", nilai: jmlBelumClean },
+              { id: "clean", label: "Clean", nilai: jmlClean },
+              {
+                id: "menunggu_tetangga",
+                label: "Menunggu Tetangga",
+                nilai: jmlMenunggu,
+              },
+              {
+                id: "belum_unggah",
+                label: "Belum Unggah",
+                nilai: jmlBelumUnggah,
+              },
+            ].map((tab) => {
+              const aktif = filterStatus === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setFilterStatus(tab.id)}
+                  className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                    aktif
+                      ? "bg-brand text-white"
+                      : "bg-surface-muted text-ink hover:bg-brand-soft hover:text-brand-strong"
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    className={`rounded-full px-1.5 py-0.2 font-mono text-[11px] tabular-nums ${
+                      aktif
+                        ? "bg-white/20 text-white"
+                        : "bg-surface text-ink-muted"
+                    }`}
+                  >
+                    {tab.nilai}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {adalahAdminProv && (
+              <select
+                aria-label="Saring Kabupaten/Kota"
+                value={filterKab}
+                onChange={(e) => setFilterKab(e.target.value)}
+                className="min-h-9 rounded-lg border border-hairline bg-surface px-3 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
+              >
+                <option value="">Seluruh Kab/Kota (74 pasang)</option>
+                {semuaKab.map((k) => (
+                  <option key={k.kode} value={k.kode}>
+                    [{k.kode}] {k.nama}
+                  </option>
+                ))}
+              </select>
+            )}
+            <input
+              type="search"
+              value={kataKunci}
+              onChange={(e) => setKataKunci(e.target.value)}
+              placeholder="Cari nama/kode kab..."
+              className="min-h-9 rounded-lg border border-hairline bg-surface px-3 py-1.5 text-xs text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none"
+            />
+          </div>
+        </div>
+      </Panel>
+
+      {galat && (
+        <div
+          role="alert"
+          className="rounded-lg border border-danger/30 bg-danger-soft px-4 py-3 text-xs text-danger"
+        >
+          {galat}
+        </div>
+      )}
+
+      {/* Daftar Pasangan Perbatasan */}
+      <Panel
+        judul="Daftar Pasangan Perbatasan Kabupaten/Kota"
+        deskripsi={
+          diperbarui
+            ? `Menampilkan ${daftarBarisTersaring.length} pasangan • Diperbarui ${diperbarui}`
+            : `Menampilkan ${daftarBarisTersaring.length} pasangan`
+        }
+      >
+        {memuat && !ringkasan ? (
+          <p className="py-8 text-center text-xs text-ink-muted">
+            Memuat data rekonsiliasi batas...
+          </p>
+        ) : daftarBarisTersaring.length === 0 ? (
+          <EmptyState judul="Tidak ada pasangan perbatasan yang cocok">
+            Ubah saringan status atau kata kunci pencarian untuk melihat
+            pasangan perbatasan lainnya.
+          </EmptyState>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-xs">
+              <thead>
+                <tr className="border-b border-hairline bg-surface-muted/60 text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                  <th className="px-3 py-2.5">Wilayah A</th>
+                  <th className="px-3 py-2.5">Wilayah B (Tetangga)</th>
+                  <th className="px-3 py-2.5">Status Batas</th>
+                  <th className="px-3 py-2.5 text-right">Overlap</th>
+                  <th className="px-3 py-2.5 text-right">Gap (Celah)</th>
+                  <th className="px-3 py-2.5 text-right">Aksi &amp; Berkas QC</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-hairline">
+                {daftarBarisTersaring.map((baris: RekonsiliasiBatasPasangBaris) => {
+                  const kunci = `${baris.kdkab_a}_${baris.kdkab_b}`;
+                  const sudahDihitung =
+                    baris.status === "clean" || baris.status === "belum_clean";
+                  return (
+                    <tr
+                      key={kunci}
+                      className="transition-colors hover:bg-surface-muted/40"
+                    >
+                      <td className="px-3 py-3 align-top">
+                        <div className="flex items-center gap-1.5">
+                          <span className="rounded bg-surface-muted px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-ink">
+                            {baris.kdkab_a}
+                          </span>
+                          <span className="font-medium text-ink">
+                            {baris.nmkab_a}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-ink-muted">
+                          {baris.run_a_id ? (
+                            <span>
+                              Run #{baris.run_a_id} •{" "}
+                              {formatTanggal(baris.tanggal_a)}
+                            </span>
+                          ) : (
+                            <span className="text-warn">
+                              Belum unggah peta V
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="px-3 py-3 align-top">
+                        <div className="flex items-center gap-1.5">
+                          <span className="rounded bg-surface-muted px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-ink">
+                            {baris.kdkab_b}
+                          </span>
+                          <span className="font-medium text-ink">
+                            {baris.nmkab_b}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-ink-muted">
+                          {baris.run_b_id ? (
+                            <span>
+                              Run #{baris.run_b_id} •{" "}
+                              {formatTanggal(baris.tanggal_b)}
+                            </span>
+                          ) : (
+                            <span className="text-warn">
+                              Belum unggah peta V
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="px-3 py-3 align-top">
+                        <BadgeStatusBatas status={baris.status} />
+                        {baris.pesan && !sudahDihitung && (
+                          <p className="mt-1 max-w-xs text-[11px] text-ink-muted">
+                            {baris.pesan}
+                          </p>
+                        )}
+                      </td>
+
+                      <td className="px-3 py-3 align-top text-right font-mono tabular-nums">
+                        {sudahDihitung ? (
+                          <div>
+                            <span
+                              className={
+                                baris.jumlah_overlap > 0
+                                  ? "font-bold text-danger"
+                                  : "text-ink-muted"
+                              }
+                            >
+                              {formatAngka(baris.jumlah_overlap)} titik
+                            </span>
+                            {baris.jumlah_overlap > 0 && (
+                              <div className="text-[11px] text-ink-muted">
+                                {formatLuas(baris.total_luas_overlap_m2)} m²
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-ink-subtle">—</span>
+                        )}
+                      </td>
+
+                      <td className="px-3 py-3 align-top text-right font-mono tabular-nums">
+                        {sudahDihitung ? (
+                          <div>
+                            <span
+                              className={
+                                baris.jumlah_gap > 0
+                                  ? "font-bold text-warn"
+                                  : "text-ink-muted"
+                              }
+                            >
+                              {formatAngka(baris.jumlah_gap)} titik
+                            </span>
+                            {baris.jumlah_gap > 0 && (
+                              <div className="text-[11px] text-ink-muted">
+                                {formatLuas(baris.total_luas_gap_m2)} m²
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-ink-subtle">—</span>
+                        )}
+                      </td>
+
+                      <td className="px-3 py-3 align-top text-right">
+                        <div className="inline-flex flex-wrap justify-end gap-1.5">
+                          {sudahDihitung && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void bukaRincian(baris.kdkab_a, baris.kdkab_b)
+                              }
+                              className="inline-flex min-h-9 items-center rounded-lg border border-hairline bg-surface px-2.5 py-1 text-xs font-medium text-ink transition-colors hover:bg-surface-muted"
+                            >
+                              Rincian SLS ({formatAngka(baris.total_temuan)})
+                            </button>
+                          )}
+                          {baris.ada_geojson && baris.total_temuan > 0 && (
+                            <button
+                              type="button"
+                              disabled={sedangUnduh === kunci}
+                              onClick={() =>
+                                void handleUnduhGeojson(
+                                  baris.kdkab_a,
+                                  baris.kdkab_b,
+                                )
+                              }
+                              className="inline-flex min-h-9 items-center rounded-lg bg-brand px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-brand-strong disabled:opacity-50"
+                            >
+                              {sedangUnduh === kunci
+                                ? "Mengunduh..."
+                                : "Unduh GeoJSON QC"}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+
+      {/* Modal Rincian Temuan Pasangan Perbatasan */}
+      {pasangAktif && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="judul-modal-rekonsiliasi"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-3 sm:p-6"
+        >
+          <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-hairline bg-surface shadow-xl">
+            {/* Header Modal */}
+            <div className="flex items-start justify-between gap-4 border-b border-hairline px-5 py-4">
+              <div>
+                <h2
+                  id="judul-modal-rekonsiliasi"
+                  className="text-sm font-bold text-ink sm:text-base"
+                >
+                  Rincian Batas:{" "}
+                  {detailPasang
+                    ? `[${detailPasang.kdkab_a}] ${detailPasang.nmkab_a} ↔ [${detailPasang.kdkab_b}] ${detailPasang.nmkab_b}`
+                    : `${pasangAktif.kdkab_a} ↔ ${pasangAktif.kdkab_b}`}
+                </h2>
+                <p className="mt-0.5 text-xs text-ink-muted">
+                  Daftar poligon SLS yang bersinggungan pada titik Overlap
+                  maupun Celah Kosong (Gap) di sepanjang sabuk perbatasan.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {detailPasang?.ada_geojson && detailPasang.total_temuan > 0 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void handleUnduhGeojson(
+                        pasangAktif.kdkab_a,
+                        pasangAktif.kdkab_b,
+                      )
+                    }
+                    className="inline-flex min-h-9 items-center rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-strong"
+                  >
+                    Unduh GeoJSON QC
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPasangAktif(null);
+                    setDetailPasang(null);
+                  }}
+                  className="inline-flex min-h-9 items-center rounded-lg border border-hairline bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-surface-muted"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+
+            {/* Filter Rincian */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline bg-surface-muted/40 px-5 py-2.5 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-ink-muted">Jenis:</span>
+                {[
+                  { id: "semua", label: "Semua" },
+                  { id: "overlap", label: "Overlap" },
+                  { id: "gap", label: "Gap (Celah)" },
+                ].map((j) => (
+                  <button
+                    key={j.id}
+                    type="button"
+                    onClick={() => setFilterJenisDetail(j.id)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium ${
+                      filterJenisDetail === j.id
+                        ? "bg-brand text-white"
+                        : "bg-surface text-ink hover:bg-surface-muted"
+                    }`}
+                  >
+                    {j.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-ink-muted">Ukuran Luas:</span>
+                {[
+                  { id: "semua", label: "Semua Ukuran" },
+                  { id: "besar", label: "Besar (>100 m²)" },
+                  { id: "sedang", label: "Sedang (1–100 m²)" },
+                  { id: "sliver", label: "Sliver (<1 m²)" },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setFilterTingkatDetail(t.id)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium ${
+                      filterTingkatDetail === t.id
+                        ? "bg-brand text-white"
+                        : "bg-surface text-ink hover:bg-surface-muted"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Isi Tabel Rincian */}
+            <div className="flex-1 overflow-y-auto p-5">
+              {memuatDetail ? (
+                <p className="py-10 text-center text-xs text-ink-muted">
+                  Memuat rincian titik perbatasan...
+                </p>
+              ) : galatDetail ? (
+                <div className="rounded-lg border border-danger/30 bg-danger-soft p-4 text-xs text-danger">
+                  {galatDetail}
+                </div>
+              ) : temuanDetailTersaring.length === 0 ? (
+                <EmptyState judul="Tidak ada temuan pada saringan ini">
+                  Pasangan perbatasan ini bersih atau tidak memiliki temuan
+                  dengan kriteria filter yang dipilih.
+                </EmptyState>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-hairline bg-surface-muted/60 text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                        <th className="px-3 py-2">No</th>
+                        <th className="px-3 py-2">Jenis &amp; Tingkat</th>
+                        <th className="px-3 py-2">
+                          SLS [{detailPasang?.kdkab_a}] {detailPasang?.nmkab_a}
+                        </th>
+                        <th className="px-3 py-2">
+                          SLS [{detailPasang?.kdkab_b}] {detailPasang?.nmkab_b}
+                        </th>
+                        <th className="px-3 py-2 text-right">Luas (m²)</th>
+                        <th className="px-3 py-2 text-right">
+                          Koordinat (Lat, Lon)
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-hairline">
+                      {temuanDetailTersaring.map((item, idx) => (
+                        <tr
+                          key={item.id}
+                          className="hover:bg-surface-muted/40"
+                        >
+                          <td className="px-3 py-2.5 font-mono text-ink-muted tabular-nums">
+                            {idx + 1}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span
+                                className={`inline-flex rounded px-2 py-0.5 text-[11px] font-bold uppercase ${
+                                  item.jenis === "overlap"
+                                    ? "bg-danger-soft text-danger"
+                                    : "bg-warn-soft text-warn"
+                                }`}
+                              >
+                                {item.jenis}
+                              </span>
+                              <BadgeTingkat tingkat={item.tingkat} />
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <div className="font-mono font-semibold tabular-nums text-ink">
+                              {item.idsubsls_a ?? item.idsls_a ?? "—"}
+                            </div>
+                            <div className="text-[11px] text-ink-muted">
+                              {item.nmsls_a ?? "—"}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <div className="font-mono font-semibold tabular-nums text-ink">
+                              {item.idsubsls_b ?? item.idsls_b ?? "—"}
+                            </div>
+                            <div className="text-[11px] text-ink-muted">
+                              {item.nmsls_b ?? "—"}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold tabular-nums text-ink">
+                            {formatLuas(item.luas_m2)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                salinKoordinat(item.id, item.lat, item.lon)
+                              }
+                              title="Klik untuk menyalin koordinat ke clipboard"
+                              className="inline-flex items-center gap-1.5 rounded border border-hairline bg-surface px-2 py-1 font-mono text-[11px] tabular-nums text-ink hover:bg-surface-muted"
+                            >
+                              <span>
+                                {item.lat.toFixed(6)}, {item.lon.toFixed(6)}
+                              </span>
+                              <span className="text-[10px] font-sans font-semibold text-brand">
+                                {koordinatDisalin === item.id
+                                  ? "Tersalin!"
+                                  : "Salin"}
+                              </span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
