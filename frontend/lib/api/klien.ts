@@ -78,15 +78,44 @@ function namaBerkas(disposisi: string, cadangan: string): string {
 }
 
 /**
- * Unduh berkas API dengan Bearer, lalu picu unduhan browser.
- *
- * Tautan ``<a href>`` tidak bisa mengirim header Authorization, jadi semua
- * ekspor memakai fetch + blob. Kembaliannya nama berkas yang dipakai.
+ * Unduh berkas API langsung lewat Download Manager bawaan browser menggunakan
+ * tiket unduh singkat (60 detik) seperti Google Drive, dengan cadangan
+ * fetch + blob bila tiket tidak tersedia.
  */
 export async function unduhBerkas(
   jalur: string,
   namaCadangan = "unduhan",
 ): Promise<string> {
+  if (typeof document !== "undefined") {
+    try {
+      const { tiket } = await ambilJson<{ tiket: string }>("/unduh-tiket", {
+        method: "POST",
+      });
+      if (tiket) {
+        const pemisah = jalur.includes("?") ? "&" : "?";
+        const urlUnduh = urlApi(
+          `${jalur}${pemisah}tiket=${encodeURIComponent(tiket)}`,
+        );
+        const tautan = document.createElement("a");
+        tautan.href = urlUnduh;
+        tautan.download = namaCadangan;
+        tautan.rel = "noopener";
+        document.body.appendChild(tautan);
+        tautan.click();
+        tautan.remove();
+        return namaCadangan;
+      }
+    } catch (galat) {
+      if (
+        galat instanceof KesalahanApi &&
+        (galat.status === 401 || galat.status === 403 || galat.status === 503)
+      ) {
+        throw galat;
+      }
+      // Cadangan ke fetch + blob bila endpoint tiket belum tersedia.
+    }
+  }
+
   const headers = new Headers({ accept: "*/*" });
   await pasangBearer(headers);
   const resp = await fetch(urlApi(jalur), {

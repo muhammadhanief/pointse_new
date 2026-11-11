@@ -18,6 +18,7 @@ pengembang yang boleh mengakses semua wilayah. Mode ini ditolak saat
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import jwt
@@ -28,6 +29,8 @@ from app.peran import PERAN_ADMIN_PROVINSI, Peran, peran_dari_org
 
 #: Peran khusus saat ``AUTH_MODE=dev`` (tes/mode lokal).
 PERAN_DEV = "dev"
+#: Masa berlaku tiket unduh singkat (detik).
+MASA_BERLAKU_TIKET_UNDUH_DETIK = 60
 
 
 class AksesDitolak(HTTPException):
@@ -80,11 +83,39 @@ def _ambil_bearer(header: str | None) -> str | None:
     return token.strip()
 
 
+def buat_tiket_unduh(
+    pengguna: Pengguna,
+    setelan: Settings,
+    masa_berlaku_detik: int = MASA_BERLAKU_TIKET_UNDUH_DETIK,
+) -> str:
+    """Buat tiket JWT singkat khusus unduhan langsung browser (query ``?tiket=``)."""
+    rahasia = setelan.auth_secret.strip()
+    if setelan.auth_mode == "dev" or not rahasia:
+        return "dev"
+    sekarang = int(time.time())
+    muatan: dict[str, object] = {
+        "sub": pengguna.sub,
+        "username": pengguna.username,
+        "nama": pengguna.nama,
+        "org": pengguna.org,
+        "tujuan": "unduh",
+        "iat": sekarang,
+        "exp": sekarang + max(10, int(masa_berlaku_detik)),
+        "aud": setelan.auth_audience,
+        "iss": setelan.auth_issuer,
+    }
+    if pengguna.nip:
+        muatan["nip"] = pengguna.nip
+    if pengguna.email:
+        muatan["email"] = pengguna.email
+    return str(jwt.encode(muatan, rahasia, algorithm="HS256"))
+
+
 def pengguna_saat_ini(
     request: Request,
     setelan: Settings = Depends(get_settings),
 ) -> Pengguna:
-    """Dependency FastAPI: verifikasi token Bearer dan kembalikan identitas."""
+    """Dependency FastAPI: verifikasi token Bearer (atau tiket unduh GET) dan kembalikan identitas."""
     if setelan.auth_mode == "dev":
         return _pengguna_dev()
 
@@ -96,6 +127,13 @@ def pengguna_saat_ini(
         )
 
     token = _ambil_bearer(request.headers.get("authorization"))
+    pakai_tiket = False
+    if token is None and request.method in ("GET", "HEAD"):
+        tiket = (request.query_params.get("tiket") or "").strip()
+        if tiket:
+            token = tiket
+            pakai_tiket = True
+
     if token is None:
         raise HTTPException(
             status_code=401,
@@ -118,6 +156,13 @@ def pengguna_saat_ini(
             detail="token sesi tidak valid atau sudah kedaluwarsa",
             headers={"WWW-Authenticate": "Bearer"},
         ) from galat
+
+    if pakai_tiket and klaim.get("tujuan") != "unduh":
+        raise HTTPException(
+            status_code=401,
+            detail="tiket unduh tidak valid",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     org = klaim.get("org")
     if not isinstance(org, str):

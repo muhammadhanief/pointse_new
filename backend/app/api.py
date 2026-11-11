@@ -101,6 +101,15 @@ from app.skema import (
 
 router = APIRouter()
 
+
+@router.post("/unduh-tiket")
+def minta_tiket_unduh(
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+    setelan: Settings = Depends(get_settings),
+) -> dict[str, str]:
+    """Buat tiket singkat (60 detik) agar unduhan ditangani langsung oleh browser."""
+    return {"tiket": auth.buat_tiket_unduh(pengguna, setelan)}
+
 def _simpan_unggahan(berkas: UploadFile, dir_run: Path, awalan: str) -> Path:
     """Tulis satu berkas unggahan ke folder job; kembalikan path-nya.
 

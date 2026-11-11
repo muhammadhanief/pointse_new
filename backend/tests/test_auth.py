@@ -246,3 +246,31 @@ def test_api_mewajibkan_token(klien, setelan: Settings) -> None:
         headers={"Authorization": f"Bearer {_token('33070')}"},
     )
     assert resp.status_code == 403
+
+
+def test_tiket_unduh_singkat(klien, setelan: Settings) -> None:
+    """Tiket unduh dari POST /unduh-tiket berlaku untuk GET ?tiket=..., bukan token sesi biasa."""
+    setelan.auth_mode = "jwt"
+    setelan.auth_secret = SECRET
+    setelan.auth_issuer = ISSUER
+    setelan.auth_audience = AUDIENCE
+
+    token_sesi = _token("33000")
+    # Token sesi biasa tidak boleh diterima lewat parameter query ?tiket=
+    assert klien.get("/ekspor/rekap.csv", params={"tiket": token_sesi}).status_code == 401
+
+    # Tukar token sesi menjadi tiket unduh singkat
+    resp_tiket = klien.post(
+        "/unduh-tiket",
+        headers={"Authorization": f"Bearer {token_sesi}"},
+    )
+    assert resp_tiket.status_code == 200
+    tiket = resp_tiket.json()["tiket"]
+    assert tiket and tiket != token_sesi
+
+    # Tiket unduh diterima pada endpoint GET unduhan
+    resp_unduh = klien.get("/ekspor/rekap.csv", params={"tiket": tiket})
+    assert resp_unduh.status_code == 200
+
+    # Tiket unduh tidak boleh dipakai di query pada request POST
+    assert klien.post("/unduh-tiket", params={"tiket": tiket}).status_code == 401
