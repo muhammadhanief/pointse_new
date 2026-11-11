@@ -42,8 +42,8 @@ export function PengaturanPemeriksaanBatas({
   const [nilai, setNilai] = useState("0");
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState<string | null>(null);
-  const [sedangSimpan, setSedangSimpan] = useState(false);
-  const [sedangJalankan, setSedangJalankan] = useState(false);
+  // Satu state untuk seluruh alur: idle → menyimpan → antrean → berjalan.
+  const [faseAlur, setFaseAlur] = useState<"idle" | "menyimpan" | "menunggu" | "jalan">("idle");
   const statusSebelumnya = useRef<string | null>(null);
   const luasTersimpan = useRef<number | null>(null);
   const onSelesaiRef = useRef(onSelesai);
@@ -60,7 +60,8 @@ export function PengaturanPemeriksaanBatas({
 
   // Modal: fokus ke input, tutup dengan Escape, dan kunci gulir halaman.
   // Dijalankan sekali saat modal dipasang; handler memakai ref supaya
-  // render ulang induk (mis. auto-refresh 20 detik) tidak merebut fokus input.
+  // render ulang induk (mis. auto-refresh 20 detik) tidak merebut fokus
+  // input.
   useEffect(() => {
     inputRef.current?.focus();
     inputRef.current?.select();
@@ -78,6 +79,12 @@ export function PengaturanPemeriksaanBatas({
     };
   }, []);
 
+  const faseDariStatus = (status: string | null): "menunggu" | "jalan" | "idle" => {
+    if (status === "menunggu") return "menunggu";
+    if (status === "jalan") return "jalan";
+    return "idle";
+  };
+
   const terapkan = useCallback((hasil: RekonsiliasiBatasPengaturan) => {
     setData(hasil);
 
@@ -91,6 +98,7 @@ export function PengaturanPemeriksaanBatas({
     const statusBaru = hasil.jalankan?.status ?? null;
     const sebelumnya = statusSebelumnya.current;
     statusSebelumnya.current = statusBaru;
+    setFaseAlur(faseDariStatus(statusBaru));
     if (
       sebelumnya !== null &&
       sebelumnya !== statusBaru &&
@@ -135,13 +143,14 @@ export function PengaturanPemeriksaanBatas({
     return () => window.clearInterval(interval);
   }, [sedangBerjalan, muat]);
 
-  async function simpanAmbang() {
+  // Satu alur: simpan ambang, lalu langsung antrekan pemeriksaan ulang.
+  async function jalankanAlurPenuh() {
     const angka = Number(nilai.replace(",", "."));
     if (!Number.isFinite(angka) || angka < 0) {
       setGalat("Isi angka 0 atau lebih besar, contoh 0 atau 0.000001.");
       return;
     }
-    setSedangSimpan(true);
+    setFaseAlur("menyimpan");
     setGalat(null);
     try {
       const hasil = await ambilJson<RekonsiliasiBatasPengaturan>(
@@ -152,35 +161,30 @@ export function PengaturanPemeriksaanBatas({
           body: JSON.stringify({ luas_min_m2: angka }),
         },
       );
+      // Ambil status jalankan yang hendak diklaim/jalankan dan tandai fase.
+      const statusJalankanSebelum = hasil.jalankan?.status ?? null;
+      if (statusJalankanSebelum === "menunggu" || statusJalankanSebelum === "jalan") {
+        setFaseAlur("menunggu");
+        terapkan(hasil);
+        return;
+      }
+      setFaseAlur("menunggu");
       terapkan(hasil);
-    } catch (err) {
-      setGalat(pesanKesalahan(err));
-    } finally {
-      setSedangSimpan(false);
-    }
-  }
 
-  async function jalankanUlang() {
-    if (
-      !window.confirm(
-        "Periksa ulang seluruh pasangan batas dengan ambang yang tersimpan? Proses ini memakan beberapa menit dan mengganti hasil pemeriksaan sebelumnya.",
-      )
-    ) {
-      return;
-    }
-    setSedangJalankan(true);
-    setGalat(null);
-    try {
-      const hasil = await ambilJson<{ id: number; status: string }>(
+      const dikirim = await ambilJson<{ id: number; status: string }>(
         "/rekonsiliasi-batas/jalankan-ulang",
         { method: "POST" },
       );
-      statusSebelumnya.current = hasil.status;
+      statusSebelumnya.current = dikirim.status;
       await muat();
     } catch (err) {
       setGalat(pesanKesalahan(err));
-    } finally {
-      setSedangJalankan(false);
+      // Kembali ke idle kalau gagal, biar user bisa coba lagi.
+      setFaseAlur(
+        (statusJalankan === "menunggu" || statusJalankan === "jalan")
+          ? "menunggu"
+          : "idle",
+      );
     }
   }
 
@@ -191,6 +195,15 @@ export function PengaturanPemeriksaanBatas({
     totalPasang > 0
       ? Math.min(100, Math.round((sudahDiproses / totalPasang) * 100))
       : 0;
+
+  const judulTombol =
+    faseAlur === "menyimpan"
+      ? "Menyimpan dan mengantrekan..."
+      : faseAlur === "menunggu"
+        ? "Menunggu antrean worker..."
+        : faseAlur === "jalan"
+          ? "Sedang diperiksa..."
+          : "Simpan ambang dan jalankan periksa ulang";
 
   return (
     <div
@@ -245,15 +258,15 @@ export function PengaturanPemeriksaanBatas({
                 inputMode="decimal"
                 value={nilai}
                 onChange={(e) => setNilai(e.target.value)}
-                disabled={memuat || sedangSimpan}
+                disabled={memuat || faseAlur !== "idle"}
                 className="min-h-9 w-40 rounded-lg border border-line-strong bg-surface px-3 py-1.5 font-mono text-sm tabular-nums text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:opacity-60"
               />
               <TombolAksi
-                varian="sekunder"
-                onClick={() => void simpanAmbang()}
-                disabled={memuat || sedangSimpan}
+                varian="utama"
+                onClick={() => void jalankanAlurPenuh()}
+                disabled={memuat || faseAlur !== "idle"}
               >
-                {sedangSimpan ? "Menyimpan..." : "Simpan ambang"}
+                {judulTombol}
               </TombolAksi>
             </div>
             <p className="mt-2 text-xs leading-normal text-muted">
@@ -343,18 +356,6 @@ export function PengaturanPemeriksaanBatas({
                 berjalan setiap kali run Validasi SLS selesai.
               </p>
             )}
-
-            <TombolAksi
-              className="mt-3"
-              onClick={() => void jalankanUlang()}
-              disabled={memuat || sedangJalankan || sedangBerjalan}
-            >
-              {sedangJalankan
-                ? "Mengantrekan..."
-                : sedangBerjalan
-                  ? "Sedang berjalan"
-                  : "Periksa ulang semua pasangan"}
-            </TombolAksi>
           </section>
 
           {galat && (
