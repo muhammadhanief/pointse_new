@@ -1531,23 +1531,68 @@ def ringkasan_validasi(
 # ------------------------------------------------------- rekonsiliasi batas kab/kota
 
 
+def _waktu_run_batas(run: Run | None) -> datetime | None:
+    if run is None:
+        return None
+    return run.finished_at or run.created_at
+
+
+def _ada_peta_run_batas(run: Run | None) -> bool:
+    if run is None or not run.berkas_peta:
+        return False
+    return Path(run.berkas_peta).is_file()
+
+
+def _normalisasi_daftar_kdkab(
+    prov: str, kdkab: str | Sequence[str] | None
+) -> set[str] | None:
+    if not kdkab:
+        return None
+    mentah: list[str] = [kdkab] if isinstance(kdkab, str) else list(kdkab)
+    hasil: set[str] = set()
+    for item in mentah:
+        for potong in str(item).split(","):
+            bersih = potong.strip()
+            if bersih:
+                hasil.add(kode_kabupaten(prov, bersih))
+    return hasil or None
+
+
+def _normalisasi_daftar_status(
+    status_filter: str | Sequence[str] | None,
+) -> set[str] | None:
+    if not status_filter:
+        return None
+    mentah: list[str] = (
+        [status_filter] if isinstance(status_filter, str) else list(status_filter)
+    )
+    hasil: set[str] = set()
+    for item in mentah:
+        for potong in str(item).split(","):
+            bersih = potong.strip().lower()
+            if bersih and bersih != "semua":
+                hasil.add(bersih)
+    return hasil or None
+
+
 def ringkasan_rekonsiliasi_batas(
     sesi: Session,
     *,
     kdprov: str | None = None,
-    kdkab: str | None = None,
-    status_filter: str | None = None,
+    kdkab: str | Sequence[str] | None = None,
+    status_filter: str | Sequence[str] | None = None,
 ) -> dict[str, object]:
     """Ringkasan 74 pasang perbatasan kabupaten/kota se-Jawa Tengah (run V).
 
-    Bila ``kdkab`` diisi (mis. akun Kabupaten/Kota atau filter dropdown), hanya
-    menampilkan pasangan tetangga yang melibatkan kabupaten tersebut.
+    Bila ``kdkab`` diisi (satu kode atau daftar kode kabupaten/kota), hanya
+    menampilkan pasangan tetangga yang melibatkan salah satu kabupaten tersebut.
     """
     from app import rekonsiliasi_batas
     from app.models import RekonsiliasiBatasPasang
 
     prov = (kdprov or "33").strip() or "33"
-    kode_saring = kode_kabupaten(prov, kdkab) if kdkab else None
+    himpunan_kab = _normalisasi_daftar_kdkab(prov, kdkab)
+    himpunan_status = _normalisasi_daftar_status(status_filter)
 
     runs_v = rekonsiliasi_batas.run_v_terakhir_per_kab(sesi, kdprov=prov)
     semua_pasang_db = {
@@ -1562,7 +1607,7 @@ def ringkasan_rekonsiliasi_batas(
     daftar_kandidat = [
         (a, b)
         for a, b in rekonsiliasi_batas.PASANGAN_TETANGGA_33
-        if kode_saring is None or a == kode_saring or b == kode_saring
+        if himpunan_kab is None or a in himpunan_kab or b in himpunan_kab
     ]
 
     baris: list[dict[str, object]] = []
@@ -1631,7 +1676,7 @@ def ringkasan_rekonsiliasi_batas(
         total_overlap += ov
         total_gap += gp
 
-        if status_filter and status_filter != st:
+        if himpunan_status is not None and st not in himpunan_status:
             continue
 
         baris.append(
@@ -1644,6 +1689,10 @@ def ringkasan_rekonsiliasi_batas(
                 "run_b_id": run_b.id if run_b is not None else None,
                 "tanggal_a": run_a.tanggal_data if run_a is not None else None,
                 "tanggal_b": run_b.tanggal_data if run_b is not None else None,
+                "waktu_a": _waktu_run_batas(run_a),
+                "waktu_b": _waktu_run_batas(run_b),
+                "ada_peta_a": _ada_peta_run_batas(run_a),
+                "ada_peta_b": _ada_peta_run_batas(run_b),
                 "status": st,
                 "jumlah_overlap": ov,
                 "jumlah_gap": gp,
@@ -1712,6 +1761,10 @@ def detail_rekonsiliasi_batas(
             "run_b_id": run_b.id if run_b is not None else None,
             "tanggal_a": run_a.tanggal_data if run_a is not None else None,
             "tanggal_b": run_b.tanggal_data if run_b is not None else None,
+            "waktu_a": _waktu_run_batas(run_a),
+            "waktu_b": _waktu_run_batas(run_b),
+            "ada_peta_a": _ada_peta_run_batas(run_a),
+            "ada_peta_b": _ada_peta_run_batas(run_b),
             "status": st,
             "jumlah_overlap": 0,
             "jumlah_gap": 0,
@@ -1746,6 +1799,10 @@ def detail_rekonsiliasi_batas(
         "run_b_id": pasang.run_b_id or (run_b.id if run_b is not None else None),
         "tanggal_a": run_a.tanggal_data if run_a is not None else None,
         "tanggal_b": run_b.tanggal_data if run_b is not None else None,
+        "waktu_a": _waktu_run_batas(run_a),
+        "waktu_b": _waktu_run_batas(run_b),
+        "ada_peta_a": _ada_peta_run_batas(run_a),
+        "ada_peta_b": _ada_peta_run_batas(run_b),
         "status": pasang.status,
         "jumlah_overlap": int(pasang.jumlah_overlap or 0),
         "jumlah_gap": int(pasang.jumlah_gap or 0),
@@ -1798,6 +1855,59 @@ def jalur_unduh_geojson_batas(
     if not jalur.is_file():
         raise FileNotFoundError(f"Berkas GeoJSON QC Batas {a}-{b} tidak ditemukan di disk.")
     return jalur, f"QC_Batas_{a}_{b}.geojson"
+
+
+def jalur_unduh_peta_batas(
+    sesi: Session, kdkab_1: str, kdkab_2: str, kdkab_target: str
+) -> tuple[Path, str]:
+    """Ambil jalur berkas peta full (Validasi SLS / tipe V) milik kabupaten terdampak pada pasangan batas."""
+    from app import rekonsiliasi_batas
+    from app.models import RekonsiliasiBatasPasang
+
+    a = kode_kabupaten("33", kdkab_1)
+    b = kode_kabupaten("33", kdkab_2)
+    a, b = rekonsiliasi_batas.pasangan_kanonik(a, b)
+    if (a, b) not in rekonsiliasi_batas.PASANGAN_TETANGGA_33:
+        raise KesalahanPerubahan(f"Pasangan {a} dan {b} bukan tetangga perbatasan langsung.")
+
+    target = kode_kabupaten("33", kdkab_target)
+    if target not in (a, b):
+        raise KesalahanPerubahan(
+            f"Kabupaten/kota {target} bukan bagian dari pasangan perbatasan {a}-{b}."
+        )
+
+    pasang = sesi.scalars(
+        select(RekonsiliasiBatasPasang).where(
+            RekonsiliasiBatasPasang.kdkab_a == a,
+            RekonsiliasiBatasPasang.kdkab_b == b,
+        )
+    ).first()
+
+    run_target: Run | None = None
+    if pasang is not None:
+        id_run = pasang.run_a_id if target == a else pasang.run_b_id
+        if id_run is not None:
+            run_target = sesi.get(Run, id_run)
+
+    if run_target is None:
+        runs_v = rekonsiliasi_batas.run_v_terakhir_per_kab(sesi, kdprov="33")
+        run_target = runs_v.get(target)
+
+    if run_target is None or not run_target.berkas_peta:
+        raise FileNotFoundError(
+            f"Berkas peta Validasi SLS untuk kabupaten/kota {target} belum tersedia."
+        )
+    jalur = Path(run_target.berkas_peta)
+    if not jalur.is_file():
+        raise FileNotFoundError(
+            f"Berkas peta Validasi SLS untuk kabupaten/kota {target} tidak ditemukan di disk."
+        )
+    nama_asli = (run_target.nama_file_peta or jalur.name).strip()
+    ext = Path(nama_asli).suffix or jalur.suffix or ".gpkg"
+    nama_unduh = f"Peta_SLS_{target}_{nama_asli}" if not nama_asli.startswith(target) else nama_asli
+    if not Path(nama_unduh).suffix:
+        nama_unduh = f"{nama_unduh}{ext}"
+    return jalur, nama_unduh
 
 
 # --------------------------------------------------------------------------- rekap

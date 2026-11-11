@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { MultiPilih } from "@/components/dashboard/multi-pilih";
 import { EmptyState, Panel, TombolAksi } from "@/components/dashboard/ui";
 import {
   adalahBatal,
@@ -31,6 +32,16 @@ function formatLuas(luas: number): string {
     minimumFractionDigits: luas < 10 ? 2 : 1,
     maximumFractionDigits: 2,
   });
+}
+
+function formatWaktuRun(
+  waktu: string | null | undefined,
+  tanggal: string | null | undefined,
+): string {
+  if (waktu) {
+    return formatWaktu(waktu);
+  }
+  return formatTanggal(tanggal);
 }
 
 function BadgeStatusBatas({ status }: { status: string }) {
@@ -108,9 +119,10 @@ export function RekonsiliasiBatasClient({
   const [galat, setGalat] = useState<string | null>(null);
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
 
-  const [filterKab, setFilterKab] = useState<string>(kodeKabPengguna ?? "");
-  const [filterStatus, setFilterStatus] = useState<string>("semua");
-  const [kataKunci, setKataKunci] = useState<string>("");
+  const [filterKabs, setFilterKabs] = useState<string[]>(
+    kodeKabPengguna ? [kodeKabPengguna] : [],
+  );
+  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
   const [sedangUnduh, setSedangUnduh] = useState<string | null>(null);
 
   // State modal rincian pasangan
@@ -130,14 +142,16 @@ export function RekonsiliasiBatasClient({
   const controllerRef = useRef<AbortController | null>(null);
 
   const muatRingkasan = useCallback(
-    (kdkabSaring: string) => {
+    (daftarKabSaring: string[]) => {
       controllerRef.current?.abort();
       const controller = new AbortController();
       controllerRef.current = controller;
 
       const params = new URLSearchParams();
-      if (adalahAdminProv && kdkabSaring) {
-        params.set("kdkab", kdkabSaring);
+      if (adalahAdminProv && daftarKabSaring.length > 0) {
+        for (const kode of daftarKabSaring) {
+          params.append("kdkab", kode);
+        }
       }
       const qs = params.toString();
       const url = `/rekonsiliasi-batas/ringkasan${qs ? `?${qs}` : ""}`;
@@ -168,17 +182,17 @@ export function RekonsiliasiBatasClient({
   );
 
   useEffect(() => {
-    muatRingkasan(filterKab);
+    muatRingkasan(filterKabs);
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") {
-        muatRingkasan(filterKab);
+        muatRingkasan(filterKabs);
       }
     }, INTERVAL_MUAT_ULANG);
     return () => {
       window.clearInterval(interval);
       controllerRef.current?.abort();
     };
-  }, [muatRingkasan, filterKab]);
+  }, [muatRingkasan, filterKabs]);
 
   const bukaRincian = useCallback(async (kdkabA: string, kdkabB: string) => {
     setPasangAktif({ kdkab_a: kdkabA, kdkab_b: kdkabB });
@@ -199,7 +213,7 @@ export function RekonsiliasiBatasClient({
   }, []);
 
   async function handleUnduhGeojson(kdkabA: string, kdkabB: string) {
-    const kunci = `${kdkabA}_${kdkabB}`;
+    const kunci = `geojson_${kdkabA}_${kdkabB}`;
     setSedangUnduh(kunci);
     try {
       await unduhBerkas(
@@ -213,32 +227,44 @@ export function RekonsiliasiBatasClient({
     }
   }
 
+  async function handleUnduhPetaFull(
+    kdkabA: string,
+    kdkabB: string,
+    kdkabTarget: string,
+  ) {
+    const kunci = `peta_${kdkabA}_${kdkabB}_${kdkabTarget}`;
+    setSedangUnduh(kunci);
+    try {
+      await unduhBerkas(
+        `/rekonsiliasi-batas/pasang/${kdkabA}/${kdkabB}/peta/${kdkabTarget}`,
+        `Peta_SLS_${kdkabTarget}.gpkg`,
+      );
+    } catch (err) {
+      setGalat(pesanKesalahan(err));
+    } finally {
+      setSedangUnduh(null);
+    }
+  }
+
   function salinKoordinat(id: number, lat: number, lon: number) {
     const teks = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
     void navigator.clipboard?.writeText(teks);
     setKoordinatDisalin(id);
     window.setTimeout(() => {
-      setKoordinatDisalin((sebelumnya) => (sebelumnya === id ? null : sebelumnya));
+      setKoordinatDisalin((sebelumnya) =>
+        sebelumnya === id ? null : sebelumnya,
+      );
     }, 1800);
   }
 
   const daftarBarisTersaring = useMemo(() => {
     const semua = ringkasan?.baris ?? [];
-    const cari = kataKunci.trim().toLowerCase();
-    return semua.filter((b) => {
-      if (filterStatus !== "semua" && b.status !== filterStatus) {
-        return false;
-      }
-      if (cari) {
-        const gabungan =
-          `${b.kdkab_a} ${b.nmkab_a} ${b.kdkab_b} ${b.nmkab_b}`.toLowerCase();
-        if (!gabungan.includes(cari)) {
-          return false;
-        }
-      }
-      return true;
-    });
-  }, [ringkasan, filterStatus, kataKunci]);
+    if (filterStatuses.length === 0) {
+      return semua;
+    }
+    const setStatus = new Set(filterStatuses);
+    return semua.filter((b) => setStatus.has(b.status));
+  }, [ringkasan, filterStatuses]);
 
   const temuanDetailTersaring = useMemo(() => {
     const semua = detailPasang?.temuan ?? [];
@@ -246,7 +272,10 @@ export function RekonsiliasiBatasClient({
       if (filterJenisDetail !== "semua" && t.jenis !== filterJenisDetail) {
         return false;
       }
-      if (filterTingkatDetail !== "semua" && t.tingkat !== filterTingkatDetail) {
+      if (
+        filterTingkatDetail !== "semua" &&
+        t.tingkat !== filterTingkatDetail
+      ) {
         return false;
       }
       return true;
@@ -262,6 +291,37 @@ export function RekonsiliasiBatasClient({
   const jmlBelumUnggah = ringkasan?.belum_unggah ?? 0;
   const persenClean =
     totalPasang > 0 ? Math.round((jmlClean / totalPasang) * 100) : 0;
+
+  const opsiStatus = useMemo(
+    () => [
+      {
+        nilai: "belum_clean",
+        label: `Belum Clean (${formatAngka(jmlBelumClean)})`,
+      },
+      {
+        nilai: "clean",
+        label: `Clean (${formatAngka(jmlClean)})`,
+      },
+      {
+        nilai: "menunggu_tetangga",
+        label: `Menunggu Tetangga (${formatAngka(jmlMenunggu)})`,
+      },
+      {
+        nilai: "belum_unggah",
+        label: `Belum Unggah (${formatAngka(jmlBelumUnggah)})`,
+      },
+    ],
+    [jmlBelumClean, jmlClean, jmlMenunggu, jmlBelumUnggah],
+  );
+
+  const opsiKabupaten = useMemo(
+    () =>
+      semuaKab.map((k) => ({
+        nilai: k.kode,
+        label: `[${k.kode}] ${k.nama}`,
+      })),
+    [semuaKab],
+  );
 
   return (
     <div className="space-y-field">
@@ -302,7 +362,7 @@ export function RekonsiliasiBatasClient({
               onClick={() => {
                 setMemuat(true);
                 setGalat(null);
-                void muatRingkasan(filterKab);
+                void muatRingkasan(filterKabs);
               }}
               disabled={memuat}
             >
@@ -340,75 +400,30 @@ export function RekonsiliasiBatasClient({
           </div>
         )}
 
-        {/* Filter Status & Wilayah */}
-        <div className="mt-4 flex flex-col gap-3 border-t border-hairline pt-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {[
-              { id: "semua", label: "Semua Pasangan", nilai: totalPasang },
-              { id: "belum_clean", label: "Belum Clean", nilai: jmlBelumClean },
-              { id: "clean", label: "Clean", nilai: jmlClean },
-              {
-                id: "menunggu_tetangga",
-                label: "Menunggu Tetangga",
-                nilai: jmlMenunggu,
-              },
-              {
-                id: "belum_unggah",
-                label: "Belum Unggah",
-                nilai: jmlBelumUnggah,
-              },
-            ].map((tab) => {
-              const aktif = filterStatus === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setFilterStatus(tab.id)}
-                  className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                    aktif
-                      ? "bg-brand text-white"
-                      : "bg-surface-muted text-ink hover:bg-brand-soft hover:text-brand-strong"
-                  }`}
-                >
-                  <span>{tab.label}</span>
-                  <span
-                    className={`rounded-full px-1.5 py-0.2 font-mono text-[11px] tabular-nums ${
-                      aktif
-                        ? "bg-white/20 text-white"
-                        : "bg-surface text-ink-muted"
-                    }`}
-                  >
-                    {tab.nilai}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+        {/* Filter Status & Wilayah (Dropdown Multi-Pilih) */}
+        <div className="mt-4 grid grid-cols-1 gap-3 border-t border-hairline pt-4 sm:grid-cols-2">
+          <MultiPilih
+            label="Status Pasangan Batas"
+            labelSemua={`Semua Pasangan (${formatAngka(totalPasang)})`}
+            tempatCari="Cari status batas..."
+            opsi={opsiStatus}
+            terpilih={filterStatuses}
+            onTerapkan={setFilterStatuses}
+          />
 
-          <div className="flex flex-wrap items-center gap-2">
-            {adalahAdminProv && (
-              <select
-                aria-label="Saring Kabupaten/Kota"
-                value={filterKab}
-                onChange={(e) => setFilterKab(e.target.value)}
-                className="min-h-9 rounded-lg border border-hairline bg-surface px-3 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
-              >
-                <option value="">Seluruh Kab/Kota (74 pasang)</option>
-                {semuaKab.map((k) => (
-                  <option key={k.kode} value={k.kode}>
-                    [{k.kode}] {k.nama}
-                  </option>
-                ))}
-              </select>
-            )}
-            <input
-              type="search"
-              value={kataKunci}
-              onChange={(e) => setKataKunci(e.target.value)}
-              placeholder="Cari nama/kode kab..."
-              className="min-h-9 rounded-lg border border-hairline bg-surface px-3 py-1.5 text-xs text-ink placeholder:text-ink-subtle focus:border-brand focus:outline-none"
+          {adalahAdminProv && (
+            <MultiPilih
+              label="Kabupaten/Kota"
+              labelSemua="Seluruh Kab/Kota (74 pasang)"
+              tempatCari="Cari kode atau nama kab/kota..."
+              opsi={opsiKabupaten}
+              terpilih={filterKabs}
+              onTerapkan={(pilihan) => {
+                setMemuat(true);
+                setFilterKabs(pilihan);
+              }}
             />
-          </div>
+          )}
         </div>
       </Panel>
 
@@ -436,7 +451,7 @@ export function RekonsiliasiBatasClient({
           </p>
         ) : daftarBarisTersaring.length === 0 ? (
           <EmptyState judul="Tidak ada pasangan perbatasan yang cocok">
-            Ubah saringan status atau kata kunci pencarian untuk melihat
+            Ubah saringan status atau pilihan kabupaten/kota untuk melihat
             pasangan perbatasan lainnya.
           </EmptyState>
         ) : (
@@ -453,151 +468,205 @@ export function RekonsiliasiBatasClient({
                 </tr>
               </thead>
               <tbody className="divide-y divide-hairline">
-                {daftarBarisTersaring.map((baris: RekonsiliasiBatasPasangBaris) => {
-                  const kunci = `${baris.kdkab_a}_${baris.kdkab_b}`;
-                  const sudahDihitung =
-                    baris.status === "clean" || baris.status === "belum_clean";
-                  return (
-                    <tr
-                      key={kunci}
-                      className="transition-colors hover:bg-surface-muted/40"
-                    >
-                      <td className="px-3 py-3 align-top">
-                        <div className="flex items-center gap-1.5">
-                          <span className="rounded bg-surface-muted px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-ink">
-                            {baris.kdkab_a}
-                          </span>
-                          <span className="font-medium text-ink">
-                            {baris.nmkab_a}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-[11px] text-ink-muted">
-                          {baris.run_a_id ? (
-                            <span>
-                              Run #{baris.run_a_id} •{" "}
-                              {formatTanggal(baris.tanggal_a)}
-                            </span>
-                          ) : (
-                            <span className="text-warn">
-                              Belum unggah peta V
-                            </span>
-                          )}
-                        </div>
-                      </td>
+                {daftarBarisTersaring.map(
+                  (baris: RekonsiliasiBatasPasangBaris) => {
+                    const kunci = `${baris.kdkab_a}_${baris.kdkab_b}`;
+                    const kunciGeojson = `geojson_${kunci}`;
+                    const kunciPetaA = `peta_${kunci}_${baris.kdkab_a}`;
+                    const kunciPetaB = `peta_${kunci}_${baris.kdkab_b}`;
+                    const sudahDihitung =
+                      baris.status === "clean" ||
+                      baris.status === "belum_clean";
+                    const bisaUnduhPetaA = Boolean(
+                      baris.ada_peta_a ?? baris.run_a_id,
+                    );
+                    const bisaUnduhPetaB = Boolean(
+                      baris.ada_peta_b ?? baris.run_b_id,
+                    );
 
-                      <td className="px-3 py-3 align-top">
-                        <div className="flex items-center gap-1.5">
-                          <span className="rounded bg-surface-muted px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-ink">
-                            {baris.kdkab_b}
-                          </span>
-                          <span className="font-medium text-ink">
-                            {baris.nmkab_b}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-[11px] text-ink-muted">
-                          {baris.run_b_id ? (
-                            <span>
-                              Run #{baris.run_b_id} •{" "}
-                              {formatTanggal(baris.tanggal_b)}
+                    return (
+                      <tr
+                        key={kunci}
+                        className="transition-colors hover:bg-surface-muted/40"
+                      >
+                        <td className="px-3 py-3 align-top">
+                          <div className="flex items-center gap-1.5">
+                            <span className="rounded bg-surface-muted px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-ink">
+                              {baris.kdkab_a}
                             </span>
-                          ) : (
-                            <span className="text-warn">
-                              Belum unggah peta V
+                            <span className="font-medium text-ink">
+                              {baris.nmkab_a}
                             </span>
-                          )}
-                        </div>
-                      </td>
-
-                      <td className="px-3 py-3 align-top">
-                        <BadgeStatusBatas status={baris.status} />
-                        {baris.pesan && !sudahDihitung && (
-                          <p className="mt-1 max-w-xs text-[11px] text-ink-muted">
-                            {baris.pesan}
-                          </p>
-                        )}
-                      </td>
-
-                      <td className="px-3 py-3 align-top text-right font-mono tabular-nums">
-                        {sudahDihitung ? (
-                          <div>
-                            <span
-                              className={
-                                baris.jumlah_overlap > 0
-                                  ? "font-bold text-danger"
-                                  : "text-ink-muted"
-                              }
-                            >
-                              {formatAngka(baris.jumlah_overlap)} titik
-                            </span>
-                            {baris.jumlah_overlap > 0 && (
-                              <div className="text-[11px] text-ink-muted">
-                                {formatLuas(baris.total_luas_overlap_m2)} m²
-                              </div>
+                          </div>
+                          <div className="mt-1 text-[11px] text-ink-muted">
+                            {baris.run_a_id ? (
+                              <span>
+                                Run #{baris.run_a_id} •{" "}
+                                {formatWaktuRun(baris.waktu_a, baris.tanggal_a)}
+                              </span>
+                            ) : (
+                              <span className="text-warn">
+                                Belum unggah peta V
+                              </span>
                             )}
                           </div>
-                        ) : (
-                          <span className="text-ink-subtle">—</span>
-                        )}
-                      </td>
+                        </td>
 
-                      <td className="px-3 py-3 align-top text-right font-mono tabular-nums">
-                        {sudahDihitung ? (
-                          <div>
-                            <span
-                              className={
-                                baris.jumlah_gap > 0
-                                  ? "font-bold text-warn"
-                                  : "text-ink-muted"
-                              }
-                            >
-                              {formatAngka(baris.jumlah_gap)} titik
+                        <td className="px-3 py-3 align-top">
+                          <div className="flex items-center gap-1.5">
+                            <span className="rounded bg-surface-muted px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-ink">
+                              {baris.kdkab_b}
                             </span>
-                            {baris.jumlah_gap > 0 && (
-                              <div className="text-[11px] text-ink-muted">
-                                {formatLuas(baris.total_luas_gap_m2)} m²
-                              </div>
+                            <span className="font-medium text-ink">
+                              {baris.nmkab_b}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-[11px] text-ink-muted">
+                            {baris.run_b_id ? (
+                              <span>
+                                Run #{baris.run_b_id} •{" "}
+                                {formatWaktuRun(baris.waktu_b, baris.tanggal_b)}
+                              </span>
+                            ) : (
+                              <span className="text-warn">
+                                Belum unggah peta V
+                              </span>
                             )}
                           </div>
-                        ) : (
-                          <span className="text-ink-subtle">—</span>
-                        )}
-                      </td>
+                        </td>
 
-                      <td className="px-3 py-3 align-top text-right">
-                        <div className="inline-flex flex-wrap justify-end gap-1.5">
-                          {sudahDihitung && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void bukaRincian(baris.kdkab_a, baris.kdkab_b)
-                              }
-                              className="inline-flex min-h-9 items-center rounded-lg border border-hairline bg-surface px-2.5 py-1 text-xs font-medium text-ink transition-colors hover:bg-surface-muted"
-                            >
-                              Rincian SLS ({formatAngka(baris.total_temuan)})
-                            </button>
+                        <td className="px-3 py-3 align-top">
+                          <BadgeStatusBatas status={baris.status} />
+                          {baris.pesan && !sudahDihitung && (
+                            <p className="mt-1 max-w-xs text-[11px] text-ink-muted">
+                              {baris.pesan}
+                            </p>
                           )}
-                          {baris.ada_geojson && baris.total_temuan > 0 && (
-                            <button
-                              type="button"
-                              disabled={sedangUnduh === kunci}
-                              onClick={() =>
-                                void handleUnduhGeojson(
-                                  baris.kdkab_a,
-                                  baris.kdkab_b,
-                                )
-                              }
-                              className="inline-flex min-h-9 items-center rounded-lg bg-brand px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-brand-strong disabled:opacity-50"
-                            >
-                              {sedangUnduh === kunci
-                                ? "Mengunduh..."
-                                : "Unduh GeoJSON QC"}
-                            </button>
+                        </td>
+
+                        <td className="px-3 py-3 align-top text-right font-mono tabular-nums">
+                          {sudahDihitung ? (
+                            <div>
+                              <span
+                                className={
+                                  baris.jumlah_overlap > 0
+                                    ? "font-bold text-danger"
+                                    : "text-ink-muted"
+                                }
+                              >
+                                {formatAngka(baris.jumlah_overlap)} titik
+                              </span>
+                              {baris.jumlah_overlap > 0 && (
+                                <div className="text-[11px] text-ink-muted">
+                                  {formatLuas(baris.total_luas_overlap_m2)} m²
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-ink-subtle">-</span>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                        </td>
+
+                        <td className="px-3 py-3 align-top text-right font-mono tabular-nums">
+                          {sudahDihitung ? (
+                            <div>
+                              <span
+                                className={
+                                  baris.jumlah_gap > 0
+                                    ? "font-bold text-warn"
+                                    : "text-ink-muted"
+                                }
+                              >
+                                {formatAngka(baris.jumlah_gap)} titik
+                              </span>
+                              {baris.jumlah_gap > 0 && (
+                                <div className="text-[11px] text-ink-muted">
+                                  {formatLuas(baris.total_luas_gap_m2)} m²
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-ink-subtle">-</span>
+                          )}
+                        </td>
+
+                        <td className="px-3 py-3 align-top text-right">
+                          <div className="inline-flex flex-wrap justify-end gap-1.5">
+                            {sudahDihitung && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void bukaRincian(
+                                    baris.kdkab_a,
+                                    baris.kdkab_b,
+                                  )
+                                }
+                                className="inline-flex min-h-9 items-center rounded-lg border border-hairline bg-surface px-2.5 py-1 text-xs font-medium text-ink transition-colors hover:bg-surface-muted"
+                              >
+                                Rincian SLS ({formatAngka(baris.total_temuan)})
+                              </button>
+                            )}
+                            {baris.ada_geojson && baris.total_temuan > 0 && (
+                              <button
+                                type="button"
+                                disabled={sedangUnduh === kunciGeojson}
+                                onClick={() =>
+                                  void handleUnduhGeojson(
+                                    baris.kdkab_a,
+                                    baris.kdkab_b,
+                                  )
+                                }
+                                className="inline-flex min-h-9 items-center rounded-lg bg-brand px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-brand-strong disabled:opacity-50"
+                              >
+                                {sedangUnduh === kunciGeojson
+                                  ? "Mengunduh..."
+                                  : "Unduh GeoJSON QC"}
+                              </button>
+                            )}
+                            {bisaUnduhPetaA && (
+                              <button
+                                type="button"
+                                disabled={sedangUnduh === kunciPetaA}
+                                onClick={() =>
+                                  void handleUnduhPetaFull(
+                                    baris.kdkab_a,
+                                    baris.kdkab_b,
+                                    baris.kdkab_a,
+                                  )
+                                }
+                                title={`Unduh berkas peta full Validasi SLS [${baris.kdkab_a}] ${baris.nmkab_a}`}
+                                className="inline-flex min-h-9 items-center rounded-lg border border-hairline bg-surface px-2.5 py-1 font-mono text-xs font-medium tabular-nums text-ink transition-colors hover:bg-surface-muted disabled:opacity-50"
+                              >
+                                {sedangUnduh === kunciPetaA
+                                  ? "Mengunduh..."
+                                  : `Peta Full ${baris.kdkab_a}`}
+                              </button>
+                            )}
+                            {bisaUnduhPetaB && (
+                              <button
+                                type="button"
+                                disabled={sedangUnduh === kunciPetaB}
+                                onClick={() =>
+                                  void handleUnduhPetaFull(
+                                    baris.kdkab_a,
+                                    baris.kdkab_b,
+                                    baris.kdkab_b,
+                                  )
+                                }
+                                title={`Unduh berkas peta full Validasi SLS [${baris.kdkab_b}] ${baris.nmkab_b}`}
+                                className="inline-flex min-h-9 items-center rounded-lg border border-hairline bg-surface px-2.5 py-1 font-mono text-xs font-medium tabular-nums text-ink transition-colors hover:bg-surface-muted disabled:opacity-50"
+                              >
+                                {sedangUnduh === kunciPetaB
+                                  ? "Mengunduh..."
+                                  : `Peta Full ${baris.kdkab_b}`}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  },
+                )}
               </tbody>
             </table>
           </div>
@@ -614,7 +683,7 @@ export function RekonsiliasiBatasClient({
         >
           <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-hairline bg-surface shadow-xl">
             {/* Header Modal */}
-            <div className="flex items-start justify-between gap-4 border-b border-hairline px-5 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-hairline px-5 py-4">
               <div>
                 <h2
                   id="judul-modal-rekonsiliasi"
@@ -630,7 +699,39 @@ export function RekonsiliasiBatasClient({
                   maupun Celah Kosong (Gap) di sepanjang sabuk perbatasan.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {detailPasang &&
+                  Boolean(detailPasang.ada_peta_a ?? detailPasang.run_a_id) && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleUnduhPetaFull(
+                          pasangAktif.kdkab_a,
+                          pasangAktif.kdkab_b,
+                          pasangAktif.kdkab_a,
+                        )
+                      }
+                      className="inline-flex min-h-9 items-center rounded-lg border border-hairline bg-surface px-3 py-1.5 font-mono text-xs font-medium tabular-nums text-ink hover:bg-surface-muted"
+                    >
+                      Peta Full {pasangAktif.kdkab_a}
+                    </button>
+                  )}
+                {detailPasang &&
+                  Boolean(detailPasang.ada_peta_b ?? detailPasang.run_b_id) && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleUnduhPetaFull(
+                          pasangAktif.kdkab_a,
+                          pasangAktif.kdkab_b,
+                          pasangAktif.kdkab_b,
+                        )
+                      }
+                      className="inline-flex min-h-9 items-center rounded-lg border border-hairline bg-surface px-3 py-1.5 font-mono text-xs font-medium tabular-nums text-ink hover:bg-surface-muted"
+                    >
+                      Peta Full {pasangAktif.kdkab_b}
+                    </button>
+                  )}
                 {detailPasang?.ada_geojson && detailPasang.total_temuan > 0 && (
                   <button
                     type="button"
@@ -765,18 +866,18 @@ export function RekonsiliasiBatasClient({
                           </td>
                           <td className="px-3 py-2.5">
                             <div className="font-mono font-semibold tabular-nums text-ink">
-                              {item.idsubsls_a ?? item.idsls_a ?? "—"}
+                              {item.idsubsls_a ?? item.idsls_a ?? "-"}
                             </div>
                             <div className="text-[11px] text-ink-muted">
-                              {item.nmsls_a ?? "—"}
+                              {item.nmsls_a ?? "-"}
                             </div>
                           </td>
                           <td className="px-3 py-2.5">
                             <div className="font-mono font-semibold tabular-nums text-ink">
-                              {item.idsubsls_b ?? item.idsls_b ?? "—"}
+                              {item.idsubsls_b ?? item.idsls_b ?? "-"}
                             </div>
                             <div className="text-[11px] text-ink-muted">
-                              {item.nmsls_b ?? "—"}
+                              {item.nmsls_b ?? "-"}
                             </div>
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono font-semibold tabular-nums text-ink">

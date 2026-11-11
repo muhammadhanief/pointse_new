@@ -1002,6 +1002,10 @@ class RekonsiliasiBatasPasangBarisOut(BaseModel):
     run_b_id: int | None = None
     tanggal_a: date | None = None
     tanggal_b: date | None = None
+    waktu_a: datetime | None = None
+    waktu_b: datetime | None = None
+    ada_peta_a: bool = False
+    ada_peta_b: bool = False
     status: str
     jumlah_overlap: int = 0
     jumlah_gap: int = 0

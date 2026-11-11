@@ -616,6 +616,10 @@ export type RekonsiliasiBatasPasangBaris = {
   run_b_id: number | null;
   tanggal_a: string | null;
   tanggal_b: string | null;
+  waktu_a?: string | null;
+  waktu_b?: string | null;
+  ada_peta_a?: boolean;
+  ada_peta_b?: boolean;
   status: StatusRekonsiliasiBatas | string;
   jumlah_overlap: number;
   jumlah_gap: number;

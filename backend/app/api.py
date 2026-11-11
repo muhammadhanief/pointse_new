@@ -1062,21 +1062,42 @@ def _pastikan_akses_pasang_batas(
 )
 def ringkasan_rekonsiliasi_batas(
     kdprov: str | None = Query(None, description="Saring provinsi, mis. 33"),
-    kdkab: str | None = Query(
+    kdkab: list[str] | None = Query(
         None,
-        description="Saring pasangan yang melibatkan kabupaten/kota ini, mis. 3302",
+        description="Saring pasangan yang melibatkan kabupaten/kota ini (boleh lebih dari satu), mis. 3302",
     ),
-    status: str | None = Query(
+    status: list[str] | None = Query(
         None,
-        description="Saring status pasangan: clean, belum_clean, menunggu_tetangga, belum_unggah",
+        description="Saring status pasangan (boleh lebih dari satu): clean, belum_clean, menunggu_tetangga, belum_unggah",
     ),
     sesi: Session = Depends(get_session),
     pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
 ) -> RekonsiliasiBatasRingkasanOut:
     """Ringkasan 74 pasang perbatasan kabupaten/kota se-Jawa Tengah (run V)."""
-    kdprov, kdkab = auth.saring_akses(pengguna, kdprov, kdkab)
+    prov, tetap = auth.saring_akses(pengguna, kdprov, None)
+    daftar_kab: list[str] | None = None
+    if tetap is not None:
+        # Petugas kabupaten/kota dikunci ke wilayahnya sendiri (atau validasi bila mengirim kdkab)
+        if kdkab:
+            for item in kdkab:
+                for potong in item.split(","):
+                    if potong.strip():
+                        auth.saring_akses(pengguna, prov, potong.strip())
+        daftar_kab = [tetap]
+    elif kdkab:
+        terkumpul: list[str] = []
+        for item in kdkab:
+            for potong in item.split(","):
+                bersih = potong.strip()
+                if not bersih:
+                    continue
+                _, kode = auth.saring_akses(pengguna, prov, bersih)
+                if kode and kode not in terkumpul:
+                    terkumpul.append(kode)
+        daftar_kab = terkumpul or None
+
     hasil = layanan.ringkasan_rekonsiliasi_batas(
-        sesi, kdprov=kdprov, kdkab=kdkab, status_filter=status
+        sesi, kdprov=prov, kdkab=daftar_kab, status_filter=status
     )
     return RekonsiliasiBatasRingkasanOut.model_validate(hasil)
 
@@ -1127,6 +1148,28 @@ def unduh_geojson_rekonsiliasi_batas(
         media_type="application/geo+json",
         filename=nama,
     )
+
+
+@router.get(
+    "/rekonsiliasi-batas/pasang/{kdkab_a}/{kdkab_b}/peta/{kdkab}",
+    response_class=FileResponse,
+)
+def unduh_peta_kab_rekonsiliasi_batas(
+    kdkab_a: str,
+    kdkab_b: str,
+    kdkab: str,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> FileResponse:
+    """Unduh berkas peta full (Validasi SLS / tipe V) milik kabupaten terdampak pada pasangan batas."""
+    a, b = _pastikan_akses_pasang_batas(pengguna, kdkab_a, kdkab_b)
+    try:
+        jalur, nama = layanan.jalur_unduh_peta_batas(sesi, a, b, kdkab)
+    except KesalahanPerubahan as galat:
+        raise HTTPException(status_code=404, detail=str(galat)) from galat
+    except FileNotFoundError as galat:
+        raise HTTPException(status_code=404, detail=str(galat)) from galat
+    return _unduhan_mentah(str(jalur), nama)
 
 
 @router.get("/perubahan", response_model=PerubahanOut)

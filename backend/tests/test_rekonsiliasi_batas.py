@@ -175,10 +175,28 @@ def test_perbarui_batas_dan_layanan_ringkasan_detail(tmp_path, sesi) -> None:
     assert ringkasan["belum_clean"] == 1
     assert ringkasan["menunggu_tetangga"] == 2
 
+    # Multi-kdkab dan multi-status
+    ringkasan_multi = layanan.ringkasan_rekonsiliasi_batas(
+        sesi,
+        kdprov="33",
+        kdkab=["3301", "3302"],
+        status_filter=["belum_clean", "clean"],
+    )
+    assert len(ringkasan_multi["baris"]) == 1
+    baris_3301_3302 = ringkasan_multi["baris"][0]
+    assert baris_3301_3302["waktu_a"] is not None
+    assert baris_3301_3302["waktu_b"] is not None
+    assert baris_3301_3302["ada_peta_a"] is True
+    assert baris_3301_3302["ada_peta_b"] is True
+
     detail = layanan.detail_rekonsiliasi_batas(sesi, "3301", "3302")
     assert detail["status"] == "belum_clean"
     assert detail["jumlah_overlap"] == 1
     assert detail["ada_geojson"] is True
+    assert detail["waktu_a"] is not None
+    assert detail["waktu_b"] is not None
+    assert detail["ada_peta_a"] is True
+    assert detail["ada_peta_b"] is True
     assert len(detail["temuan"]) == 1
     assert detail["temuan"][0]["idsubsls_a"] == "3301010001000100"
     assert detail["temuan"][0]["idsubsls_b"] == "3302010001000100"
@@ -188,3 +206,15 @@ def test_perbarui_batas_dan_layanan_ringkasan_detail(tmp_path, sesi) -> None:
     isi_geo = json.loads(jalur_geo.read_text(encoding="utf-8"))
     assert isi_geo["type"] == "FeatureCollection"
     assert len(isi_geo["features"]) == 1
+
+    jalur_peta_a, nama_peta_a = layanan.jalur_unduh_peta_batas(
+        sesi, "3301", "3302", "3301"
+    )
+    assert jalur_peta_a == berkas_3301
+    assert "3301" in nama_peta_a
+
+    jalur_peta_b, nama_peta_b = layanan.jalur_unduh_peta_batas(
+        sesi, "3301", "3302", "3302"
+    )
+    assert jalur_peta_b == berkas_3302
+    assert "3302" in nama_peta_b
