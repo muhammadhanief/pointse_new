@@ -339,7 +339,7 @@ export function RekonsiliasiBatasClient({
     () =>
       semuaKaresidenan.map((k) => ({
         nilai: k.id,
-        label: `${k.nama} (${k.kdkabList.length} kab/kota • PIC: ${k.pic})`,
+        label: `${k.nama} (${k.kdkabList.length} kab/kota)`,
       })),
     [semuaKaresidenan],
   );
@@ -432,7 +432,7 @@ export function RekonsiliasiBatasClient({
                   ? "Nonaktif (Filter Kab/Kota aktif)"
                   : "Seluruh Karesidenan (6)"
               }
-              tempatCari="Cari karesidenan atau nama PIC..."
+              tempatCari="Cari karesidenan..."
               opsi={opsiKaresidenan}
               terpilih={filterKaresidenan}
               nonaktif={filterKabs.length > 0}
