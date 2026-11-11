@@ -80,6 +80,64 @@ function BadgeStatusBatas({ status }: { status: string }) {
   }
 }
 
+type ArahUrut = "asc" | "desc";
+type KolomUrutPasangan =
+  | "wilayah_a"
+  | "wilayah_b"
+  | "status"
+  | "overlap"
+  | "gap";
+type KolomUrutKabKota =
+  | "kdkab"
+  | "tetangga"
+  | "total"
+  | "clean"
+  | "belum_clean"
+  | "menunggu_tetangga"
+  | "belum_unggah"
+  | "progres";
+
+const BOBOT_STATUS_BATAS: Record<string, number> = {
+  belum_clean: 1,
+  clean: 2,
+  menunggu_tetangga: 3,
+  belum_unggah: 4,
+};
+
+function HeaderUrut({
+  label,
+  aktif,
+  arah,
+  rataKanan = false,
+  onClick,
+}: {
+  label: string;
+  aktif: boolean;
+  arah: ArahUrut;
+  rataKanan?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <th
+      aria-sort={aktif ? (arah === "asc" ? "ascending" : "descending") : "none"}
+      className={`px-3 py-2.5 select-none ${rataKanan ? "text-right" : "text-left"}`}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        className={`inline-flex items-center gap-1 font-semibold uppercase tracking-wider transition-colors hover:text-ink ${
+          aktif ? "text-ink" : "text-muted"
+        } ${rataKanan ? "ml-auto justify-end" : ""}`}
+      >
+        <span>{label}</span>
+        <span aria-hidden="true" className="font-mono text-[10px]">
+          {aktif ? (arah === "asc" ? "↑" : "↓") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
+}
+
 export function RekonsiliasiBatasClient({
   kdprov,
   kdkab,
@@ -100,6 +158,14 @@ export function RekonsiliasiBatasClient({
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
 
   const [tabAktif, setTabAktif] = useState<"pasangan" | "kabkota">("pasangan");
+  const [urutPasangan, setUrutPasangan] = useState<{
+    kolom: KolomUrutPasangan;
+    arah: ArahUrut;
+  } | null>(null);
+  const [urutKabKota, setUrutKabKota] = useState<{
+    kolom: KolomUrutKabKota;
+    arah: ArahUrut;
+  }>({ kolom: "kdkab", arah: "asc" });
   const [filterKaresidenan, setFilterKaresidenan] = useState<string[]>([]);
   const [filterKabs, setFilterKabs] = useState<string[]>(
     kodeKabPengguna ? [kodeKabPengguna] : [],
@@ -255,14 +321,68 @@ export function RekonsiliasiBatasClient({
     }, 1800);
   }
 
+  function toggleUrutPasangan(kolom: KolomUrutPasangan) {
+    setUrutPasangan((lama) => {
+      if (lama?.kolom === kolom) {
+        return { kolom, arah: lama.arah === "asc" ? "desc" : "asc" };
+      }
+      const arahDefault: ArahUrut =
+        kolom === "overlap" || kolom === "gap" ? "desc" : "asc";
+      return { kolom, arah: arahDefault };
+    });
+  }
+
+  function toggleUrutKabKota(kolom: KolomUrutKabKota) {
+    setUrutKabKota((lama) => {
+      if (lama.kolom === kolom) {
+        return { kolom, arah: lama.arah === "asc" ? "desc" : "asc" };
+      }
+      const arahDefault: ArahUrut =
+        kolom === "kdkab" || kolom === "tetangga" ? "asc" : "desc";
+      return { kolom, arah: arahDefault };
+    });
+  }
+
   const daftarBarisTersaring = useMemo(() => {
     const semua = ringkasan?.baris ?? [];
-    if (filterStatuses.length === 0) {
-      return semua;
+    const disaring =
+      filterStatuses.length === 0
+        ? semua
+        : (() => {
+            const setStatus = new Set(filterStatuses);
+            return semua.filter((b) => setStatus.has(b.status));
+          })();
+
+    if (!urutPasangan) {
+      return disaring;
     }
-    const setStatus = new Set(filterStatuses);
-    return semua.filter((b) => setStatus.has(b.status));
-  }, [ringkasan, filterStatuses]);
+
+    const { kolom, arah } = urutPasangan;
+    const faktor = arah === "asc" ? 1 : -1;
+    return [...disaring].sort((a, b) => {
+      let selisih = 0;
+      if (kolom === "wilayah_a") {
+        selisih = a.kdkab_a.localeCompare(b.kdkab_a);
+      } else if (kolom === "wilayah_b") {
+        selisih = a.kdkab_b.localeCompare(b.kdkab_b);
+      } else if (kolom === "status") {
+        selisih =
+          (BOBOT_STATUS_BATAS[a.status] ?? 99) -
+          (BOBOT_STATUS_BATAS[b.status] ?? 99);
+      } else if (kolom === "overlap") {
+        selisih = a.total_luas_overlap_m2 - b.total_luas_overlap_m2;
+      } else if (kolom === "gap") {
+        selisih = a.total_luas_gap_m2 - b.total_luas_gap_m2;
+      }
+      if (selisih !== 0) {
+        return selisih * faktor;
+      }
+      return (
+        a.kdkab_a.localeCompare(b.kdkab_a) ||
+        a.kdkab_b.localeCompare(b.kdkab_b)
+      );
+    });
+  }, [ringkasan, filterStatuses, urutPasangan]);
 
   const temuanDetailTersaring = useMemo(() => {
     const semua = detailPasang?.temuan ?? [];
@@ -406,26 +526,52 @@ export function RekonsiliasiBatasClient({
     const setStatusSaring =
       filterStatuses.length > 0 ? new Set(filterStatuses) : null;
 
-    const hasil = Array.from(petaRekap.values())
-      .filter((item) => {
-        if (setKabSaring && !setKabSaring.has(item.kdkab)) {
-          return false;
-        }
-        if (
-          setStatusSaring &&
-          !item.tetangga.some((t) => setStatusSaring.has(t.status))
-        ) {
-          return false;
-        }
-        return true;
-      })
-      .sort((a, b) => a.kdkab.localeCompare(b.kdkab));
+    const hasil = Array.from(petaRekap.values()).filter((item) => {
+      if (setKabSaring && !setKabSaring.has(item.kdkab)) {
+        return false;
+      }
+      if (
+        setStatusSaring &&
+        !item.tetangga.some((t) => setStatusSaring.has(t.status))
+      ) {
+        return false;
+      }
+      return true;
+    });
 
     for (const item of hasil) {
       item.tetangga.sort((a, b) => a.kdkab.localeCompare(b.kdkab));
     }
+
+    const { kolom, arah } = urutKabKota;
+    const faktor = arah === "asc" ? 1 : -1;
+    hasil.sort((a, b) => {
+      let selisih = 0;
+      if (kolom === "kdkab") {
+        selisih = a.kdkab.localeCompare(b.kdkab);
+      } else if (kolom === "tetangga" || kolom === "total") {
+        selisih = a.tetangga.length - b.tetangga.length;
+      } else if (kolom === "clean") {
+        selisih = a.clean - b.clean;
+      } else if (kolom === "belum_clean") {
+        selisih = a.belum_clean - b.belum_clean;
+      } else if (kolom === "menunggu_tetangga") {
+        selisih = a.menunggu_tetangga - b.menunggu_tetangga;
+      } else if (kolom === "belum_unggah") {
+        selisih = a.belum_unggah - b.belum_unggah;
+      } else if (kolom === "progres") {
+        const pA = a.tetangga.length > 0 ? a.clean / a.tetangga.length : 0;
+        const pB = b.tetangga.length > 0 ? b.clean / b.tetangga.length : 0;
+        selisih = pA - pB;
+      }
+      if (selisih !== 0) {
+        return selisih * faktor;
+      }
+      return a.kdkab.localeCompare(b.kdkab);
+    });
+
     return hasil;
-  }, [ringkasan, semuaKab, daftarKabAktif, filterStatuses]);
+  }, [ringkasan, semuaKab, daftarKabAktif, filterStatuses, urutKabKota]);
 
   const totalPasang = ringkasan?.total_pasang ?? 0;
   const jmlClean = ringkasan?.clean ?? 0;
@@ -694,11 +840,38 @@ export function RekonsiliasiBatasClient({
             <table className="w-full border-collapse text-left text-xs">
               <thead className="sticky top-0 z-10 bg-paper shadow-[0_1px_0_0_var(--line)]">
                 <tr className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-                  <th className="px-3 py-2.5">Wilayah A</th>
-                  <th className="px-3 py-2.5">Wilayah B (Tetangga)</th>
-                  <th className="px-3 py-2.5">Status Batas</th>
-                  <th className="px-3 py-2.5 text-right">Overlap</th>
-                  <th className="px-3 py-2.5 text-right">Gap</th>
+                  <HeaderUrut
+                    label="Wilayah A"
+                    aktif={urutPasangan?.kolom === "wilayah_a"}
+                    arah={urutPasangan?.arah ?? "asc"}
+                    onClick={() => toggleUrutPasangan("wilayah_a")}
+                  />
+                  <HeaderUrut
+                    label="Wilayah B (Tetangga)"
+                    aktif={urutPasangan?.kolom === "wilayah_b"}
+                    arah={urutPasangan?.arah ?? "asc"}
+                    onClick={() => toggleUrutPasangan("wilayah_b")}
+                  />
+                  <HeaderUrut
+                    label="Status Batas"
+                    aktif={urutPasangan?.kolom === "status"}
+                    arah={urutPasangan?.arah ?? "asc"}
+                    onClick={() => toggleUrutPasangan("status")}
+                  />
+                  <HeaderUrut
+                    label="Overlap"
+                    rataKanan
+                    aktif={urutPasangan?.kolom === "overlap"}
+                    arah={urutPasangan?.arah ?? "desc"}
+                    onClick={() => toggleUrutPasangan("overlap")}
+                  />
+                  <HeaderUrut
+                    label="Gap"
+                    rataKanan
+                    aktif={urutPasangan?.kolom === "gap"}
+                    arah={urutPasangan?.arah ?? "desc"}
+                    onClick={() => toggleUrutPasangan("gap")}
+                  />
                   <th className="px-3 py-2.5 text-right">
                     Aksi &amp; Berkas Pemeriksaan
                   </th>
@@ -941,14 +1114,60 @@ export function RekonsiliasiBatasClient({
             <table className="w-full border-collapse text-left text-xs">
               <thead className="sticky top-0 z-10 bg-paper shadow-[0_1px_0_0_var(--line)]">
                 <tr className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-                  <th className="px-3 py-2.5">Kabupaten/Kota</th>
-                  <th className="px-3 py-2.5">Kab/Kota Tetangga</th>
-                  <th className="px-3 py-2.5 text-right">Total</th>
-                  <th className="px-3 py-2.5 text-right">Clean</th>
-                  <th className="px-3 py-2.5 text-right">Belum Clean</th>
-                  <th className="px-3 py-2.5 text-right">Menunggu</th>
-                  <th className="px-3 py-2.5 text-right">Belum Unggah</th>
-                  <th className="px-3 py-2.5 text-right">Progres</th>
+                  <HeaderUrut
+                    label="Kabupaten/Kota"
+                    aktif={urutKabKota.kolom === "kdkab"}
+                    arah={urutKabKota.arah}
+                    onClick={() => toggleUrutKabKota("kdkab")}
+                  />
+                  <HeaderUrut
+                    label="Kab/Kota Tetangga"
+                    aktif={urutKabKota.kolom === "tetangga"}
+                    arah={urutKabKota.arah}
+                    onClick={() => toggleUrutKabKota("tetangga")}
+                  />
+                  <HeaderUrut
+                    label="Total"
+                    rataKanan
+                    aktif={urutKabKota.kolom === "total"}
+                    arah={urutKabKota.arah}
+                    onClick={() => toggleUrutKabKota("total")}
+                  />
+                  <HeaderUrut
+                    label="Clean"
+                    rataKanan
+                    aktif={urutKabKota.kolom === "clean"}
+                    arah={urutKabKota.arah}
+                    onClick={() => toggleUrutKabKota("clean")}
+                  />
+                  <HeaderUrut
+                    label="Belum Clean"
+                    rataKanan
+                    aktif={urutKabKota.kolom === "belum_clean"}
+                    arah={urutKabKota.arah}
+                    onClick={() => toggleUrutKabKota("belum_clean")}
+                  />
+                  <HeaderUrut
+                    label="Menunggu"
+                    rataKanan
+                    aktif={urutKabKota.kolom === "menunggu_tetangga"}
+                    arah={urutKabKota.arah}
+                    onClick={() => toggleUrutKabKota("menunggu_tetangga")}
+                  />
+                  <HeaderUrut
+                    label="Belum Unggah"
+                    rataKanan
+                    aktif={urutKabKota.kolom === "belum_unggah"}
+                    arah={urutKabKota.arah}
+                    onClick={() => toggleUrutKabKota("belum_unggah")}
+                  />
+                  <HeaderUrut
+                    label="Progres"
+                    rataKanan
+                    aktif={urutKabKota.kolom === "progres"}
+                    arah={urutKabKota.arah}
+                    onClick={() => toggleUrutKabKota("progres")}
+                  />
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
