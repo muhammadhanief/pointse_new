@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { PenandaUrut, type ArahUrut } from "@/components/dashboard/tabel-urut";
 import { EmptyState, Panel, TombolAksi } from "@/components/dashboard/ui";
 import {
   KesalahanApi,
@@ -42,6 +43,35 @@ function labelObjek(item: Aktivitas): string {
   return item.objek;
 }
 
+type KunciUrutAktivitas = "waktu" | "nama" | "aksi" | "objek" | "detail" | "wilayah";
+
+const KOLOM_AKTIVITAS: { kunci: KunciUrutAktivitas; label: string }[] = [
+  { kunci: "waktu", label: "Waktu" },
+  { kunci: "nama", label: "Pengguna" },
+  { kunci: "aksi", label: "Aksi" },
+  { kunci: "objek", label: "Objek" },
+  { kunci: "detail", label: "Detail" },
+  { kunci: "wilayah", label: "Wilayah" },
+];
+
+/** Nilai yang dibandingkan saat kolom diurutkan (selalu teks, gaya tampilan). */
+function nilaiUrutAktivitas(item: Aktivitas, kunci: KunciUrutAktivitas): string {
+  switch (kunci) {
+    case "waktu":
+      return item.created_at ?? "";
+    case "nama":
+      return item.nama ?? "";
+    case "aksi":
+      return LABEL_AKSI[item.aksi] ?? item.aksi;
+    case "objek":
+      return labelObjek(item);
+    case "detail":
+      return item.detail ?? "";
+    case "wilayah":
+      return labelWilayah(item.kdprov, item.kdkab);
+  }
+}
+
 function FotoPelaku({ item }: { item: Aktivitas }) {
   const [gagal, setGagal] = useState(false);
   const inisial = item.nama.trim().charAt(0).toUpperCase() || "?";
@@ -73,6 +103,10 @@ export function LogAktivitasClient() {
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState<string | null>(null);
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
+  const [cari, setCari] = useState("");
+  const [kataKunci, setKataKunci] = useState("");
+  const [urutKolom, setUrutKolom] = useState<KunciUrutAktivitas | null>(null);
+  const [urutArah, setUrutArah] = useState<ArahUrut>("asc");
   const kendaliRef = useRef<AbortController | null>(null);
 
   const muat = useCallback(async (senyap = false) => {
@@ -117,6 +151,53 @@ export function LogAktivitasClient() {
     };
   }, [muat]);
 
+  // Saringan lokal supaya search tetap bekerja walau endpoint aktivitas belum
+  // mengenal parameter pencarian.
+  const baris = useMemo(() => {
+    const daftar = data?.baris ?? [];
+    const kata = kataKunci.trim().toLowerCase();
+    if (!kata) {
+      return daftar;
+    }
+    return daftar.filter((item) =>
+      [
+        item.nama,
+        item.username,
+        item.nip ?? "",
+        item.aksi,
+        item.objek,
+        item.detail ?? "",
+        labelWilayah(item.kdprov, item.kdkab),
+      ].some((nilai) => nilai.toLowerCase().includes(kata)),
+    );
+  }, [data, kataKunci]);
+
+  const barisTerurut = useMemo(() => {
+    const daftar = [...baris];
+    if (!urutKolom) {
+      return daftar;
+    }
+    const arah = urutArah === "asc" ? 1 : -1;
+    daftar.sort(
+      (a, b) =>
+        arah *
+        nilaiUrutAktivitas(a, urutKolom).localeCompare(
+          nilaiUrutAktivitas(b, urutKolom),
+          "id",
+        ),
+    );
+    return daftar;
+  }, [baris, urutKolom, urutArah]);
+
+  function urutkan(kunci: KunciUrutAktivitas) {
+    if (urutKolom === kunci) {
+      setUrutArah(urutArah === "asc" ? "desc" : "asc");
+      return;
+    }
+    setUrutKolom(kunci);
+    setUrutArah("asc");
+  }
+
   return (
     <Panel
       judul="Log aktivitas"
@@ -125,8 +206,11 @@ export function LogAktivitasClient() {
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
           <span>
-            <strong className="text-ink">{data?.total ?? 0}</strong> aktivitas
+            <strong className="text-ink">{baris.length}</strong> aktivitas
           </span>
+          {kataKunci ? (
+            <span>memuat &ldquo;{kataKunci}&rdquo;</span>
+          ) : null}
           {diperbarui ? (
             <span>Diperbarui {formatWaktu(diperbarui)}</span>
           ) : null}
@@ -140,6 +224,40 @@ export function LogAktivitasClient() {
           {memuat ? "Memuat..." : "Muat ulang"}
         </TombolAksi>
       </div>
+
+      <form
+        className="mt-3 flex flex-wrap items-end gap-2"
+        onSubmit={(kejadian) => {
+          kejadian.preventDefault();
+          setKataKunci(cari.trim());
+        }}
+      >
+        <label className="min-w-0 flex-1 text-sm font-medium text-ink">
+          Cari aktivitas
+          <input
+            type="search"
+            value={cari}
+            onChange={(kejadian) => setCari(kejadian.target.value)}
+            placeholder="nama, aksi, detail, atau wilayah"
+            className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
+          />
+        </label>
+        <TombolAksi type="submit" varian="sekunder" className="min-h-9 px-2.5 text-xs">
+          Cari
+        </TombolAksi>
+        {kataKunci ? (
+          <TombolAksi
+            varian="sekunder"
+            className="min-h-9 px-2.5 text-xs"
+            onClick={() => {
+              setCari("");
+              setKataKunci("");
+            }}
+          >
+            Reset
+          </TombolAksi>
+        ) : null}
+      </form>
 
       {galat ? (
         <div
@@ -161,28 +279,56 @@ export function LogAktivitasClient() {
         </div>
       ) : null}
 
-      {!memuat && data && data.baris.length === 0 ? (
-        <EmptyState judul="Belum ada aktivitas tercatat">
-          Aktivitas login dan unggahan akan muncul setelah pengguna memakai
-          aplikasi.
-        </EmptyState>
+      {!memuat && data && baris.length === 0 ? (
+        kataKunci ? (
+          <EmptyState judul="Tidak ada aktivitas yang cocok">
+            Tidak ada nama, aksi, detail, atau wilayah yang memuat
+            &ldquo;{kataKunci}&rdquo;. Coba kata kunci lain.
+          </EmptyState>
+        ) : (
+          <EmptyState judul="Belum ada aktivitas tercatat">
+            Aktivitas login dan unggahan akan muncul setelah pengguna memakai
+            aplikasi.
+          </EmptyState>
+        )
       ) : null}
 
-      {data && data.baris.length > 0 ? (
-        <div className="mt-3 overflow-x-auto rounded-lg border border-line">
+      {data && baris.length > 0 ? (
+        <div className="mt-3 max-h-[32rem] overflow-auto overscroll-contain rounded-lg border border-line">
           <table className="w-full min-w-[58rem] border-collapse text-[13px]">
-            <thead>
-              <tr className="border-b border-line bg-paper text-left text-xs uppercase tracking-wide text-muted">
-                <th className="px-3 py-2 font-semibold">Waktu</th>
-                <th className="px-3 py-2 font-semibold">Pengguna</th>
-                <th className="px-3 py-2 font-semibold">Aksi</th>
-                <th className="px-3 py-2 font-semibold">Objek</th>
-                <th className="px-3 py-2 font-semibold">Detail</th>
-                <th className="px-3 py-2 font-semibold">Wilayah</th>
+            <thead className="sticky top-0 z-10 bg-paper">
+              <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
+                {KOLOM_AKTIVITAS.map((kolom) => (
+                  <th
+                    key={kolom.kunci}
+                    scope="col"
+                    aria-sort={
+                      urutKolom === kolom.kunci
+                        ? urutArah === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                    className="p-0 font-semibold"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => urutkan(kolom.kunci)}
+                      title={`Urutkan menurut ${kolom.label}`}
+                      className="group inline-flex min-h-9 w-full items-center gap-1 px-3 py-2 text-left uppercase tracking-wide hover:text-ink"
+                    >
+                      <span>{kolom.label}</span>
+                      <PenandaUrut
+                        aktif={urutKolom === kolom.kunci}
+                        arah={urutArah}
+                      />
+                    </button>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {data.baris.map((item) => (
+              {barisTerurut.map((item) => (
                 <tr
                   key={item.id}
                   className="border-b border-line/70 last:border-0"

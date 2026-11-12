@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { PenandaUrut, type ArahUrut } from "@/components/dashboard/tabel-urut";
 import { EmptyState, Panel, TombolAksi } from "@/components/dashboard/ui";
 import {
   KesalahanApi,
@@ -25,6 +26,35 @@ function labelPeranApi(peran: string): string {
     return "Petugas Kabupaten/Kota";
   }
   return peran;
+}
+
+type KunciUrutPengguna = "nama" | "wilayah" | "peran" | "login" | "aktif" | "status";
+
+const KOLOM_PENGGUNA: { kunci: KunciUrutPengguna; label: string }[] = [
+  { kunci: "nama", label: "Pengguna" },
+  { kunci: "wilayah", label: "Wilayah" },
+  { kunci: "peran", label: "Peran" },
+  { kunci: "login", label: "Login terakhir" },
+  { kunci: "aktif", label: "Aktif terakhir" },
+  { kunci: "status", label: "Status" },
+];
+
+/** Nilai yang dibandingkan saat kolom diurutkan (selalu teks). */
+function nilaiUrutPengguna(pengguna: PenggunaAktif, kunci: KunciUrutPengguna): string {
+  switch (kunci) {
+    case "nama":
+      return pengguna.nama ?? "";
+    case "wilayah":
+      return labelWilayah(pengguna.kdprov, pengguna.kdkab);
+    case "peran":
+      return labelPeranApi(pengguna.peran);
+    case "login":
+      return pengguna.login_pada ?? "";
+    case "aktif":
+      return pengguna.terakhir_aktif ?? "";
+    case "status":
+      return pengguna.online ? "1" : "0";
+  }
 }
 
 function FotoPengguna({ pengguna }: { pengguna: PenggunaAktif }) {
@@ -80,6 +110,8 @@ export function PenggunaAktifClient() {
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
   const [cari, setCari] = useState("");
   const [kataKunci, setKataKunci] = useState("");
+  const [urutKolom, setUrutKolom] = useState<KunciUrutPengguna | null>(null);
+  const [urutArah, setUrutArah] = useState<ArahUrut>("asc");
   const kendaliRef = useRef<AbortController | null>(null);
 
   const muat = useCallback(
@@ -146,6 +178,32 @@ export function PenggunaAktifClient() {
   }, [data, kataKunci]);
 
   const online = baris.filter((pengguna) => pengguna.online).length;
+
+  const barisTerurut = useMemo(() => {
+    const daftar = [...baris];
+    if (!urutKolom) {
+      return daftar;
+    }
+    const arah = urutArah === "asc" ? 1 : -1;
+    daftar.sort(
+      (a, b) =>
+        arah *
+        nilaiUrutPengguna(a, urutKolom).localeCompare(
+          nilaiUrutPengguna(b, urutKolom),
+          "id",
+        ),
+    );
+    return daftar;
+  }, [baris, urutKolom, urutArah]);
+
+  function urutkan(kunci: KunciUrutPengguna) {
+    if (urutKolom === kunci) {
+      setUrutArah(urutArah === "asc" ? "desc" : "asc");
+      return;
+    }
+    setUrutKolom(kunci);
+    setUrutArah("asc");
+  }
 
   return (
     <Panel
@@ -244,20 +302,41 @@ export function PenggunaAktifClient() {
       ) : null}
 
       {data && baris.length > 0 ? (
-        <div className="mt-3 overflow-x-auto rounded-lg border border-line">
+        <div className="mt-3 max-h-[32rem] overflow-auto overscroll-contain rounded-lg border border-line">
           <table className="w-full min-w-[52rem] border-collapse text-[13px]">
-            <thead>
-              <tr className="border-b border-line bg-paper text-left text-xs uppercase tracking-wide text-muted">
-                <th className="px-3 py-2 font-semibold">Pengguna</th>
-                <th className="px-3 py-2 font-semibold">Wilayah</th>
-                <th className="px-3 py-2 font-semibold">Peran</th>
-                <th className="px-3 py-2 font-semibold">Login terakhir</th>
-                <th className="px-3 py-2 font-semibold">Aktif terakhir</th>
-                <th className="px-3 py-2 font-semibold">Status</th>
+            <thead className="sticky top-0 z-10 bg-paper">
+              <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
+                {KOLOM_PENGGUNA.map((kolom) => (
+                  <th
+                    key={kolom.kunci}
+                    scope="col"
+                    aria-sort={
+                      urutKolom === kolom.kunci
+                        ? urutArah === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                    className="p-0 font-semibold"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => urutkan(kolom.kunci)}
+                      title={`Urutkan menurut ${kolom.label}`}
+                      className="group inline-flex min-h-9 w-full items-center gap-1 px-3 py-2 text-left uppercase tracking-wide hover:text-ink"
+                    >
+                      <span>{kolom.label}</span>
+                      <PenandaUrut
+                        aktif={urutKolom === kolom.kunci}
+                        arah={urutArah}
+                      />
+                    </button>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {baris.map((pengguna) => (
+              {barisTerurut.map((pengguna) => (
                 <tr
                   key={pengguna.sub}
                   className="border-b border-line/70 last:border-0"
