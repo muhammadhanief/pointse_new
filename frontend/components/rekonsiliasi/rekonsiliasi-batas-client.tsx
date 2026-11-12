@@ -659,7 +659,7 @@ export function RekonsiliasiBatasClient({
                 <>
                   Batas toleransi{" "}
                   <span className="font-mono font-semibold tabular-nums text-ink">
-                    {formatAmbang(luasMin)} m2
+                    {formatAmbang(luasMin)} m²
                   </span>
                   : gap atau overlap dengan luas kurang dari nilai ini diampuni
                   (tidak dihitung).

@@ -16,10 +16,10 @@
   --accent: var(--brand);
   --accent-strong: var(--brand-strong);
   --accent-soft: var(--brand-soft);
-  --danger: #9f3a32;
-  --danger-soft: #f6e5e2;
-  --success: #2c6a4d;
-  --success-soft: #e4efe8;
+  --danger: #d0362a;
+  --danger-soft: #fde2e0;
+  --success: #1f7a3f;
+  --success-soft: #e0efe5;
   /* Kuning penyelesaian: progres berjalan yang belum tuntas. Gelap cukup
      supaya tetap terbaca sebagai bidang di atas jalur batang muda. */
   --warning: #a87800;
