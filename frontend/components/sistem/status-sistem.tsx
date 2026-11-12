@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { BadgeStatus } from "@/components/proses/badge-status";
+import { PenandaUrut, type ArahUrut } from "@/components/dashboard/tabel-urut";
 import {
   EmptyState,
   Panel,
@@ -13,7 +14,12 @@ import {
   ambilJson,
   pesanKesalahan,
 } from "@/lib/api/klien";
-import type { JobSistem, StatusSistem } from "@/lib/api/types";
+import type {
+  JobSistem,
+  StatusSistem,
+  WorkerEvent,
+  WorkerHeartbeat,
+} from "@/lib/api/types";
 import { formatAngka, formatBytes, formatWaktu } from "@/lib/format";
 import { labelTipe } from "@/lib/istilah";
 
@@ -39,6 +45,80 @@ function nilaiDurasi(detik: number | null | undefined): string {
     return `${menit}m ${sisa}d`;
   }
   return `${sisa} detik`;
+}
+
+type KunciUrutHeartbeat = "worker" | "pid" | "status" | "job" | "heartbeat" | "umur";
+
+const KOLOM_HEARTBEAT: {
+  kunci: KunciUrutHeartbeat;
+  label: string;
+  rataKanan?: boolean;
+}[] = [
+  { kunci: "worker", label: "Worker" },
+  { kunci: "pid", label: "PID" },
+  { kunci: "status", label: "Status" },
+  { kunci: "job", label: "Job" },
+  { kunci: "heartbeat", label: "Heartbeat" },
+  { kunci: "umur", label: "Umur", rataKanan: true },
+];
+
+function nilaiUrutHeartbeat(
+  item: WorkerHeartbeat,
+  kunci: KunciUrutHeartbeat,
+): string | number {
+  switch (kunci) {
+    case "worker":
+      return item.worker_id;
+    case "pid":
+      return item.pid ?? -1;
+    case "status":
+      return item.status;
+    case "job":
+      return item.run_id ?? -1;
+    case "heartbeat":
+      return item.heartbeat_at;
+    case "umur":
+      return item.umur_heartbeat_detik;
+  }
+}
+
+type KunciUrutKejadian = "waktu" | "level" | "jenis" | "job" | "worker" | "pesan";
+
+const KOLOM_KEJADIAN: { kunci: KunciUrutKejadian; label: string }[] = [
+  { kunci: "waktu", label: "Waktu" },
+  { kunci: "level", label: "Level" },
+  { kunci: "jenis", label: "Jenis" },
+  { kunci: "job", label: "Job" },
+  { kunci: "worker", label: "Worker" },
+  { kunci: "pesan", label: "Pesan" },
+];
+
+function nilaiUrutKejadian(
+  item: WorkerEvent,
+  kunci: KunciUrutKejadian,
+): string | number {
+  switch (kunci) {
+    case "waktu":
+      return item.created_at;
+    case "level":
+      return item.level;
+    case "jenis":
+      return item.jenis;
+    case "job":
+      return item.run_id ?? -1;
+    case "worker":
+      return item.worker_id ?? "";
+    case "pesan":
+      return item.pesan;
+  }
+}
+
+/** Bandingkan nilai urut: angka secara numerik, sisanya teks gaya tampilan. */
+function bandingNilai(a: string | number, b: string | number): number {
+  if (typeof a === "number" && typeof b === "number") {
+    return a - b;
+  }
+  return String(a).localeCompare(String(b), "id");
 }
 
 function BarPemakaian({
@@ -146,6 +226,88 @@ export function StatusSistem() {
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+
+  const [cariHeartbeat, setCariHeartbeat] = useState("");
+  const [saringHeartbeat, setSaringHeartbeat] = useState("");
+  const [kolomHeartbeat, setKolomHeartbeat] =
+    useState<KunciUrutHeartbeat | null>(null);
+  const [arahHeartbeat, setArahHeartbeat] = useState<ArahUrut>("asc");
+
+  const [cariKejadian, setCariKejadian] = useState("");
+  const [saringKejadian, setSaringKejadian] = useState("");
+  const [kolomKejadian, setKolomKejadian] =
+    useState<KunciUrutKejadian | null>(null);
+  const [arahKejadian, setArahKejadian] = useState<ArahUrut>("asc");
+
+  const heartbeatTampil = useMemo(() => {
+    const daftar = status?.heartbeats ?? [];
+    const kata = saringHeartbeat.trim().toLowerCase();
+    const cocok = kata
+      ? daftar.filter((item) =>
+          [item.worker_id, item.hostname ?? "", item.status].some((nilai) =>
+            nilai.toLowerCase().includes(kata),
+          ),
+        )
+      : daftar;
+    if (!kolomHeartbeat) {
+      return cocok;
+    }
+    const arah = arahHeartbeat === "asc" ? 1 : -1;
+    return [...cocok].sort(
+      (a, b) =>
+        arah *
+        bandingNilai(
+          nilaiUrutHeartbeat(a, kolomHeartbeat),
+          nilaiUrutHeartbeat(b, kolomHeartbeat),
+        ),
+    );
+  }, [status, saringHeartbeat, kolomHeartbeat, arahHeartbeat]);
+
+  const kejadianTampil = useMemo(() => {
+    const daftar = status?.kejadian ?? [];
+    const kata = saringKejadian.trim().toLowerCase();
+    const cocok = kata
+      ? daftar.filter((item) =>
+          [
+            item.level,
+            item.jenis,
+            item.pesan,
+            item.worker_id ?? "",
+            item.run_id ? `job ${item.run_id}` : "",
+          ].some((nilai) => nilai.toLowerCase().includes(kata)),
+        )
+      : daftar;
+    if (!kolomKejadian) {
+      return cocok;
+    }
+    const arah = arahKejadian === "asc" ? 1 : -1;
+    return [...cocok].sort(
+      (a, b) =>
+        arah *
+        bandingNilai(
+          nilaiUrutKejadian(a, kolomKejadian),
+          nilaiUrutKejadian(b, kolomKejadian),
+        ),
+    );
+  }, [status, saringKejadian, kolomKejadian, arahKejadian]);
+
+  function urutkanHeartbeat(kunci: KunciUrutHeartbeat) {
+    if (kolomHeartbeat === kunci) {
+      setArahHeartbeat(arahHeartbeat === "asc" ? "desc" : "asc");
+      return;
+    }
+    setKolomHeartbeat(kunci);
+    setArahHeartbeat("asc");
+  }
+
+  function urutkanKejadian(kunci: KunciUrutKejadian) {
+    if (kolomKejadian === kunci) {
+      setArahKejadian(arahKejadian === "asc" ? "desc" : "asc");
+      return;
+    }
+    setKolomKejadian(kunci);
+    setArahKejadian("asc");
+  }
 
   const muat = useCallback(async (senyap = false) => {
     controllerRef.current?.abort();
@@ -401,61 +563,135 @@ export function StatusSistem() {
             Jalankan service worker setelah migrasi 0009 agar heartbeat tercatat.
           </EmptyState>
         ) : (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full min-w-[760px] border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
-                  <th className="py-2 pl-3 pr-3 font-semibold">Worker</th>
-                  <th className="py-2 pr-3 font-semibold">PID</th>
-                  <th className="py-2 pr-3 font-semibold">Status</th>
-                  <th className="py-2 pr-3 font-semibold">Job</th>
-                  <th className="py-2 pr-3 font-semibold">Heartbeat</th>
-                  <th className="py-2 text-right font-semibold">Umur</th>
-                </tr>
-              </thead>
-              <tbody>
-                {status.heartbeats.map((heartbeat) => (
-                  <tr
-                    key={heartbeat.worker_id}
-                    className="border-b border-line/70 last:border-0"
-                  >
-                    <td className="break-all py-2 pl-3 pr-3 font-medium text-ink">
-                      {heartbeat.worker_id}
-                      {heartbeat.hostname ? (
-                        <span className="block text-xs font-normal text-muted">
-                          {heartbeat.hostname}
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className="py-2 pr-3 tabular-nums text-muted">
-                      {heartbeat.pid ?? "-"}
-                    </td>
-                    <td className="py-2 pr-3">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
-                          heartbeat.aktif
-                            ? "bg-brand-soft text-brand-strong"
-                            : "bg-paper text-muted"
-                        }`}
+          <>
+            <form
+              className="mt-3 flex flex-wrap items-end gap-2"
+              onSubmit={(kejadian) => {
+                kejadian.preventDefault();
+                setSaringHeartbeat(cariHeartbeat.trim());
+              }}
+            >
+              <label className="min-w-0 flex-1 text-sm font-medium text-ink">
+                Cari heartbeat
+                <input
+                  type="search"
+                  value={cariHeartbeat}
+                  onChange={(kejadian) =>
+                    setCariHeartbeat(kejadian.target.value)
+                  }
+                  placeholder="worker, hostname, atau status"
+                  className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
+                />
+              </label>
+              <TombolAksi
+                type="submit"
+                varian="sekunder"
+                className="min-h-9 px-2.5 text-xs"
+              >
+                Cari
+              </TombolAksi>
+              {saringHeartbeat ? (
+                <TombolAksi
+                  varian="sekunder"
+                  className="min-h-9 px-2.5 text-xs"
+                  onClick={() => {
+                    setCariHeartbeat("");
+                    setSaringHeartbeat("");
+                  }}
+                >
+                  Reset
+                </TombolAksi>
+              ) : null}
+            </form>
+
+            {heartbeatTampil.length === 0 ? (
+              <EmptyState judul="Tidak ada heartbeat yang cocok">
+                Tidak ada worker, hostname, atau status yang memuat
+                &ldquo;{saringHeartbeat}&rdquo;. Coba kata kunci lain.
+              </EmptyState>
+            ) : (
+              <div className="mt-3 max-h-[32rem] overflow-auto overscroll-contain rounded-lg border border-line">
+                <table className="w-full min-w-[760px] border-collapse text-sm">
+                  <thead className="sticky top-0 z-10 bg-paper">
+                    <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
+                      {KOLOM_HEARTBEAT.map((kolom) => (
+                        <th
+                          key={kolom.kunci}
+                          scope="col"
+                          aria-sort={
+                            kolomHeartbeat === kolom.kunci
+                              ? arahHeartbeat === "asc"
+                                ? "ascending"
+                                : "descending"
+                              : "none"
+                          }
+                          className={`p-0 font-semibold ${
+                            kolom.rataKanan ? "text-right" : ""
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => urutkanHeartbeat(kolom.kunci)}
+                            title={`Urutkan menurut ${kolom.label}`}
+                            className={`group inline-flex min-h-9 w-full items-center gap-1 py-2 pl-3 pr-3 text-left uppercase tracking-wide hover:text-ink ${
+                              kolom.rataKanan ? "justify-end" : ""
+                            }`}
+                          >
+                            <span>{kolom.label}</span>
+                            <PenandaUrut
+                              aktif={kolomHeartbeat === kolom.kunci}
+                              arah={arahHeartbeat}
+                            />
+                          </button>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {heartbeatTampil.map((heartbeat) => (
+                      <tr
+                        key={heartbeat.worker_id}
+                        className="border-b border-line/70 last:border-0"
                       >
-                        {heartbeat.status}
-                        {heartbeat.aktif ? "" : " · tidak aktif"}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-3 text-muted">
-                      {heartbeat.run_id ? `Job ${heartbeat.run_id}` : "-"}
-                    </td>
-                    <td className="py-2 pr-3 text-muted">
-                      {formatWaktu(heartbeat.heartbeat_at)}
-                    </td>
-                    <td className="py-2 text-right tabular-nums text-muted">
-                      {nilaiDurasi(heartbeat.umur_heartbeat_detik)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                        <td className="break-all py-2 pl-3 pr-3 font-medium text-ink">
+                          {heartbeat.worker_id}
+                          {heartbeat.hostname ? (
+                            <span className="block text-xs font-normal text-muted">
+                              {heartbeat.hostname}
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="py-2 pr-3 tabular-nums text-muted">
+                          {heartbeat.pid ?? "-"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                              heartbeat.aktif
+                                ? "bg-brand-soft text-brand-strong"
+                                : "bg-paper text-muted"
+                            }`}
+                          >
+                            {heartbeat.status}
+                            {heartbeat.aktif ? "" : " · tidak aktif"}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 text-muted">
+                          {heartbeat.run_id ? `Job ${heartbeat.run_id}` : "-"}
+                        </td>
+                        <td className="py-2 pr-3 text-muted">
+                          {formatWaktu(heartbeat.heartbeat_at)}
+                        </td>
+                        <td className="py-2 text-right tabular-nums text-muted">
+                          {nilaiDurasi(heartbeat.umur_heartbeat_detik)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </Panel>
 
@@ -516,53 +752,118 @@ export function StatusSistem() {
             Kejadian akan tercatat saat worker mulai atau memproses job.
           </EmptyState>
         ) : (
-          <div className="mt-3 max-h-[55vh] overflow-auto overscroll-contain rounded-lg border border-line">
-            <table className="w-full min-w-[52rem] border-collapse text-[13px]">
-              <caption className="sr-only">
-                Riwayat kejadian worker, terbaru lebih dulu.
-              </caption>
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-muted">
-                  {["Waktu", "Level", "Jenis", "Job", "Worker", "Pesan"].map(
-                    (label) => (
-                      <th
-                        key={label}
-                        scope="col"
-                        className="sticky top-0 z-10 border-b border-line bg-paper px-3 py-2 font-semibold"
+          <>
+            <form
+              className="mt-3 flex flex-wrap items-end gap-2"
+              onSubmit={(kejadian) => {
+                kejadian.preventDefault();
+                setSaringKejadian(cariKejadian.trim());
+              }}
+            >
+              <label className="min-w-0 flex-1 text-sm font-medium text-ink">
+                Cari kejadian
+                <input
+                  type="search"
+                  value={cariKejadian}
+                  onChange={(kejadian) => setCariKejadian(kejadian.target.value)}
+                  placeholder="level, jenis, pesan, atau job"
+                  className="mt-label block min-h-9 w-full rounded-lg border border-line-strong bg-surface px-input py-input text-sm text-ink"
+                />
+              </label>
+              <TombolAksi
+                type="submit"
+                varian="sekunder"
+                className="min-h-9 px-2.5 text-xs"
+              >
+                Cari
+              </TombolAksi>
+              {saringKejadian ? (
+                <TombolAksi
+                  varian="sekunder"
+                  className="min-h-9 px-2.5 text-xs"
+                  onClick={() => {
+                    setCariKejadian("");
+                    setSaringKejadian("");
+                  }}
+                >
+                  Reset
+                </TombolAksi>
+              ) : null}
+            </form>
+
+            {kejadianTampil.length === 0 ? (
+              <EmptyState judul="Tidak ada kejadian yang cocok">
+                Tidak ada level, jenis, pesan, atau job yang memuat
+                &ldquo;{saringKejadian}&rdquo;. Coba kata kunci lain.
+              </EmptyState>
+            ) : (
+              <div className="mt-3 max-h-[55vh] overflow-auto overscroll-contain rounded-lg border border-line">
+                <table className="w-full min-w-[52rem] border-collapse text-[13px]">
+                  <caption className="sr-only">
+                    Riwayat kejadian worker, terbaru lebih dulu.
+                  </caption>
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wide text-muted">
+                      {KOLOM_KEJADIAN.map((kolom) => (
+                        <th
+                          key={kolom.kunci}
+                          scope="col"
+                          aria-sort={
+                            kolomKejadian === kolom.kunci
+                              ? arahKejadian === "asc"
+                                ? "ascending"
+                                : "descending"
+                              : "none"
+                          }
+                          className="sticky top-0 z-10 border-b border-line bg-paper p-0 font-semibold"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => urutkanKejadian(kolom.kunci)}
+                            title={`Urutkan menurut ${kolom.label}`}
+                            className="group inline-flex min-h-9 w-full items-center gap-1 px-3 py-2 text-left uppercase tracking-wide hover:text-ink"
+                          >
+                            <span>{kolom.label}</span>
+                            <PenandaUrut
+                              aktif={kolomKejadian === kolom.kunci}
+                              arah={arahKejadian}
+                            />
+                          </button>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kejadianTampil.map((kejadian) => (
+                      <tr
+                        key={kejadian.id}
+                        className="border-b border-line/70 last:border-0 hover:bg-brand-soft/20"
                       >
-                        {label}
-                      </th>
-                    ),
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {status.kejadian.map((kejadian) => (
-                  <tr
-                    key={kejadian.id}
-                    className="border-b border-line/70 last:border-0 hover:bg-brand-soft/20"
-                  >
-                    <td className="whitespace-nowrap px-3 py-2 text-muted">
-                      {formatWaktu(kejadian.created_at)}
-                    </td>
-                    <td className="px-3 py-2 font-medium text-ink">
-                      {kejadian.level}
-                    </td>
-                    <td className="px-3 py-2 text-muted">{kejadian.jenis}</td>
-                    <td className="px-3 py-2 tabular-nums text-muted">
-                      {kejadian.run_id ? `Job ${kejadian.run_id}` : "-"}
-                    </td>
-                    <td className="px-3 py-2 text-muted">
-                      {kejadian.worker_id ?? "-"}
-                    </td>
-                    <td className="max-w-[28rem] break-words px-3 py-2 text-muted">
-                      {kejadian.pesan}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                        <td className="whitespace-nowrap px-3 py-2 text-muted">
+                          {formatWaktu(kejadian.created_at)}
+                        </td>
+                        <td className="px-3 py-2 font-medium text-ink">
+                          {kejadian.level}
+                        </td>
+                        <td className="px-3 py-2 text-muted">
+                          {kejadian.jenis}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums text-muted">
+                          {kejadian.run_id ? `Job ${kejadian.run_id}` : "-"}
+                        </td>
+                        <td className="px-3 py-2 text-muted">
+                          {kejadian.worker_id ?? "-"}
+                        </td>
+                        <td className="max-w-[28rem] break-words px-3 py-2 text-muted">
+                          {kejadian.pesan}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </Panel>
 
