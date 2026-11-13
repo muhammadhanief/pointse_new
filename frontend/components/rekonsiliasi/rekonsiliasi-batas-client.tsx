@@ -168,7 +168,7 @@ export function RekonsiliasiBatasClient({
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
 
   const [tabAktif, setTabAktif] = useState<"pasangan" | "kabkota" | "grafik">(
-    "pasangan",
+    "grafik",
   );
   const [urutPasangan, setUrutPasangan] = useState<{
     kolom: KolomUrutPasangan;
@@ -609,6 +609,13 @@ export function RekonsiliasiBatasClient({
     [rekapKabKotaTersaring],
   );
 
+  // Tab grafik hanya bermakna bila ada minimal 2 kabupaten/kota (petugas
+  // kab/kota hanya punya satu). Sebelum data pertama masuk, tab grafik belum
+  // ditampilkan sehingga daftar pasangan yang dipakai.
+  const tabGrafikTersedia = Boolean(ringkasan) && dataGrafikKabKota.length >= 2;
+  const tabTampil =
+    tabAktif === "grafik" && !tabGrafikTersedia ? "pasangan" : tabAktif;
+
   const totalPasang = ringkasan?.total_pasang ?? 0;
   const jmlClean = ringkasan?.clean ?? 0;
   const jmlBelumClean = ringkasan?.belum_clean ?? 0;
@@ -831,10 +838,10 @@ export function RekonsiliasiBatasClient({
         <button
           type="button"
           role="tab"
-          aria-selected={tabAktif === "pasangan"}
+          aria-selected={tabTampil === "pasangan"}
           onClick={() => setTabAktif("pasangan")}
           className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-            tabAktif === "pasangan"
+            tabTampil === "pasangan"
               ? "bg-brand text-white"
               : "border border-line bg-surface text-ink hover:bg-paper"
           }`}
@@ -842,7 +849,7 @@ export function RekonsiliasiBatasClient({
           <span>Daftar Pasangan Batas</span>
           <span
             className={`rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${
-              tabAktif === "pasangan"
+              tabTampil === "pasangan"
                 ? "bg-white/20 text-white"
                 : "bg-paper text-muted"
             }`}
@@ -853,10 +860,10 @@ export function RekonsiliasiBatasClient({
         <button
           type="button"
           role="tab"
-          aria-selected={tabAktif === "kabkota"}
+          aria-selected={tabTampil === "kabkota"}
           onClick={() => setTabAktif("kabkota")}
           className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-            tabAktif === "kabkota"
+            tabTampil === "kabkota"
               ? "bg-brand text-white"
               : "border border-line bg-surface text-ink hover:bg-paper"
           }`}
@@ -864,7 +871,7 @@ export function RekonsiliasiBatasClient({
           <span>Rekap per Kabupaten/Kota</span>
           <span
             className={`rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${
-              tabAktif === "kabkota"
+              tabTampil === "kabkota"
                 ? "bg-white/20 text-white"
                 : "bg-paper text-muted"
             }`}
@@ -872,14 +879,14 @@ export function RekonsiliasiBatasClient({
             {rekapKabKotaTersaring.length}
           </span>
         </button>
-        {dataGrafikKabKota.length >= 2 ? (
+        {tabGrafikTersedia ? (
           <button
             type="button"
             role="tab"
-            aria-selected={tabAktif === "grafik"}
+            aria-selected={tabTampil === "grafik"}
             onClick={() => setTabAktif("grafik")}
             className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-              tabAktif === "grafik"
+              tabTampil === "grafik"
                 ? "bg-brand text-white"
                 : "border border-line bg-surface text-ink hover:bg-paper"
             }`}
@@ -887,7 +894,7 @@ export function RekonsiliasiBatasClient({
             <span>Grafik per Kabupaten/Kota</span>
             <span
               className={`rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${
-                tabAktif === "grafik"
+                tabTampil === "grafik"
                   ? "bg-white/20 text-white"
                   : "bg-paper text-muted"
               }`}
@@ -899,7 +906,7 @@ export function RekonsiliasiBatasClient({
       </div>
 
       {/* Tab 1: Daftar Pasangan Perbatasan */}
-      {tabAktif === "pasangan" ? (
+      {tabTampil === "pasangan" ? (
       <Panel
         judul="Daftar Pasangan Perbatasan Kabupaten/Kota"
         deskripsi={
@@ -1172,7 +1179,7 @@ export function RekonsiliasiBatasClient({
           </div>
         )}
       </Panel>
-      ) : tabAktif === "kabkota" ? (
+      ) : tabTampil === "kabkota" ? (
       /* Tab 2: Rekap per Kabupaten/Kota */
       <Panel
         judul="Rekap Perbatasan per Kabupaten/Kota"
