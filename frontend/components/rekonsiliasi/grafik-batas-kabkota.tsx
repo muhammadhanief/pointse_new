@@ -144,6 +144,9 @@ function TooltipBatasKabKota({ active, payload }: TooltipContentProps) {
 export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
   const [urutKunci, setUrutKunci] = useState<KunciUrutGrafik>("kode");
   const [urutArah, setUrutArah] = useState<ArahUrut>("asc");
+  // "proporsi" = 100% bertumpuk, "jumlah" = tinggi batang sebesar jumlah
+  // pasangan apa adanya.
+  const [modeNilai, setModeNilai] = useState<"proporsi" | "jumlah">("proporsi");
   const [layarPenuh, setLayarPenuh] = useState(false);
   const tombolTutupRef = useRef<HTMLButtonElement | null>(null);
 
@@ -194,6 +197,23 @@ export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
   const kontrolUrut = (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
       <div className="inline-flex items-center gap-2">
+        <span className="text-muted">Nilai batang:</span>
+        <div className="inline-flex overflow-hidden rounded-lg border border-line-strong">
+          <TombolPilih
+            aktif={modeNilai === "proporsi"}
+            onClick={() => setModeNilai("proporsi")}
+          >
+            Proporsi
+          </TombolPilih>
+          <TombolPilih
+            aktif={modeNilai === "jumlah"}
+            onClick={() => setModeNilai("jumlah")}
+          >
+            Jumlah
+          </TombolPilih>
+        </div>
+      </div>
+      <div className="inline-flex items-center gap-2">
         <span className="text-muted">Urutkan menurut:</span>
         <div className="inline-flex overflow-hidden rounded-lg border border-line-strong">
           <TombolPilih
@@ -230,13 +250,15 @@ export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
     </div>
   );
 
+  const proporsi = modeNilai === "proporsi";
+
   const bagan = (tinggi: string) => (
     <div className="mt-3 overflow-x-auto">
       <div className={`${tinggi} min-w-[1100px]`}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={dataTerurut}
-            stackOffset="expand"
+            stackOffset={proporsi ? "expand" : "none"}
             margin={{ top: 18, right: 12, left: 0, bottom: 8 }}
             barCategoryGap="18%"
           >
@@ -256,9 +278,13 @@ export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
               axisLine={{ stroke: "var(--line)" }}
             />
             <YAxis
-              domain={[0, 1]}
-              ticks={[0, 0.25, 0.5, 0.75, 1]}
-              tickFormatter={(nilai) => `${Math.round(nilai * 100)}%`}
+              {...(proporsi
+                ? {
+                    domain: [0, 1] as [number, number],
+                    ticks: [0, 0.25, 0.5, 0.75, 1],
+                    tickFormatter: (nilai: number) => `${Math.round(nilai * 100)}%`,
+                  }
+                : { allowDecimals: false })}
               tick={{ fontSize: 10, fill: "var(--muted)" }}
               tickLine={false}
               axisLine={false}
