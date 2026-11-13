@@ -30,18 +30,20 @@ export function Panel({
   deskripsi,
   children,
   className = "",
+  judulRata = "kiri",
 }: {
   judul?: string;
   deskripsi?: string;
   children: ReactNode;
   className?: string;
+  judulRata?: "kiri" | "tengah";
 }) {
   return (
     <section
       className={`rounded-xl border border-line bg-surface p-kartu ${className}`}
     >
       {judul || deskripsi ? (
-        <div className="max-w-2xl">
+        <div className={judulRata === "tengah" ? "text-center" : "max-w-2xl"}>
           {judul ? (
             <h2 className="text-base font-semibold tracking-tight text-ink">
               {judul}

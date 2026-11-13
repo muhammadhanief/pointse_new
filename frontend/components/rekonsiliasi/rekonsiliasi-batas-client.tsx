@@ -1394,7 +1394,7 @@ export function RekonsiliasiBatasClient({
       </Panel>
       ) : (
       /* Tab 3: Grafik per Kabupaten/Kota */
-      <Panel judul="Pemeriksaan Batas per Kabupaten/Kota">
+      <Panel judul="Pemeriksaan Batas per Kabupaten/Kota" judulRata="tengah">
         <GrafikBatasKabKota data={dataGrafikKabKota} />
       </Panel>
       )}
