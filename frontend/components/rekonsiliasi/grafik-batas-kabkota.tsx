@@ -50,7 +50,7 @@ const URUTAN_KATEGORI: { kunci: KunciKategori; label: string }[] = [
   { kunci: "belum_unggah", label: "Belum Unggah" },
 ];
 
-type KunciUrutGrafik = "kode" | "persen";
+type KunciUrutGrafik = "kode" | "clean";
 
 function persenDari(nilai: number, total: number): number {
   return total > 0 ? (nilai / total) * 100 : 0;
@@ -171,19 +171,26 @@ export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
     };
   }, [layarPenuh]);
 
+  const proporsi = modeNilai === "proporsi";
+
+  // Kunci "clean" mengikuti mode tampilan: pada mode proporsi urutkan menurut
+  // persentase clean, pada mode jumlah urutkan menurut banyaknya pasangan clean
+  // supaya panjang batang hijau memang berurutan di layar.
   const dataTerurut = useMemo(() => {
     const faktor = urutArah === "asc" ? 1 : -1;
     return [...data].sort((a, b) => {
       const selisih =
         urutKunci === "kode"
           ? a.kode.localeCompare(b.kode)
-          : persenDari(a.clean, a.total) - persenDari(b.clean, b.total);
+          : proporsi
+            ? persenDari(a.clean, a.total) - persenDari(b.clean, b.total)
+            : a.clean - b.clean;
       if (selisih !== 0) {
         return selisih * faktor;
       }
       return a.kode.localeCompare(b.kode);
     });
-  }, [data, urutKunci, urutArah]);
+  }, [data, urutKunci, urutArah, proporsi]);
 
   if (data.length < 2) {
     return (
@@ -223,10 +230,10 @@ export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
             Kode
           </TombolPilih>
           <TombolPilih
-            aktif={urutKunci === "persen"}
-            onClick={() => setUrutKunci("persen")}
+            aktif={urutKunci === "clean"}
+            onClick={() => setUrutKunci("clean")}
           >
-            Persentase clean
+            Clean
           </TombolPilih>
         </div>
       </div>
@@ -249,8 +256,6 @@ export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
       </div>
     </div>
   );
-
-  const proporsi = modeNilai === "proporsi";
 
   const bagan = (tinggi: string) => (
     <div className="mt-3 overflow-x-auto">
