@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { MultiPilih } from "@/components/dashboard/multi-pilih";
 import { EmptyState, Panel, TombolAksi } from "@/components/dashboard/ui";
+import { GrafikBatasKabKota } from "@/components/rekonsiliasi/grafik-batas-kabkota";
 import { PengaturanPemeriksaanBatas } from "@/components/rekonsiliasi/pengaturan-pemeriksaan-batas";
 import {
   adalahBatal,
@@ -166,7 +167,9 @@ export function RekonsiliasiBatasClient({
   const [galat, setGalat] = useState<string | null>(null);
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
 
-  const [tabAktif, setTabAktif] = useState<"pasangan" | "kabkota">("pasangan");
+  const [tabAktif, setTabAktif] = useState<"pasangan" | "kabkota" | "grafik">(
+    "pasangan",
+  );
   const [urutPasangan, setUrutPasangan] = useState<{
     kolom: KolomUrutPasangan;
     arah: ArahUrut;
@@ -586,6 +589,26 @@ export function RekonsiliasiBatasClient({
     return hasil;
   }, [ringkasan, semuaKab, daftarKabAktif, filterStatuses, urutKabKota]);
 
+  // Data grafik memakai ulang rekap tab "Rekap per Kabupaten/Kota" supaya ikut
+  // saringan yang sama. Urutannya diatur di dalam komponen grafik.
+  const dataGrafikKabKota = useMemo(
+    () =>
+      rekapKabKotaTersaring.map((item) => {
+        const nama = formatNamaKabKota(item.nmkab) || item.kdkab;
+        return {
+          kode: item.kdkab,
+          nama,
+          label: `${item.kdkab} ${nama}`,
+          clean: item.clean,
+          belum_clean: item.belum_clean,
+          menunggu_tetangga: item.menunggu_tetangga,
+          belum_unggah: item.belum_unggah,
+          total: item.tetangga.length,
+        };
+      }),
+    [rekapKabKotaTersaring],
+  );
+
   const totalPasang = ringkasan?.total_pasang ?? 0;
   const jmlClean = ringkasan?.clean ?? 0;
   const jmlBelumClean = ringkasan?.belum_clean ?? 0;
@@ -799,7 +822,7 @@ export function RekonsiliasiBatasClient({
         </div>
       )}
 
-      {/* Tab Pilihan Tampilan: Daftar Pasangan vs Rekap per Kabupaten/Kota */}
+      {/* Tab Pilihan Tampilan: Daftar Pasangan, Rekap, dan Grafik per Kabupaten/Kota */}
       <div
         role="tablist"
         aria-label="Tampilan rekonsiliasi batas"
@@ -849,6 +872,30 @@ export function RekonsiliasiBatasClient({
             {rekapKabKotaTersaring.length}
           </span>
         </button>
+        {dataGrafikKabKota.length >= 2 ? (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tabAktif === "grafik"}
+            onClick={() => setTabAktif("grafik")}
+            className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+              tabAktif === "grafik"
+                ? "bg-brand text-white"
+                : "border border-line bg-surface text-ink hover:bg-paper"
+            }`}
+          >
+            <span>Grafik per Kabupaten/Kota</span>
+            <span
+              className={`rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${
+                tabAktif === "grafik"
+                  ? "bg-white/20 text-white"
+                  : "bg-paper text-muted"
+              }`}
+            >
+              {dataGrafikKabKota.length}
+            </span>
+          </button>
+        ) : null}
       </div>
 
       {/* Tab 1: Daftar Pasangan Perbatasan */}
@@ -1125,7 +1172,7 @@ export function RekonsiliasiBatasClient({
           </div>
         )}
       </Panel>
-      ) : (
+      ) : tabAktif === "kabkota" ? (
       /* Tab 2: Rekap per Kabupaten/Kota */
       <Panel
         judul="Rekap Perbatasan per Kabupaten/Kota"
@@ -1344,6 +1391,11 @@ export function RekonsiliasiBatasClient({
             </table>
           </div>
         )}
+      </Panel>
+      ) : (
+      /* Tab 3: Grafik per Kabupaten/Kota */
+      <Panel judul="Pemeriksaan Batas per Kabupaten/Kota">
+        <GrafikBatasKabKota data={dataGrafikKabKota} />
       </Panel>
       )}
 
