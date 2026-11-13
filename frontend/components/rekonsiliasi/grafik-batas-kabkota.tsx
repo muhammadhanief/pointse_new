@@ -115,7 +115,7 @@ function TombolPilih({
       type="button"
       aria-pressed={aktif}
       onClick={onClick}
-      className={`min-h-9 border-l border-line-strong px-3 text-xs font-semibold transition-colors first:border-l-0 ${
+      className={`min-h-8 border-l border-line-strong px-2.5 text-xs font-semibold transition-colors first:border-l-0 ${
         aktif ? "bg-brand text-white" : "bg-surface text-ink hover:bg-paper"
       }`}
     >
@@ -243,7 +243,7 @@ export function GrafikBatasKabKota({
   }
 
   const kontrolUrut = (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
       <div className="inline-flex items-center gap-2">
         <span className="text-muted">Nilai batang:</span>
         <div className="inline-flex overflow-hidden rounded-lg border border-line-strong">
@@ -399,7 +399,7 @@ export function GrafikBatasKabKota({
             aria-label="Tutup layar penuh"
             title="Tutup layar penuh"
             onClick={() => setLayarPenuh(false)}
-            className="inline-flex h-9 w-9 items-center justify-center justify-self-end rounded-lg border border-line-strong bg-surface text-ink transition-colors hover:border-brand hover:text-brand-strong"
+            className="inline-flex h-8 w-8 items-center justify-center justify-self-end rounded-lg border border-line-strong bg-surface text-ink transition-colors hover:border-brand hover:text-brand-strong"
           >
             <IkonKeluarLayarPenuh />
           </button>
@@ -422,7 +422,7 @@ export function GrafikBatasKabKota({
           aria-label="Tampilkan layar penuh"
           title="Layar penuh"
           onClick={() => setLayarPenuh(true)}
-          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line-strong bg-surface text-ink transition-colors hover:border-brand hover:text-brand-strong"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line-strong bg-surface text-ink transition-colors hover:border-brand hover:text-brand-strong"
         >
           <IkonLayarPenuh />
         </button>
