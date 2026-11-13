@@ -6,6 +6,7 @@ import {
   PERAN_PETUGAS_KABKOT,
 } from "@/lib/auth/peran";
 import { simpanSesi } from "@/lib/auth/session";
+import { HALAMAN_AWAL } from "@/lib/auth/url";
 import { asalDiizinkan, urlPublik } from "@/lib/http/origin";
 import {
   daftarKabupaten,
@@ -70,7 +71,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       kdprov: "33",
       kdkab: null,
     });
-    return NextResponse.redirect(urlPublik(request, "/"), { status: 303 });
+    return NextResponse.redirect(urlPublik(request, HALAMAN_AWAL), {
+      status: 303,
+    });
   }
 
   if (peran !== "petugas_kabkot") {
@@ -106,5 +109,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     kdkab: kode,
   });
 
-  return NextResponse.redirect(urlPublik(request, "/"), { status: 303 });
+  return NextResponse.redirect(urlPublik(request, HALAMAN_AWAL), {
+    status: 303,
+  });
 }
