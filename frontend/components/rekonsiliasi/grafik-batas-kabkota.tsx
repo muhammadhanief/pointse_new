@@ -14,7 +14,6 @@ import {
 } from "recharts";
 
 import type { ArahUrut } from "@/components/dashboard/tabel-urut";
-import { TombolAksi } from "@/components/dashboard/ui";
 import { formatAngka } from "@/lib/format";
 
 export type BatangBatasKabKota = {
@@ -54,6 +53,42 @@ type KunciUrutGrafik = "kode" | "clean";
 
 function persenDari(nilai: number, total: number): number {
   return total > 0 ? (nilai / total) * 100 : 0;
+}
+
+function IkonLayarPenuh() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M9 3H3v6" />
+      <path d="M15 21h6v-6" />
+    </svg>
+  );
+}
+
+function IkonKeluarLayarPenuh() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 9V3h-6" />
+      <path d="M3 15v6h6" />
+    </svg>
+  );
 }
 
 function TitikWarna({ warna }: { warna: string }) {
@@ -141,7 +176,13 @@ function TooltipBatasKabKota({ active, payload }: TooltipContentProps) {
   );
 }
 
-export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
+export function GrafikBatasKabKota({
+  data,
+  diperbarui,
+}: {
+  data: BatangBatasKabKota[];
+  diperbarui?: string | null;
+}) {
   const [urutKunci, setUrutKunci] = useState<KunciUrutGrafik>("kode");
   const [urutArah, setUrutArah] = useState<ArahUrut>("asc");
   // "proporsi" = 100% bertumpuk, "jumlah" = tinggi batang sebesar jumlah
@@ -339,19 +380,28 @@ export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
       >
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-line bg-surface px-4 py-3">
           <span aria-hidden="true" />
-          <h2
-            id="judul-grafik-batas"
-            className="text-center text-sm font-bold text-ink sm:text-base"
-          >
-            {JUDUL_GRAFIK}
-          </h2>
+          <div className="text-center">
+            <h2
+              id="judul-grafik-batas"
+              className="text-sm font-bold text-ink sm:text-base"
+            >
+              {JUDUL_GRAFIK}
+            </h2>
+            {diperbarui ? (
+              <p className="mt-0.5 text-xs text-muted">
+                Diperbarui {diperbarui} WIB
+              </p>
+            ) : null}
+          </div>
           <button
             ref={tombolTutupRef}
             type="button"
+            aria-label="Tutup layar penuh"
+            title="Tutup layar penuh"
             onClick={() => setLayarPenuh(false)}
-            className="inline-flex min-h-9 items-center justify-center justify-self-end rounded-lg border border-line-strong bg-surface px-tombol text-sm font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong"
+            className="inline-flex h-9 w-9 items-center justify-center justify-self-end rounded-lg border border-line-strong bg-surface text-ink transition-colors hover:border-brand hover:text-brand-strong"
           >
-            Tutup
+            <IkonKeluarLayarPenuh />
           </button>
         </div>
         <div className="flex-1 overflow-auto p-4">
@@ -367,13 +417,15 @@ export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
     <div className="p-kartu">
       <div className="flex flex-wrap items-start justify-between gap-2">
         {kontrolUrut}
-        <TombolAksi
-          varian="sekunder"
-          className="px-3 text-xs"
+        <button
+          type="button"
+          aria-label="Tampilkan layar penuh"
+          title="Layar penuh"
           onClick={() => setLayarPenuh(true)}
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line-strong bg-surface text-ink transition-colors hover:border-brand hover:text-brand-strong"
         >
-          Layar penuh
-        </TombolAksi>
+          <IkonLayarPenuh />
+        </button>
       </div>
       {bagan("h-[400px]")}
       {legenda}

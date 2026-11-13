@@ -1394,8 +1394,12 @@ export function RekonsiliasiBatasClient({
       </Panel>
       ) : (
       /* Tab 3: Grafik per Kabupaten/Kota */
-      <Panel judul="Pemeriksaan Batas per Kabupaten/Kota" judulRata="tengah">
-        <GrafikBatasKabKota data={dataGrafikKabKota} />
+      <Panel
+        judul="Pemeriksaan Batas per Kabupaten/Kota"
+        judulRata="tengah"
+        deskripsi={diperbarui ? `Diperbarui ${diperbarui} WIB` : undefined}
+      >
+        <GrafikBatasKabKota data={dataGrafikKabKota} diperbarui={diperbarui} />
       </Panel>
       )}
 
