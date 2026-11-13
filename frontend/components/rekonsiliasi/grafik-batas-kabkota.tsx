@@ -183,8 +183,8 @@ export function GrafikBatasKabKota({
   data: BatangBatasKabKota[];
   diperbarui?: string | null;
 }) {
-  const [urutKunci, setUrutKunci] = useState<KunciUrutGrafik>("kode");
-  const [urutArah, setUrutArah] = useState<ArahUrut>("asc");
+  const [urutKunci, setUrutKunci] = useState<KunciUrutGrafik>("clean");
+  const [urutArah, setUrutArah] = useState<ArahUrut>("desc");
   // "proporsi" = 100% bertumpuk, "jumlah" = tinggi batang sebesar jumlah
   // pasangan apa adanya.
   const [modeNilai, setModeNilai] = useState<"proporsi" | "jumlah">("proporsi");
