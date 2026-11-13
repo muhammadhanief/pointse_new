@@ -1,8 +1,9 @@
-const formatterWaktu = new Intl.DateTimeFormat("id-ID", {
-  dateStyle: "medium",
-  // Status job diperbarui tiap 5 detik; tampilkan detik agar heartbeat dan
-  // waktu selesai bisa dibedakan.
-  timeStyle: "medium",
+const formatterJamMenitDetik = new Intl.DateTimeFormat("id-ID", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  // "h23" agar tengah malam tertulis 00, bukan 24.
+  hourCycle: "h23",
 });
 
 const formatterTanggal = new Intl.DateTimeFormat("id-ID", {
@@ -11,6 +12,18 @@ const formatterTanggal = new Intl.DateTimeFormat("id-ID", {
 
 const formatterAngka = new Intl.NumberFormat("id-ID");
 
+/**
+ * Jam:menit:detik. Locale id-ID memisahkan jam dengan titik (``10.17.51``);
+ * aplikasi memakai titik dua (``10:17:51``), jadi bagiannya disusun ulang
+ * dari ``formatToParts`` agar tidak bergantung pada pemisah bawaan locale.
+ */
+function formatJamMenitDetik(tanggal: Date): string {
+  const bagian = formatterJamMenitDetik.formatToParts(tanggal);
+  const ambil = (tipe: Intl.DateTimeFormatPartTypes): string =>
+    bagian.find((bagian) => bagian.type === tipe)?.value ?? "";
+  return `${ambil("hour")}:${ambil("minute")}:${ambil("second")}`;
+}
+
 /** Waktu API dikirim sebagai UTC tanpa zona; tambahkan Z sebelum ditampilkan. */
 export function formatWaktu(nilai: string | null | undefined): string {
   if (!nilai) {
@@ -18,7 +31,10 @@ export function formatWaktu(nilai: string | null | undefined): string {
   }
   const iso = /[zZ]$|[+-]\d{2}:\d{2}$/.test(nilai) ? nilai : `${nilai}Z`;
   const tanggal = new Date(iso);
-  return Number.isNaN(tanggal.getTime()) ? "-" : formatterWaktu.format(tanggal);
+  if (Number.isNaN(tanggal.getTime())) {
+    return "-";
+  }
+  return `${formatterTanggal.format(tanggal)}, ${formatJamMenitDetik(tanggal)}`;
 }
 
 /** Tanggal data tidak punya zona; baca sebagai tanggal lokal, bukan UTC. */
