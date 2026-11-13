@@ -85,8 +85,8 @@ function IkonKeluarLayarPenuh() {
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <path d="M21 9V3h-6" />
-      <path d="M3 15v6h6" />
+      <path d="M3 9h6V3" />
+      <path d="M21 15h-6v6" />
     </svg>
   );
 }
@@ -300,7 +300,7 @@ export function GrafikBatasKabKota({
 
   const bagan = (tinggi: string) => (
     <div className="mt-3 overflow-x-auto">
-      <div className={`${tinggi} min-w-[1100px]`}>
+      <div className={`${tinggi} min-w-[1400px]`}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={dataTerurut}
@@ -318,8 +318,12 @@ export function GrafikBatasKabKota({
               interval={0}
               angle={-45}
               textAnchor="end"
-              height={96}
-              tick={{ fontSize: 10, fill: "var(--muted)" }}
+              height={112}
+              tick={{
+                fontSize: 12,
+                fontWeight: 600,
+                fill: "var(--ink)",
+              }}
               tickLine={false}
               axisLine={{ stroke: "var(--line)" }}
             />
