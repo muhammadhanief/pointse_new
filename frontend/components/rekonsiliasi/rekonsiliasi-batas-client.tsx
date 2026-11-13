@@ -15,6 +15,7 @@ import {
 import type {
   RekonsiliasiBatasDetail,
   RekonsiliasiBatasPasangBaris,
+  RekonsiliasiBatasRekapKabKota,
   RekonsiliasiBatasRingkasan,
 } from "@/lib/api/types";
 import { PERAN_ADMIN_PROVINSI, kodeWilayah } from "@/lib/auth/peran";
@@ -165,6 +166,11 @@ export function RekonsiliasiBatasClient({
   const [ringkasan, setRingkasan] = useState<RekonsiliasiBatasRingkasan | null>(
     null,
   );
+  // Rekap seluruh provinsi untuk grafik; dipisah dari `ringkasan` karena
+  // `ringkasan` bisa tersaring ke wilayah pengguna saja.
+  const [rekapGrafik, setRekapGrafik] = useState<
+    RekonsiliasiBatasRekapKabKota[]
+  >([]);
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState<string | null>(null);
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
@@ -289,6 +295,20 @@ export function RekonsiliasiBatasClient({
             setMemuat(false);
           }
         });
+
+      // Rekap grafik selalu lingkup provinsi (semua peran) dan terpisah dari
+      // `ringkasan`, supaya petugas kabupaten/kota tetap melihat seluruh
+      // kabupaten/kota pada tab Grafik.
+      ambilJson<RekonsiliasiBatasRekapKabKota[]>(
+        "/rekonsiliasi-batas/rekap-kabkota",
+        { signal: controller.signal },
+      )
+        .then((hasil) => {
+          if (!controller.signal.aborted) {
+            setRekapGrafik(hasil);
+          }
+        })
+        .catch(() => undefined);
     },
     [adalahAdminProv],
   );
@@ -620,11 +640,12 @@ export function RekonsiliasiBatasClient({
     return hasil;
   }, [ringkasan, semuaKab, daftarKabAktif, filterStatuses, urutKabKota]);
 
-  // Data grafik memakai ulang rekap tab "Rekap per Kabupaten/Kota" supaya ikut
-  // saringan yang sama. Urutannya diatur di dalam komponen grafik.
+  // Data grafik: rekap seluruh kabupaten/kota se-provinsi dari endpoint
+  // khusus (terbuka untuk semua peran), jadi tidak ikut terkunci ke wilayah
+  // pengguna maupun saringan tabel. Urutannya diatur di dalam komponen grafik.
   const dataGrafikKabKota = useMemo(
     () =>
-      rekapKabKotaTersaring.map((item) => {
+      rekapGrafik.map((item) => {
         const nama = formatNamaKabKota(item.nmkab) || item.kdkab;
         return {
           kode: item.kdkab,
@@ -634,16 +655,14 @@ export function RekonsiliasiBatasClient({
           belum_clean: item.belum_clean,
           menunggu_tetangga: item.menunggu_tetangga,
           belum_unggah: item.belum_unggah,
-          total: item.tetangga.length,
+          total: item.total,
         };
       }),
-    [rekapKabKotaTersaring],
+    [rekapGrafik],
   );
 
-  // Tab grafik hanya bermakna bila ada minimal 2 kabupaten/kota (petugas
-  // kab/kota hanya punya satu). Sebelum data pertama masuk, tab grafik belum
-  // ditampilkan sehingga daftar pasangan yang dipakai.
-  const tabGrafikTersedia = Boolean(ringkasan) && dataGrafikKabKota.length >= 2;
+  // Tab grafik tampil untuk semua peran selama rekap provinsi sudah termuat.
+  const tabGrafikTersedia = dataGrafikKabKota.length >= 2;
   const tabTampil =
     tabAktif === "grafik" && !tabGrafikTersedia ? "pasangan" : tabAktif;
 

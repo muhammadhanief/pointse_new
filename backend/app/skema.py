@@ -1038,6 +1038,18 @@ class RekonsiliasiBatasRingkasanOut(BaseModel):
     baris: list[RekonsiliasiBatasPasangBarisOut] = Field(default_factory=list)
 
 
+class RekonsiliasiBatasRekapKabKotaOut(BaseModel):
+    """Rekap jumlah pasangan perbatasan per kabupaten/kota untuk grafik."""
+
+    kdkab: str
+    nmkab: str
+    clean: int = 0
+    belum_clean: int = 0
+    menunggu_tetangga: int = 0
+    belum_unggah: int = 0
+    total: int = 0
+
+
 class RekonsiliasiBatasTemuanOut(BaseModel):
     """Satu rincian temuan Gap atau Overlap pada pasangan perbatasan."""
 

@@ -92,6 +92,7 @@ from app.skema import (
     RekonsiliasiBatasJalankanOut,
     RekonsiliasiBatasPengaturanMasuk,
     RekonsiliasiBatasPengaturanOut,
+    RekonsiliasiBatasRekapKabKotaOut,
     RekonsiliasiBatasRingkasanOut,
     RingkasanKonfirmasiOut,
     RingkasanOut,
@@ -1116,6 +1117,25 @@ def ringkasan_rekonsiliasi_batas(
         sesi, kdprov=prov, kdkab=daftar_kab, status_filter=status
     )
     return RekonsiliasiBatasRingkasanOut.model_validate(hasil)
+
+
+@router.get(
+    "/rekonsiliasi-batas/rekap-kabkota",
+    response_model=list[RekonsiliasiBatasRekapKabKotaOut],
+)
+def rekap_kabkota_rekonsiliasi_batas(
+    kdprov: str | None = Query(None, description="Saring provinsi, mis. 33"),
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> list[RekonsiliasiBatasRekapKabKotaOut]:
+    """Rekap jumlah pasangan per kabupaten/kota se-provinsi untuk grafik.
+
+    Terbuka untuk semua peran (petugas kabupaten/kota maupun admin provinsi)
+    karena hanya memuat hitungan agregat, bukan rincian pasangan.
+    """
+    prov, _ = auth.saring_akses(pengguna, kdprov, None)
+    hasil = layanan.rekap_kabkota_rekonsiliasi_batas(sesi, kdprov=prov)
+    return [RekonsiliasiBatasRekapKabKotaOut.model_validate(item) for item in hasil]
 
 
 @router.get(

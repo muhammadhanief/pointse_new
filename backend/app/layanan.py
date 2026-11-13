@@ -1728,6 +1728,54 @@ def ringkasan_rekonsiliasi_batas(
     }
 
 
+def rekap_kabkota_rekonsiliasi_batas(
+    sesi: Session,
+    *,
+    kdprov: str | None = None,
+) -> list[dict[str, object]]:
+    """Rekap jumlah pasangan per kabupaten/kota se-provinsi untuk grafik.
+
+    Mengembalikan satu entri per kabupaten/kota (bukan per pasangan) berisi
+    jumlah pasangan clean/belum clean/menunggu/belum unggah. Dipakai grafik
+    perbandingan yang boleh dilihat semua peran tanpa membuka rincian pasangan.
+    """
+    ringkasan = ringkasan_rekonsiliasi_batas(sesi, kdprov=kdprov)
+    daftar_baris: list[dict[str, object]] = ringkasan["baris"]  # type: ignore[assignment]
+
+    status_dikenal = ("clean", "belum_clean", "menunggu_tetangga", "belum_unggah")
+    hitung: dict[str, dict[str, int]] = {}
+    nama_kab: dict[str, str] = {}
+
+    for baris in daftar_baris:
+        status = str(baris["status"])
+        for kode, nama in (
+            (str(baris["kdkab_a"]), str(baris["nmkab_a"])),
+            (str(baris["kdkab_b"]), str(baris["nmkab_b"])),
+        ):
+            if kode not in hitung:
+                hitung[kode] = {
+                    "clean": 0,
+                    "belum_clean": 0,
+                    "menunggu_tetangga": 0,
+                    "belum_unggah": 0,
+                    "total": 0,
+                }
+                nama_kab[kode] = nama
+
+            hitung[kode]["total"] += 1
+            kunci = status if status in status_dikenal else "belum_unggah"
+            hitung[kode][kunci] += 1
+
+    return [
+        {
+            "kdkab": kode,
+            "nmkab": nama_kab[kode],
+            **angka,
+        }
+        for kode, angka in sorted(hitung.items())
+    ]
+
+
 def detail_rekonsiliasi_batas(
     sesi: Session,
     kdkab_1: str,

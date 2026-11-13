@@ -647,6 +647,16 @@ export type RekonsiliasiBatasRingkasan = {
   baris: RekonsiliasiBatasPasangBaris[];
 };
 
+export type RekonsiliasiBatasRekapKabKota = {
+  kdkab: string;
+  nmkab: string;
+  clean: number;
+  belum_clean: number;
+  menunggu_tetangga: number;
+  belum_unggah: number;
+  total: number;
+};
+
 export type RekonsiliasiBatasTemuan = {
   id: number;
   jenis: "overlap" | "gap" | string;

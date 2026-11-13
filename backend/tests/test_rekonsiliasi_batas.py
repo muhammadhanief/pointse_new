@@ -366,6 +366,28 @@ def test_jalankan_ulang_semua_batas_memakai_ambang_baru(tmp_path, sesi, setelan)
     assert pasang[0].jumlah_overlap == 1
 
 
+def test_api_rekap_kabkota_grafik_seluruh_provinsi(klien) -> None:
+    """Rekap grafik memuat semua kabupaten/kota, bukan hanya wilayah pengguna."""
+    respons = klien.get("/rekonsiliasi-batas/rekap-kabkota")
+    assert respons.status_code == 200
+    data = respons.json()
+
+    kode = [item["kdkab"] for item in data]
+    assert kode == sorted(kode)
+    assert len(kode) == len(set(kode))
+    # 74 pasangan kanonik, tiap pasangan menyumbang satu sisi untuk dua kab.
+    assert sum(item["total"] for item in data) == 148
+    for item in data:
+        assert item["nmkab"]
+        assert (
+            item["clean"]
+            + item["belum_clean"]
+            + item["menunggu_tetangga"]
+            + item["belum_unggah"]
+            == item["total"]
+        )
+
+
 def test_api_pengaturan_dan_jalankan_ulang_batas(klien, sesi) -> None:
     """Admin dapat membaca/mengubah ambang dan mengantrekan pemeriksaan ulang."""
     awal = klien.get("/rekonsiliasi-batas/pengaturan")
