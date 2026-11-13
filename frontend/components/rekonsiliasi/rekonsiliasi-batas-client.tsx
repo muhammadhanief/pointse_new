@@ -643,23 +643,48 @@ export function RekonsiliasiBatasClient({
   // Data grafik: rekap seluruh kabupaten/kota se-provinsi dari endpoint
   // khusus (terbuka untuk semua peran), jadi tidak ikut terkunci ke wilayah
   // pengguna maupun saringan tabel. Urutannya diatur di dalam komponen grafik.
-  const dataGrafikKabKota = useMemo(
-    () =>
-      rekapGrafik.map((item) => {
-        const nama = formatNamaKabKota(item.nmkab) || item.kdkab;
-        return {
-          kode: item.kdkab,
-          nama,
-          label: `${item.kdkab} ${nama}`,
-          clean: item.clean,
-          belum_clean: item.belum_clean,
-          menunggu_tetangga: item.menunggu_tetangga,
-          belum_unggah: item.belum_unggah,
-          total: item.total,
-        };
-      }),
-    [rekapGrafik],
-  );
+  //
+  // Bila endpoint rekap belum tersedia (mis. backend versi lama saat frontend
+  // dan backend di-deploy terpisah), grafik jatuh ke rekap yang diturunkan dari
+  // `ringkasan` supaya tidak hilang begitu saja. Untuk petugas kabupaten/kota
+  // cadangan ini hanya memuat wilayahnya sendiri, jadi grafik tetap butuh
+  // endpoint baru untuk lingkup seluruh provinsi.
+  const dataGrafikKabKota = useMemo(() => {
+    const sumber =
+      rekapGrafik.length > 0
+        ? rekapGrafik.map((item) => ({
+            kdkab: item.kdkab,
+            nmkab: item.nmkab,
+            clean: item.clean,
+            belum_clean: item.belum_clean,
+            menunggu_tetangga: item.menunggu_tetangga,
+            belum_unggah: item.belum_unggah,
+            total: item.total,
+          }))
+        : rekapKabKotaTersaring.map((item) => ({
+            kdkab: item.kdkab,
+            nmkab: item.nmkab,
+            clean: item.clean,
+            belum_clean: item.belum_clean,
+            menunggu_tetangga: item.menunggu_tetangga,
+            belum_unggah: item.belum_unggah,
+            total: item.tetangga.length,
+          }));
+
+    return sumber.map((item) => {
+      const nama = formatNamaKabKota(item.nmkab) || item.kdkab;
+      return {
+        kode: item.kdkab,
+        nama,
+        label: `${item.kdkab} ${nama}`,
+        clean: item.clean,
+        belum_clean: item.belum_clean,
+        menunggu_tetangga: item.menunggu_tetangga,
+        belum_unggah: item.belum_unggah,
+        total: item.total,
+      };
+    });
+  }, [rekapGrafik, rekapKabKotaTersaring]);
 
   // Tab grafik tampil untuk semua peran selama rekap provinsi sudah termuat.
   const tabGrafikTersedia = dataGrafikKabKota.length >= 2;
@@ -1459,7 +1484,7 @@ export function RekonsiliasiBatasClient({
         <GrafikBatasKabKota
           data={dataGrafikKabKota}
           diperbarui={diperbarui}
-          layarPenuh={layarPenuhGrafik}
+          layarPenuh={layarPenuhGrafik && tabGrafikTersedia}
           onUbahLayarPenuh={setLayarPenuhGrafik}
         />
       </Panel>

@@ -236,11 +236,14 @@ export function GrafikBatasKabKota({
     });
   }, [data, urutKunci, urutArah, proporsi]);
 
-  if (data.length < 2 && !layarPenuh) {
+  // Tanpa minimal dua kabupaten/kota tidak ada yang bisa dibandingkan; tampilkan
+  // keterangan ini juga saat layar penuh supaya overlay tidak terbuka kosong.
+  if (data.length < 2) {
     return (
       <p className="p-kartu text-sm text-muted">
-        Grafik butuh minimal 2 kabupaten/kota untuk dibandingkan. Pilih wilayah
-        lain pada saringan untuk melihat sebarannya.
+        Grafik perbandingan antar kabupaten/kota se-provinsi belum tersedia.
+        Muat ulang sebentar lagi; bila tetap kosong, data rekap grafik belum
+        termuat dari server.
       </p>
     );
   }
