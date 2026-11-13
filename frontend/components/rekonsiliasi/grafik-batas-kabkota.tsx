@@ -244,13 +244,13 @@ export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
             aktif={urutArah === "asc"}
             onClick={() => setUrutArah("asc")}
           >
-            Naik ↑
+            Naik
           </TombolPilih>
           <TombolPilih
             aktif={urutArah === "desc"}
             onClick={() => setUrutArah("desc")}
           >
-            Turun ↓
+            Turun
           </TombolPilih>
         </div>
       </div>
@@ -337,10 +337,11 @@ export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
         aria-labelledby="judul-grafik-batas"
         className="fixed inset-0 z-50 flex flex-col bg-paper"
       >
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 py-3">
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-line bg-surface px-4 py-3">
+          <span aria-hidden="true" />
           <h2
             id="judul-grafik-batas"
-            className="text-sm font-bold text-ink sm:text-base"
+            className="text-center text-sm font-bold text-ink sm:text-base"
           >
             {JUDUL_GRAFIK}
           </h2>
@@ -348,7 +349,7 @@ export function GrafikBatasKabKota({ data }: { data: BatangBatasKabKota[] }) {
             ref={tombolTutupRef}
             type="button"
             onClick={() => setLayarPenuh(false)}
-            className="inline-flex min-h-9 items-center justify-center rounded-lg border border-line-strong bg-surface px-tombol text-sm font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong"
+            className="inline-flex min-h-9 items-center justify-center justify-self-end rounded-lg border border-line-strong bg-surface px-tombol text-sm font-semibold text-ink transition-colors hover:border-brand hover:text-brand-strong"
           >
             Tutup
           </button>
