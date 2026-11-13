@@ -185,6 +185,8 @@ class ValidasiRingkasanBarisOut(BaseModel):
     selesai_pada: datetime | None = None
     #: Pengunggah run terakhir (None bila tak tercatat/belum ada run).
     petugas: str | None = None
+    #: Ada berkas peta QC temuan topologi (overlap/gap) untuk run ini?
+    ada_peta_qc: bool = False
     total: int
     per_jenis: dict[str, int] = Field(default_factory=dict)
     #: Target = jumlah pasangan master kab ini (None bila master belum ada).

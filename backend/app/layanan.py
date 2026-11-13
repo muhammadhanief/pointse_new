@@ -1356,6 +1356,7 @@ def ringkasan_validasi(
     telah disetujui provinsi (``disetujui == total``), status menjadi
     ``sukses_catatan`` ("Sukses dengan catatan").
     """
+    from app import validasi_sls as modul_validasi
     from app.models import TIPE_V
 
     saring: list[object] = [Run.tipe == TIPE_V]
@@ -1510,6 +1511,11 @@ def ringkasan_validasi(
             "semester": satu.semester,
             "selesai_pada": satu.finished_at,
             "petugas": satu.user,
+            #: Ada berkas peta QC (overlap/gap) run ini di disk? Berkasnya
+            #: bernama tetap per run, jadi cukup dicek keberadaannya.
+            "ada_peta_qc": modul_validasi.jalur_geojson_qc(
+                satu.berkas_peta, kode, satu.id
+            ).is_file(),
             "total": total_temuan,
             "per_jenis": per_jenis,
             "target": tgt,

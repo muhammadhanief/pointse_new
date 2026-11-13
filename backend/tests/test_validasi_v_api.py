@@ -616,6 +616,96 @@ def test_proses_validasi_v_bersih_total_tanpa_crash(sesi, tmp_path) -> None:
     )
 
 
+def _hasil_topologi(topologi) -> object:
+    """Bungkus hasil topologi jadi ``HasilValidasi`` minimal (untuk unduhan QC)."""
+    from app import validasi_sls
+
+    return validasi_sls.HasilValidasi(
+        lolos=topologi.lolos,
+        skema=validasi_sls.HasilSkema(lolos=True),
+        duplikat=validasi_sls.HasilDuplikat(lolos=True),
+        konsistensi=validasi_sls.HasilKonsistensi(lolos=True),
+        matching=validasi_sls.HasilMatching(lolos=True),
+        pesan="ada temuan topologi",
+        topologi=topologi,
+    )
+
+
+def test_endpoint_peta_qc_validasi(tmp_path, klien, sesi) -> None:
+    """Endpoint peta QC: 404 saat belum ada, 200 GeoJSON setelah berkas ditulis."""
+    from app import validasi_sls
+
+    peta = tmp_path / "u" / "peta_3302.geojson"
+    peta.parent.mkdir(parents=True, exist_ok=True)
+    run = _run_v(sesi)
+    run.berkas_peta = str(peta)
+    sesi.commit()
+
+    belum = klien.get(f"/runs/{run.id}/validasi-sls/peta-qc.geojson")
+    assert belum.status_code == 404
+    assert "belum tersedia" in belum.json()["detail"]
+
+    temuan = validasi_sls.BarisUnmatch(
+        jenis=validasi_sls.JENIS_GEOM_OVERLAP,
+        idsls_peta="33020100010001",
+        idsubsls_peta="3302010001000100",
+        idsls_master=None,
+        idsubsls_master=None,
+        nmsls="SLS 1",
+        catatan="tumpang tindih dengan 3302010001000200",
+        luas_m2=123.5,
+        geojson_geom={
+            "type": "Polygon",
+            "coordinates": [
+                [[110.0, -7.0], [110.1, -7.0], [110.1, -7.1], [110.0, -7.0]]
+            ],
+        },
+    )
+    validasi_sls.tulis_geojson_qc(
+        _hasil_topologi(validasi_sls.HasilTopologi(lolos=False, temuan=[temuan])),
+        berkas_peta=peta,
+        kdkab="3302",
+        run_id=run.id,
+    )
+
+    ada = klien.get(f"/runs/{run.id}/validasi-sls/peta-qc.geojson")
+    assert ada.status_code == 200, ada.text
+    assert ada.headers["content-type"].startswith("application/geo+json")
+    assert "QC_Validasi_3302.geojson" in ada.headers.get("content-disposition", "")
+    fitur = ada.json()["features"]
+    assert len(fitur) == 1
+    assert fitur[0]["properties"]["jenis"] == validasi_sls.JENIS_GEOM_OVERLAP
+    assert fitur[0]["properties"]["luas_m2"] == 123.5
+
+    baris = klien.get("/validasi-sls/ringkasan").json()["baris"]
+    assert len(baris) == 1
+    assert baris[0]["run_id"] == run.id
+    assert baris[0]["ada_peta_qc"] is True
+
+
+def test_endpoint_peta_qc_tolak_run_bukan_v(tmp_path, klien, sesi) -> None:
+    """Endpoint peta QC hanya untuk run validasi (tipe V)."""
+    from app.models import TIPE_A
+
+    run = Run(
+        tipe=TIPE_A,
+        kdprov="33",
+        kdkab="02",
+        status="sukses",
+        nama_file_input="a.geojson",
+        nama_file_peta="a.geojson",
+        berkas_input="/tmp/a.geojson",
+        berkas_peta="/tmp/a.geojson",
+    )
+    sesi.add(run)
+    sesi.commit()
+    sesi.refresh(run)
+
+    respons = klien.get(f"/runs/{run.id}/validasi-sls/peta-qc.geojson")
+    assert respons.status_code == 404
+    assert "bukan run validasi" in respons.json()["detail"]
+
+
 def test_jelaskan_galat_run_id_bukan_kolom_berkas() -> None:
     """Galat 1364 untuk kolom internal tidak boleh menyalahkan berkas."""
     from app import worker as modul_worker

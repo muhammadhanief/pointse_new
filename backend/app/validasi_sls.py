@@ -27,6 +27,7 @@ ikut hitung nomor job A/B, dan tidak menjadi sumber peta Proses B.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 
@@ -158,6 +159,11 @@ class BarisUnmatch:
     idsubsls_master: str | None
     nmsls: str | None
     catatan: str | None = None
+    #: Luas temuan (m2) dan bentuk poligonnya dalam GeoJSON EPSG:4326. Hanya
+    #: diisi temuan topologi yang punya bentuk areal (``geom_overlap``/
+    #: ``geom_gap``); dipakai menyusun berkas peta QC. Tidak disimpan ke DB.
+    luas_m2: float = 0.0
+    geojson_geom: dict[str, Any] | None = None
 
 
 @dataclass
@@ -191,6 +197,95 @@ class HasilValidasi:
     matching: HasilMatching
     pesan: str
     topologi: HasilTopologi = field(default_factory=HasilTopologi)
+
+
+#: Konversi kasar derajat ke meter di sekitar lintang Jawa Tengah (~7° LS).
+#: Nilainya sama dengan ``rekonsiliasi_batas.METER_PER_DERAJAT``; disalin
+#: (bukan diimpor) supaya modul yang menyusun peta QC tetap ringan saat API
+#: menyala.
+METER_PER_DERAJAT: float = 111_320.0
+
+
+def _luas_m2(geom: Any) -> float:
+    """Luas geometri (derajat) dikonversi kasar ke meter persegi."""
+    import shapely
+
+    if geom is None or geom.is_empty:
+        return 0.0
+    return round(float(shapely.area(geom) * (METER_PER_DERAJAT**2)), 4)
+
+
+def _geojson_geom(geom: Any) -> dict[str, Any] | None:
+    """Geometri sebagai GeoJSON EPSG:4326; ``None`` bila kosong."""
+    import shapely
+
+    if geom is None or geom.is_empty:
+        return None
+    return json.loads(shapely.to_geojson(geom))
+
+
+def buat_geojson_qc(
+    hasil: HasilValidasi, *, kdkab: str, run_id: int
+) -> dict[str, Any]:
+    """Bangun FeatureCollection peta QC dari temuan bertopologi (overlap/gap).
+
+    Hanya temuan yang punya bentuk areal yang ikut; temuan atribut biasa
+    (``tidak_di_peta`` dan sejenisnya) tidak punya geometri di sini.
+    """
+    fitur: list[dict[str, Any]] = []
+    for urut, satu in enumerate(
+        (t for t in hasil.topologi.temuan if t.geojson_geom), start=1
+    ):
+        fitur.append(
+            {
+                "type": "Feature",
+                "id": urut,
+                "properties": {
+                    "no": urut,
+                    "kdprov": kdkab[:2],
+                    "kdkab": kdkab,
+                    "run_id": run_id,
+                    "jenis": satu.jenis,
+                    "idsls": satu.idsls_peta,
+                    "idsubsls": satu.idsubsls_peta,
+                    "nmsls": satu.nmsls,
+                    "luas_m2": satu.luas_m2,
+                    "catatan": satu.catatan,
+                },
+                "geometry": satu.geojson_geom,
+            }
+        )
+    return {
+        "type": "FeatureCollection",
+        "name": f"QC_Validasi_{kdkab}_{run_id}",
+        "features": fitur,
+    }
+
+
+def jalur_geojson_qc(berkas_peta: str | Path, kdkab: str, run_id: int) -> Path:
+    """Lokasi berkas peta QC, sebangku dengan berkas peta yang diunggah.
+
+    Nama berkas diturunkan dari run, jadi jalurnya tidak perlu disimpan di
+    database: pemanggil cukup mengecek keberadaan berkasnya.
+    """
+    return Path(berkas_peta).parent / f"QC_Validasi_{kdkab}_{run_id}.geojson"
+
+
+def tulis_geojson_qc(
+    hasil: HasilValidasi, *, berkas_peta: str | Path, kdkab: str, run_id: int
+) -> Path | None:
+    """Tulis peta QC temuan topologi; kembalikan jalurnya, ``None`` bila kosong.
+
+    Berkas lama dihapus bila run diproses ulang dan temuan bergeometrinya
+    sudah hilang, supaya tombol unduhan tidak menunjuk berkas basi.
+    """
+    jalur = jalur_geojson_qc(berkas_peta, kdkab, run_id)
+    isi = buat_geojson_qc(hasil, kdkab=kdkab, run_id=run_id)
+    if not isi["features"]:
+        jalur.unlink(missing_ok=True)
+        return None
+    jalur.write_text(json.dumps(isi, ensure_ascii=False), encoding="utf-8")
+    return jalur
 
 
 def normalisasi_idsls(nilai: Any) -> str | None:
@@ -630,6 +725,7 @@ def periksa_topologi(
                 idsls_a, idsubsls_a, nama_a = _info_baris(urut_a)
                 _idsls_b, idsubsls_b, _nama_b = _info_baris(urut_b)
                 lawan = idsubsls_b or f"baris {urut_b + 1}"
+                irisan = shapely.intersection(geom_a, geom_b)
                 temuan.append(
                     BarisUnmatch(
                         jenis=JENIS_GEOM_OVERLAP,
@@ -639,6 +735,8 @@ def periksa_topologi(
                         idsubsls_master=None,
                         nmsls=nama_a,
                         catatan=f"tumpang tindih dengan {lawan}"[:255],
+                        luas_m2=_luas_m2(irisan),
+                        geojson_geom=_geojson_geom(irisan),
                     )
                 )
 
@@ -693,6 +791,8 @@ def periksa_topologi(
                             f"celah #{nomor_celah} di ({titik.y:.6f}, "
                             f"{titik.x:.6f}){info_sekitar}"
                         )[:255],
+                        luas_m2=_luas_m2(celah),
+                        geojson_geom=_geojson_geom(celah),
                     )
                 )
 

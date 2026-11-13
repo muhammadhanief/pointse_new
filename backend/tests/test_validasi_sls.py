@@ -548,3 +548,80 @@ def test_topologi_tangkap_poligon_kosong_atau_null() -> None:
     assert hasil.temuan[0].idsls_peta == "33250500101004"
     assert "Coordinates polygon kosong" in (hasil.temuan[0].catatan or "")
     assert hasil.temuan[1].idsls_peta == "33250500101005"
+
+
+def _hasil_topologi(topologi) -> object:
+    """Bungkus hasil topologi jadi ``HasilValidasi`` minimal (untuk unduhan QC)."""
+    return validasi_sls.HasilValidasi(
+        lolos=topologi.lolos,
+        skema=validasi_sls.HasilSkema(lolos=True),
+        duplikat=validasi_sls.HasilDuplikat(lolos=True),
+        konsistensi=validasi_sls.HasilKonsistensi(lolos=True),
+        matching=validasi_sls.HasilMatching(lolos=True),
+        pesan="ada temuan topologi",
+        topologi=topologi,
+    )
+
+
+def test_peta_qc_memuat_poligon_overlap_dan_gap(tmp_path) -> None:
+    """Temuan topologi membawa poligon; berkas peta QC memuat overlap & gap."""
+    import json
+
+    from shapely.geometry import Polygon
+
+    p_a = Polygon([(0, 0), (2, 0), (2, 2), (0, 2)])
+    p_b = Polygon([(1, 0), (3, 0), (3, 2), (1, 2)])
+    # Cincin: lubang di tengahnya terbaca sebagai satu celah (gap).
+    p_cincin = Polygon(
+        [(10, 10), (14, 10), (14, 14), (10, 14)],
+        [[(11, 11), (13, 11), (13, 13), (11, 13)]],
+    )
+    atribut = [
+        {"kode": "33160100010001", "sub": "3316010001000100", "nama": "SLS 1"},
+        {"kode": "33160100010002", "sub": "3316010001000200", "nama": "SLS 2"},
+        {"kode": "33160100010003", "sub": "3316010001000300", "nama": "SLS 3"},
+    ]
+    topologi = validasi_sls.periksa_topologi([p_a, p_b, p_cincin], atribut)
+    bergeometri = [t for t in topologi.temuan if t.geojson_geom]
+    assert {t.jenis for t in bergeometri} == {
+        validasi_sls.JENIS_GEOM_OVERLAP,
+        validasi_sls.JENIS_GEOM_GAP,
+    }
+    for satu in bergeometri:
+        assert satu.geojson_geom["type"] in ("Polygon", "MultiPolygon")
+        assert satu.luas_m2 > 0
+
+    peta = tmp_path / "u" / "peta_3316.geojson"
+    peta.parent.mkdir(parents=True, exist_ok=True)
+    jalur = validasi_sls.tulis_geojson_qc(
+        _hasil_topologi(topologi),
+        berkas_peta=peta,
+        kdkab="3316",
+        run_id=7,
+    )
+    assert jalur == tmp_path / "u" / "QC_Validasi_3316_7.geojson"
+
+    isi = json.loads(jalur.read_text(encoding="utf-8"))
+    assert isi["type"] == "FeatureCollection"
+    assert len(isi["features"]) == len(bergeometri)
+    properti = [f["properties"]["jenis"] for f in isi["features"]]
+    assert properti == [t.jenis for t in bergeometri]
+    assert isi["features"][0]["properties"]["kdkab"] == "3316"
+    assert isi["features"][0]["properties"]["run_id"] == 7
+
+
+def test_peta_qc_tanpa_temuan_menghapus_berkas_lama(tmp_path) -> None:
+    """Run bersih tidak menyisakan berkas QC basi dari pemrosesan sebelumnya."""
+    peta = tmp_path / "u" / "peta_3316.geojson"
+    peta.parent.mkdir(parents=True, exist_ok=True)
+    basi = validasi_sls.jalur_geojson_qc(peta, "3316", 9)
+    basi.write_text("{}", encoding="utf-8")
+
+    jalur = validasi_sls.tulis_geojson_qc(
+        _hasil_topologi(validasi_sls.HasilTopologi(lolos=True)),
+        berkas_peta=peta,
+        kdkab="3316",
+        run_id=9,
+    )
+    assert jalur is None
+    assert not basi.exists()

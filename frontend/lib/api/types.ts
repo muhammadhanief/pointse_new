@@ -51,6 +51,8 @@ export type ValidasiRingkasanBaris = {
   semester: string | null;
   selesai_pada: string | null;
   petugas: string | null;
+  //: Ada berkas peta QC temuan topologi (overlap/gap) untuk run ini.
+  ada_peta_qc?: boolean;
   total: number;
   per_jenis: Record<string, number>;
   target: number | null;

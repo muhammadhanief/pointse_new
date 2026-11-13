@@ -1013,7 +1013,27 @@ def proses_validasi_v(sesi: Session, run: Run) -> tuple[int, str, bool]:
     # dengan 1364 "Field 'run_id' doesn't have a default value".
     if unmatch:
         sesi.execute(insert(ValidasiSlsUnmatch), unmatch)
+    _simpan_peta_qc_v(validasi_sls, hasil, run=run, kode=kode)
     return len(unmatch), hasil.pesan, hasil.lolos
+
+
+def _simpan_peta_qc_v(
+    modul: Any, hasil: Any, *, run: Run, kode: str
+) -> None:
+    """Tulis berkas peta QC temuan topologi (overlap/gap) untuk run V.
+
+    Kegagalan menulis berkas tidak boleh menggagalkan validasi (temuan sudah
+    tersimpan di DB); cukup dicatat di log.
+    """
+    try:
+        modul.tulis_geojson_qc(
+            hasil,
+            berkas_peta=run.berkas_peta,
+            kdkab=kode,
+            run_id=run.id,
+        )
+    except OSError as galat:
+        logger.warning("peta QC validasi run %s gagal ditulis: %s", run.id, galat)
 
 
 def layanan_kode_kab(run: Run) -> str:

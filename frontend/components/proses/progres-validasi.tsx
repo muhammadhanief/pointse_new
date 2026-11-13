@@ -65,6 +65,7 @@ export function ProgresValidasi({
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState<string | null>(null);
   const [sibuk, setSibuk] = useState<number | null>(null);
+  const [sibukPetaQc, setSibukPetaQc] = useState<number | null>(null);
   const [diperbarui, setDiperbarui] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("semua");
   const [detail, setDetail] = useState<Run | null>(null);
@@ -140,6 +141,21 @@ export function ProgresValidasi({
       // Biarkan tombol kembali normal; unduhan detail ada di riwayat.
     } finally {
       setSibuk(null);
+    }
+  }
+
+  async function unduhPetaQc(runId: number, kode: string) {
+    setSibukPetaQc(runId);
+    try {
+      await unduhBerkas(
+        `/runs/${runId}/validasi-sls/peta-qc.geojson`,
+        `QC_Validasi_${kode}.geojson`,
+      );
+    } catch {
+      // Biarkan tombol kembali normal; peta QC hanya ada bila ada temuan
+      // celah/tumpang tindih.
+    } finally {
+      setSibukPetaQc(null);
     }
   }
 
@@ -627,6 +643,19 @@ export function ProgresValidasi({
                               ? "Menyiapkan..."
                               : "Unduh Excel"}
                           </TombolAksi>
+                          {satu.ada_peta_qc ? (
+                            <TombolAksi
+                              varian="sekunder"
+                              className="min-h-8 px-3 text-xs"
+                              onClick={() => void unduhPetaQc(runId, kode)}
+                              disabled={sibukPetaQc !== null}
+                              title="Unduh peta QC celah & tumpang tindih (GeoJSON) untuk dibuka di QGIS"
+                            >
+                              {sibukPetaQc === runId
+                                ? "Menyiapkan..."
+                                : "Peta QC"}
+                            </TombolAksi>
+                          ) : null}
                         </div>
                       )}
                     </td>

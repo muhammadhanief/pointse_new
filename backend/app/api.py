@@ -1036,6 +1036,41 @@ def ekspor_unmatch_v(
     )
 
 
+@router.get(
+    "/runs/{run_id}/validasi-sls/peta-qc.geojson",
+    response_class=FileResponse,
+)
+def unduh_peta_qc_validasi(
+    run_id: int,
+    sesi: Session = Depends(get_session),
+    pengguna: auth.Pengguna = Depends(auth.pengguna_saat_ini),
+) -> FileResponse:
+    """Unduh peta QC temuan topologi run V (celah & tumpang tindih antar poligon).
+
+    Berkasnya GeoJSON EPSG:4326 berisi poligon temuan untuk diperiksa di QGIS.
+    Hanya run yang punya temuan ``geom_overlap``/``geom_gap`` yang berkasnya ada.
+    """
+    run = _ambil_run(sesi, run_id)
+    auth.pastikan_akses(pengguna, run.kdprov, run.kdkab)
+    if run.tipe != TIPE_V:
+        raise HTTPException(status_code=404, detail=f"job {run_id} bukan run validasi")
+    kode = _kode_unduh(run.kdprov, run.kdkab)
+    jalur = validasi_sls.jalur_geojson_qc(run.berkas_peta, kode, run.id)
+    if not jalur.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Peta QC validasi {kode} belum tersedia; hanya run yang memuat "
+                "celah atau tumpang tindih antar poligon yang punya berkas ini."
+            ),
+        )
+    return FileResponse(
+        jalur,
+        media_type="application/geo+json",
+        filename=f"QC_Validasi_{kode}.geojson",
+    )
+
+
 @router.get("/validasi-sls/ringkasan", response_model=ValidasiRingkasanOut)
 def ringkasan_validasi(
     kdprov: str | None = Query(None, description="Saring satu provinsi, mis. 33"),

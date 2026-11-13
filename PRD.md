@@ -428,7 +428,11 @@ pemindaian puluhan Excel tiap halaman progres (pindai penuh 36 kab terbukti
    `GET /validasi-sls/ringkasan`) menampilkan run V terakhir tiap
    kabupaten/kota beserta target (jumlah pasangan di master), selesai, sisa,
    dan hitungan temuan per jenis; antrean menunggu bernomor urut global di
-   kolom riwayat.
+   kolom riwayat. Bila run memuat temuan topologi (celah/tumpang tindih antar
+   poligon), tersedia tombol unduh **peta QC**: GeoJSON EPSG:4326 berisi
+   poligon tiap temuan (`GET /runs/{run_id}/validasi-sls/peta-qc.geojson`)
+   untuk diperiksa di QGIS. Berkasnya ditulis worker di samping peta unggahan
+   (nama tetap per run) dan hanya ada bila ada temuan bergeometri.
 6. Anggaran memori worker tetap 800MB; baca Excel/peta per potong bila perlu.
 
 ### 11.5 Di luar cakupan tahap ini
