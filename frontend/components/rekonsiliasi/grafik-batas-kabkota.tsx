@@ -179,16 +179,19 @@ function TooltipBatasKabKota({ active, payload }: TooltipContentProps) {
 export function GrafikBatasKabKota({
   data,
   diperbarui,
+  layarPenuh = false,
+  onUbahLayarPenuh,
 }: {
   data: BatangBatasKabKota[];
   diperbarui?: string | null;
+  layarPenuh?: boolean;
+  onUbahLayarPenuh?: (nilai: boolean) => void;
 }) {
   const [urutKunci, setUrutKunci] = useState<KunciUrutGrafik>("clean");
   const [urutArah, setUrutArah] = useState<ArahUrut>("desc");
   // "proporsi" = 100% bertumpuk, "jumlah" = tinggi batang sebesar jumlah
   // pasangan apa adanya.
   const [modeNilai, setModeNilai] = useState<"proporsi" | "jumlah">("proporsi");
-  const [layarPenuh, setLayarPenuh] = useState(false);
   const tombolTutupRef = useRef<HTMLButtonElement | null>(null);
 
   // Layar penuh: fokus ke tombol tutup, tutup dengan Escape, dan kunci gulir
@@ -202,7 +205,7 @@ export function GrafikBatasKabKota({
     document.body.style.overflow = "hidden";
     function saatTombol(kejadian: KeyboardEvent) {
       if (kejadian.key === "Escape") {
-        setLayarPenuh(false);
+        onUbahLayarPenuh?.(false);
       }
     }
     window.addEventListener("keydown", saatTombol);
@@ -210,7 +213,7 @@ export function GrafikBatasKabKota({
       window.removeEventListener("keydown", saatTombol);
       document.body.style.overflow = overflowAwal;
     };
-  }, [layarPenuh]);
+  }, [layarPenuh, onUbahLayarPenuh]);
 
   const proporsi = modeNilai === "proporsi";
 
@@ -233,7 +236,7 @@ export function GrafikBatasKabKota({
     });
   }, [data, urutKunci, urutArah, proporsi]);
 
-  if (data.length < 2) {
+  if (data.length < 2 && !layarPenuh) {
     return (
       <p className="p-kartu text-sm text-muted">
         Grafik butuh minimal 2 kabupaten/kota untuk dibandingkan. Pilih wilayah
@@ -402,7 +405,7 @@ export function GrafikBatasKabKota({
             type="button"
             aria-label="Tutup layar penuh"
             title="Tutup layar penuh"
-            onClick={() => setLayarPenuh(false)}
+            onClick={() => onUbahLayarPenuh?.(false)}
             className="inline-flex h-7 w-7 items-center justify-center justify-self-end rounded-lg border border-line-strong bg-surface text-ink transition-colors hover:border-brand hover:text-brand-strong"
           >
             <IkonKeluarLayarPenuh />
@@ -425,7 +428,7 @@ export function GrafikBatasKabKota({
           type="button"
           aria-label="Tampilkan layar penuh"
           title="Layar penuh"
-          onClick={() => setLayarPenuh(true)}
+          onClick={() => onUbahLayarPenuh?.(true)}
           className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line-strong bg-surface text-ink transition-colors hover:border-brand hover:text-brand-strong"
         >
           <IkonLayarPenuh />

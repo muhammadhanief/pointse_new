@@ -10,8 +10,11 @@ export const metadata: Metadata = {
 
 export const instant = false;
 
-export default async function RekonsiliasiBatasPage() {
+export default async function RekonsiliasiBatasPage({
+  searchParams,
+}: PageProps<"/rekonsiliasi-batas">) {
   const sesi = await wajibSesi();
+  const params = await searchParams;
 
   return (
     <div className="space-y-field">
@@ -23,6 +26,7 @@ export default async function RekonsiliasiBatasPage() {
         kdprov={sesi.kdprov}
         kdkab={sesi.kdkab}
         peran={sesi.peran}
+        bukaLayarPenuhAwal={params["layar-penuh"] === "1"}
       />
     </div>
   );

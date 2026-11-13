@@ -151,10 +151,12 @@ export function RekonsiliasiBatasClient({
   kdprov,
   kdkab,
   peran,
+  bukaLayarPenuhAwal = false,
 }: {
   kdprov: string;
   kdkab: string | null;
   peran: string;
+  bukaLayarPenuhAwal?: boolean;
 }) {
   const adalahAdminProv = peran === PERAN_ADMIN_PROVINSI || !kdkab;
   const bisaAturPemeriksaan = peran === PERAN_ADMIN_PROVINSI;
@@ -170,6 +172,35 @@ export function RekonsiliasiBatasClient({
   const [tabAktif, setTabAktif] = useState<"pasangan" | "kabkota" | "grafik">(
     "grafik",
   );
+
+  // Status layar penuh grafik dipegang di sini supaya tetap terbuka saat tab
+  // berganti, dan bisa langsung terbuka dari ?layar-penuh=1 setelah login.
+  const [layarPenuhGrafik, setLayarPenuhGrafik] = useState(bukaLayarPenuhAwal);
+
+  // Parameter hanya untuk pembukaan pertama; bersihkan dari URL agar refresh
+  // atau tautan yang dibagikan tidak memaksa layar penuh lagi.
+  useEffect(() => {
+    if (!bukaLayarPenuhAwal) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("layar-penuh")) {
+      return;
+    }
+    url.searchParams.delete("layar-penuh");
+    window.history.replaceState(
+      null,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, [bukaLayarPenuhAwal]);
+  // Memilih tab secara manual juga membatalkan permintaan layar penuh otomatis
+  // supaya tidak tiba-tiba terbuka saat kembali ke tab grafik.
+  function pilihTab(tab: "pasangan" | "kabkota" | "grafik") {
+    setTabAktif(tab);
+    setLayarPenuhGrafik(false);
+  }
+
   const [urutPasangan, setUrutPasangan] = useState<{
     kolom: KolomUrutPasangan;
     arah: ArahUrut;
@@ -839,7 +870,7 @@ export function RekonsiliasiBatasClient({
           type="button"
           role="tab"
           aria-selected={tabTampil === "pasangan"}
-          onClick={() => setTabAktif("pasangan")}
+          onClick={() => pilihTab("pasangan")}
           className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
             tabTampil === "pasangan"
               ? "bg-brand text-white"
@@ -861,7 +892,7 @@ export function RekonsiliasiBatasClient({
           type="button"
           role="tab"
           aria-selected={tabTampil === "kabkota"}
-          onClick={() => setTabAktif("kabkota")}
+          onClick={() => pilihTab("kabkota")}
           className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
             tabTampil === "kabkota"
               ? "bg-brand text-white"
@@ -884,7 +915,7 @@ export function RekonsiliasiBatasClient({
             type="button"
             role="tab"
             aria-selected={tabTampil === "grafik"}
-            onClick={() => setTabAktif("grafik")}
+            onClick={() => pilihTab("grafik")}
             className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               tabTampil === "grafik"
                 ? "bg-brand text-white"
@@ -1406,7 +1437,12 @@ export function RekonsiliasiBatasClient({
         judulRata="tengah"
         deskripsi={diperbarui ? `Diperbarui ${diperbarui} WIB` : undefined}
       >
-        <GrafikBatasKabKota data={dataGrafikKabKota} diperbarui={diperbarui} />
+        <GrafikBatasKabKota
+          data={dataGrafikKabKota}
+          diperbarui={diperbarui}
+          layarPenuh={layarPenuhGrafik}
+          onUbahLayarPenuh={setLayarPenuhGrafik}
+        />
       </Panel>
       )}
 
